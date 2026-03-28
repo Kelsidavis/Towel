@@ -1148,3 +1148,88 @@ class TestUuidSkill:
         # hex token from 16 bytes = 32 hex chars
         token_part = result.split(": ", 1)[1]
         assert len(token_part) == 32
+
+
+class TestYamlSkill:
+    @pytest.fixture
+    def ym(self):
+        from towel.skills.builtin.yaml_skill import YamlSkill
+        return YamlSkill()
+
+    @pytest.mark.asyncio
+    async def test_parse(self, ym):
+        result = await ym.execute("yaml_parse", {"text": "name: Alice\nage: 30\nactive: true"})
+        import json
+        data = json.loads(result)
+        assert data["name"] == "Alice"
+        assert data["age"] == 30
+        assert data["active"] is True
+
+    @pytest.mark.asyncio
+    async def test_yaml_to_json(self, ym):
+        result = await ym.execute("yaml_to_json", {"text": "host: localhost\nport: 8080"})
+        import json
+        data = json.loads(result)
+        assert data["host"] == "localhost"
+        assert data["port"] == 8080
+
+    @pytest.mark.asyncio
+    async def test_json_to_yaml(self, ym):
+        result = await ym.execute("json_to_yaml", {"text": '{"name": "Bob", "items": [1, 2, 3]}'})
+        assert "name: Bob" in result
+        assert "- 1" in result
+
+    @pytest.mark.asyncio
+    async def test_validate(self, ym):
+        result = await ym.execute("yaml_validate", {"text": "key: value\nother: 42"})
+        assert "Valid" in result
+
+    @pytest.mark.asyncio
+    async def test_parse_list(self, ym):
+        result = await ym.execute("yaml_parse", {"text": "- apple\n- banana\n- cherry"})
+        import json
+        data = json.loads(result)
+        assert data == ["apple", "banana", "cherry"]
+
+
+class TestSnippetGenSkill:
+    @pytest.fixture
+    def cg(self):
+        from towel.skills.builtin.snippet_gen_skill import SnippetGenSkill
+        return SnippetGenSkill()
+
+    @pytest.mark.asyncio
+    async def test_list(self, cg):
+        result = await cg.execute("codegen_list", {})
+        assert "python-class" in result
+        assert "docker-compose" in result
+
+    @pytest.mark.asyncio
+    async def test_generate_class(self, cg):
+        result = await cg.execute("codegen_generate", {
+            "template": "python-class", "name": "User", "params": "name, email"
+        })
+        assert "class User:" in result
+        assert "self.name = name" in result
+        assert "self.email = email" in result
+
+    @pytest.mark.asyncio
+    async def test_generate_dataclass(self, cg):
+        result = await cg.execute("codegen_generate", {
+            "template": "python-dataclass", "name": "Config", "params": "host, port"
+        })
+        assert "@dataclass" in result
+        assert "host: str" in result
+
+    @pytest.mark.asyncio
+    async def test_generate_docker_compose(self, cg):
+        result = await cg.execute("codegen_generate", {
+            "template": "docker-compose", "name": "myapp"
+        })
+        assert "services:" in result
+        assert "myapp" in result
+
+    @pytest.mark.asyncio
+    async def test_unknown_template(self, cg):
+        result = await cg.execute("codegen_generate", {"template": "nope", "name": "x"})
+        assert "Unknown" in result
