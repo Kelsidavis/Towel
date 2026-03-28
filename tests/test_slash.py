@@ -285,6 +285,25 @@ class TestPin:
         assert "pinned" not in d  # only serialized when True
 
 
+class TestReport:
+    def test_report_basic(self, ctx):
+        handle_slash("/report", ctx)  # should not crash with 2 messages
+
+    def test_report_empty(self, ctx):
+        ctx.conv.messages.clear()
+        handle_slash("/report", ctx)  # should say "no messages"
+
+    def test_report_with_tools(self, ctx):
+        ctx.conv.add(Role.USER, "search for errors")
+        ctx.conv.add(Role.TOOL, "[search_files] Found 3 matches")
+        ctx.conv.add(Role.ASSISTANT, "I found 3 errors in your code:\n```python\nfix here\n```")
+        handle_slash("/report", ctx)  # should include tool stats and code count
+
+    def test_report_with_pinned(self, ctx):
+        ctx.conv.messages[1].pinned = True
+        handle_slash("/report", ctx)  # should show pinned section
+
+
 class TestSave:
     def test_save_code_block(self, ctx, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
