@@ -2806,3 +2806,52 @@ def slack(bot_token: str, app_token: str) -> None:
         gateway_url=f"ws://{TowelConfig.load().gateway.host}:{TowelConfig.load().gateway.port}",
     )
     asyncio.run(channel.listen())
+
+
+@cli.command()
+@click.argument("target", type=click.Choice(["docker", "systemd", "heroku", "fly", "all"]))
+@click.option("--output", "-o", default="./deploy", help="Output directory")
+@click.option("--user", "-u", default="towel", help="System user (for systemd)")
+def deploy(target: str, output: str, user: str) -> None:
+    """Generate deployment files for running Towel in production.
+
+    \b
+    Targets:
+        docker    Dockerfile + docker-compose.yml
+        systemd   Linux systemd service unit
+        heroku    Procfile for Heroku
+        fly       fly.toml for Fly.io
+        all       Generate everything
+
+    \b
+    Examples:
+        towel deploy docker
+        towel deploy all -o ./infra
+        towel deploy systemd -u myuser
+    """
+    from pathlib import Path
+    from towel.cli.deploy import generate_deploy
+
+    created = generate_deploy(target, Path(output), user)
+    if not created:
+        console.print(f"[red]Unknown target:[/red] {target}")
+        return
+
+    console.print(f"[bold green]Generated {len(created)} deployment file(s):[/bold green]\n")
+    for p in created:
+        console.print(f"  [green]{p}[/green]")
+
+    console.print(f"\n[dim]Next steps for {target}:[/dim]")
+    match target:
+        case "docker":
+            console.print("  cp .env.example .env && edit .env")
+            console.print("  docker-compose up -d")
+        case "systemd":
+            console.print("  sudo cp towel.service /etc/systemd/system/")
+            console.print("  sudo systemctl enable --now towel")
+        case "heroku":
+            console.print("  heroku create && git push heroku main")
+        case "fly":
+            console.print("  fly launch && fly deploy")
+        case "all":
+            console.print("  Choose your platform and follow its docs.")
