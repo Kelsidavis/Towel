@@ -2706,3 +2706,40 @@ def voice(chat: bool, audio_file: str | None, duration: float) -> None:
             return
         text = transcribe_bytes(wav)
         console.print(f"[cyan]{text}[/cyan]")
+
+
+@cli.command()
+@click.option("--token", "-t", required=True, envvar="DISCORD_TOKEN", help="Discord bot token (or set DISCORD_TOKEN env var)")
+@click.option("--prefix", "-p", default="!towel", help="Command prefix (default: !towel)")
+def discord(token: str, prefix: str) -> None:
+    """Run Towel as a Discord bot.
+
+    \b
+    Setup:
+      1. Create a bot at https://discord.com/developers
+      2. Enable MESSAGE CONTENT intent
+      3. Invite bot to your server with message permissions
+      4. Run: towel discord -t YOUR_TOKEN
+
+    \b
+    The bot responds to:
+      - Direct messages
+      - @mentions
+      - Messages starting with !towel (configurable with --prefix)
+    """
+    from towel.channels.discord import DiscordChannel
+
+    console.print(Panel(
+        f"[bold green]Discord Bot[/bold green]\n\n"
+        f"  Prefix: [green]{prefix}[/green]\n"
+        f"  Gateway: ws://{TowelConfig.load().gateway.host}:{TowelConfig.load().gateway.port}\n\n"
+        f"[dim]Make sure 'towel serve' is running in another terminal.[/dim]",
+        border_style="blue",
+        title="Don't Panic.",
+    ))
+
+    channel = DiscordChannel(
+        token=token, prefix=prefix,
+        gateway_url=f"ws://{TowelConfig.load().gateway.host}:{TowelConfig.load().gateway.port}",
+    )
+    asyncio.run(channel.listen())
