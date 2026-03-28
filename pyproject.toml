@@ -1,5 +1,5 @@
 [project]
-name = "towel"
+name = "towel-ai"
 version = "1.0.0"
 description = "Don't Panic. Your local AI assistant, powered by MLX."
 readme = "README.md"
@@ -72,3 +72,8 @@ asyncio_mode = "auto"
 python_version = "3.11"
 strict = true
 
+
+[project.urls]
+Homepage = "https://github.com/Kelsidavis/Towl"
+Repository = "https://github.com/Kelsidavis/Towl"
+Issues = "https://github.com/Kelsidavis/Towl/issues"

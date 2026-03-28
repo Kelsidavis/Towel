@@ -2617,3 +2617,25 @@ def doc(file: str, style: str, output: str | None, raw: bool) -> None:
     else:
         if not raw: console.print(f"[dim]Documenting {Path(file).name}...[/dim]")
         _oneshot(config, prompt, raw)
+
+
+@cli.command()
+@click.argument("shell", type=click.Choice(["bash", "zsh", "fish"]))
+def completions(shell: str) -> None:
+    """Generate shell tab-completion script.
+
+    \b
+    Examples:
+        eval "$(towel completions zsh)"
+        towel completions bash >> ~/.bashrc
+        towel completions fish > ~/.config/fish/completions/towel.fish
+    """
+    import os
+    env_var = "_TOWEL_COMPLETE"
+    if shell == "zsh":
+        script = f'eval "$({env_var}=zsh_source towel)"'
+    elif shell == "bash":
+        script = f'eval "$({env_var}=bash_source towel)"'
+    elif shell == "fish":
+        script = f'{env_var}=fish_source towel | source'
+    print(script)
