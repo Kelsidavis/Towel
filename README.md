@@ -5,8 +5,8 @@
 [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-MLX-black?logo=apple)](https://ml-explore.github.io/mlx/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://docs.astral.sh/ruff/)
-[![Tests](https://img.shields.io/badge/tests-544%20passing-brightgreen)]()
-[![Skills](https://img.shields.io/badge/skills-15%20built--in-blue)]()
+[![Tests](https://img.shields.io/badge/tests-690%2B%20passing-brightgreen)]()
+[![Skills](https://img.shields.io/badge/skills-40%20built--in-blue)]()
 
 **Don't Panic.**
 
@@ -77,7 +77,7 @@ towel gc                    # clean up old conversations
 | `/alias` / `/snippet` | Custom shortcuts and text blocks |
 | `/t review @file` | Apply prompt templates |
 
-### 15 Built-in Skills
+### 40 Built-in Skills
 
 The agent has tools for:
 
@@ -97,6 +97,32 @@ The agent has tools for:
 | **hash** | MD5/SHA/base64/URL encoding |
 | **env** | environment variables, PATH, which |
 | **regex** | test, match, replace, split |
+| **convert** | length, weight, volume, temperature, speed, data, time |
+| **json_tools** | diff, flatten, schema generation, validate |
+| **diff** | compare files and text, similarity stats |
+| **archive** | create/list/extract zip and tar archives |
+| **cron** | explain, preview, and build cron expressions |
+| **markdown** | tables, TOC, checklists, JSON-to-markdown |
+| **http** | full HTTP requests (GET/POST/PUT/DELETE, headers, JSON) |
+| **sql** | query SQLite, inspect schema, explain plans |
+| **image** | dimensions, format, file size (PNG/JPEG/GIF) |
+| **process** | find, inspect, tree, listening ports |
+| **text** | word count, stats, transforms, frequency |
+| **knowledge** | personal knowledge base with tags |
+| **translate** | language detection, translation prompts |
+| **security** | scan for secrets, permissions, dependency audit |
+| **todo** | task management with priorities and due dates |
+| **scaffold** | project boilerplate (8 templates) |
+| **math** | statistics, formatting, sequences (fibonacci, primes) |
+| **docker** | containers, images, logs, stats |
+| **calendar** | month display, business days, countdown |
+| **qr** | ASCII QR code art generation |
+| **jwt** | decode and inspect JSON Web Tokens |
+| **color** | hex/RGB/HSL conversion, palettes, WCAG contrast |
+| **uuid** | UUIDs, passwords, cryptographic tokens |
+| **yaml** | parse, validate, YAML/JSON conversion |
+| **codegen** | code snippet templates (10 patterns) |
+
 
 ### Web UI
 
@@ -141,7 +167,7 @@ towel skill-init my_tool    # generate a skill skeleton
 │     WebSocket + HTTP + OpenAI-compat API     │
 │                                              │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
-│  │ Sessions  │  │ Routing  │  │ 15 Skills │  │
+│  │ Sessions  │  │ Routing  │  │ 40 Skills │  │
 │  └──────────┘  └──────────┘  └──────────┘  │
 └──────────┬───────────────────────┬───────────┘
            │                       │
