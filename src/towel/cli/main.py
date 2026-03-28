@@ -1092,3 +1092,142 @@ def templates() -> None:
     console.print(f"\n[dim]Use with: towel ask -T review @file.py[/dim]")
     console.print(f"[dim]Or in chat: /t review <your input>[/dim]")
     console.print(f"[dim]Create custom: ~/.towel/templates/mytemplate.txt[/dim]")
+
+
+@cli.command()
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def config(as_json: bool) -> None:
+    """Show current configuration."""
+    cfg = TowelConfig.load()
+
+    if as_json:
+        import json as json_mod
+        data = {
+            "towel_home": str(TOWEL_HOME),
+            "model": {
+                "name": cfg.model.name,
+                "context_window": cfg.model.context_window,
+                "max_tokens": cfg.model.max_tokens,
+                "temperature": cfg.model.temperature,
+                "top_p": cfg.model.top_p,
+            },
+            "gateway": {
+                "host": cfg.gateway.host,
+                "port": cfg.gateway.port,
+            },
+            "skills_dirs": [str(d) for d in cfg.skills_dirs],
+            "agents": list(cfg.list_agents().keys()),
+        }
+        print(json_mod.dumps(data, indent=2))
+        return
+
+    console.print("[bold]Towel configuration:[/bold]\n")
+    console.print(f"  [green]Home:[/green]           {TOWEL_HOME}")
+    config_path = TOWEL_HOME / "config.toml"
+    console.print(f"  [green]Config file:[/green]    {config_path} {'[dim](exists)[/dim]' if config_path.exists() else '[yellow](not found)[/yellow]'}")
+
+    console.print(f"\n  [bold]Model:[/bold]")
+    console.print(f"    [green]Name:[/green]           {cfg.model.name}")
+    console.print(f"    [green]Context window:[/green] {cfg.model.context_window:,} tokens")
+    console.print(f"    [green]Max output:[/green]     {cfg.model.max_tokens:,} tokens")
+    console.print(f"    [green]Temperature:[/green]    {cfg.model.temperature}")
+    console.print(f"    [green]Top-p:[/green]          {cfg.model.top_p}")
+
+    console.print(f"\n  [bold]Gateway:[/bold]")
+    console.print(f"    [green]Host:[/green]           {cfg.gateway.host}")
+    console.print(f"    [green]WebSocket:[/green]      ws://{cfg.gateway.host}:{cfg.gateway.port}")
+    console.print(f"    [green]HTTP API:[/green]       http://{cfg.gateway.host}:{cfg.gateway.port + 1}")
+
+    agents = cfg.list_agents()
+    if agents:
+        console.print(f"\n  [bold]Agents ({len(agents)}):[/bold]")
+        for name, profile in agents.items():
+            desc = f" — {profile.description}" if profile.description else ""
+            console.print(f"    [green]{name}[/green]{desc}")
+            console.print(f"      [dim]{profile.model.name}[/dim]")
+
+    console.print(f"\n  [bold]Skills dirs:[/bold]")
+    for d in cfg.skills_dirs:
+        from pathlib import Path
+        p = Path(d).expanduser()
+        exists = "[dim](exists)[/dim]" if p.exists() else "[dim](not created)[/dim]"
+        console.print(f"    {p} {exists}")
+
+    console.print(f"\n[dim]Edit: {config_path}[/dim]")
+
+
+@cli.command(name="skill-init")
+@click.argument("name")
+@click.option("--dir", "output_dir", default=None, help="Output directory (default: ~/.towel/skills/)")
+def skill_init(name: str, output_dir: str | None) -> None:
+    """Generate a skeleton skill file to get started with custom skills."""
+    from pathlib import Path
+
+    if output_dir:
+        target_dir = Path(output_dir)
+    else:
+        target_dir = TOWEL_HOME / "skills"
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{name}_skill.py"
+    target = target_dir / filename
+
+    if target.exists():
+        console.print(f"[yellow]File already exists:[/yellow] {target}")
+        return
+
+    class_name = "".join(w.capitalize() for w in name.split("_")) + "Skill"
+
+    skeleton = f'''"""Custom skill: {name}
+
+Drop this file into ~/.towel/skills/ and it will be auto-loaded.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from towel.skills.base import Skill, ToolDefinition
+
+
+class {class_name}(Skill):
+    @property
+    def name(self) -> str:
+        return "{name}"
+
+    @property
+    def description(self) -> str:
+        return "Description of what this skill does"
+
+    def tools(self) -> list[ToolDefinition]:
+        return [
+            ToolDefinition(
+                name="{name}_example",
+                description="An example tool — replace with your own",
+                parameters={{
+                    "type": "object",
+                    "properties": {{
+                        "query": {{
+                            "type": "string",
+                            "description": "Input to process",
+                        }},
+                    }},
+                    "required": ["query"],
+                }},
+            ),
+        ]
+
+    async def execute(self, tool_name: str, arguments: dict[str, Any]) -> Any:
+        match tool_name:
+            case "{name}_example":
+                query = arguments.get("query", "")
+                return f"Got: {{query}}"
+            case _:
+                return f"Unknown tool: {{tool_name}}"
+'''
+
+    target.write_text(skeleton, encoding="utf-8")
+    console.print(f"[green]Created skill skeleton:[/green] {target}")
+    console.print(f"  Class: [bold]{class_name}[/bold]")
+    console.print(f"  Tool:  {name}_example")
+    console.print(f"\n[dim]Edit the file and restart Towel to load it.[/dim]")

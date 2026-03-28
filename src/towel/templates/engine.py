@@ -76,6 +76,27 @@ BUILTIN_TEMPLATES: dict[str, str] = {
         "and follow best practices. Explain your changes.\n\n"
         "{{input}}"
     ),
+    "debug": (
+        "# Debug code or error messages\n"
+        "Debug the following code or error. Identify the root cause, explain why "
+        "it happens, and provide a working fix. If there are multiple issues, "
+        "address them in order of severity.\n\n"
+        "{{input}}"
+    ),
+    "docstring": (
+        "# Write docstrings for code\n"
+        "Write comprehensive docstrings for the following code. Include parameter "
+        "descriptions, return values, exceptions raised, and a brief usage example. "
+        "Follow the conventions of the language (e.g., Google-style for Python).\n\n"
+        "{{input}}"
+    ),
+    "changelog": (
+        "# Write a changelog entry\n"
+        "Write a changelog entry for the following changes. Group by category "
+        "(Added, Changed, Fixed, Removed). Use clear, user-friendly language "
+        "that non-developers can understand. Follow Keep a Changelog format.\n\n"
+        "{{input}}"
+    ),
 }
 
 
