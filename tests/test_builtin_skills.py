@@ -1549,3 +1549,99 @@ class TestPipSkill:
         assert "3 packages" in result
         assert "Pinned: 1" in result
         assert "Unpinned: 2" in result
+
+
+class TestMetricsSkill:
+    @pytest.fixture(autouse=True)
+    def reset(self):
+        from towel.skills.builtin.metrics_skill import _counters, _gauges, _timers
+        _counters.clear(); _gauges.clear(); _timers.clear()
+
+    @pytest.fixture
+    def met(self):
+        from towel.skills.builtin.metrics_skill import MetricsSkill
+        return MetricsSkill()
+
+    @pytest.mark.asyncio
+    async def test_counter(self, met):
+        await met.execute("metric_increment", {"name": "requests"})
+        await met.execute("metric_increment", {"name": "requests", "value": 5})
+        result = await met.execute("metric_report", {})
+        assert "requests" in result and "6" in result
+
+    @pytest.mark.asyncio
+    async def test_gauge(self, met):
+        await met.execute("metric_gauge", {"name": "cpu", "value": 42.5})
+        result = await met.execute("metric_report", {})
+        assert "cpu" in result and "42.5" in result
+
+    @pytest.mark.asyncio
+    async def test_timer(self, met):
+        await met.execute("metric_timer", {"name": "latency", "duration_ms": 100})
+        await met.execute("metric_timer", {"name": "latency", "duration_ms": 200})
+        result = await met.execute("metric_report", {})
+        assert "latency" in result and "150" in result  # avg
+
+    @pytest.mark.asyncio
+    async def test_reset(self, met):
+        await met.execute("metric_increment", {"name": "x"})
+        await met.execute("metric_reset", {})
+        result = await met.execute("metric_report", {})
+        assert "No metrics" in result
+
+
+class TestPdfSkill:
+    @pytest.fixture
+    def pdf(self):
+        from towel.skills.builtin.pdf_skill import PdfSkill
+        return PdfSkill()
+
+    @pytest.mark.asyncio
+    async def test_not_found(self, pdf):
+        result = await pdf.execute("pdf_info", {"path": "/nonexistent.pdf"})
+        assert "Not found" in result
+
+    @pytest.mark.asyncio
+    async def test_info_minimal(self, pdf, tmp_path):
+        # Minimal PDF
+        f = tmp_path / "test.pdf"
+        f.write_bytes(b"%PDF-1.4\n1 0 obj<</Type/Page>>endobj\n")
+        result = await pdf.execute("pdf_info", {"path": str(f)})
+        assert "1.4" in result
+
+
+class TestPlaceholderSkill:
+    @pytest.fixture
+    def ph(self):
+        from towel.skills.builtin.placeholder_skill import PlaceholderSkill
+        return PlaceholderSkill()
+
+    @pytest.mark.asyncio
+    async def test_lorem(self, ph):
+        result = await ph.execute("lorem", {"words": 10, "paragraphs": 2})
+        assert len(result.split("\n\n")) == 2
+
+    @pytest.mark.asyncio
+    async def test_fake_users_json(self, ph):
+        import json
+        result = await ph.execute("fake_users", {"count": 3, "format": "json"})
+        data = json.loads(result)
+        assert len(data) == 3
+        assert "email" in data[0]
+
+    @pytest.mark.asyncio
+    async def test_fake_users_csv(self, ph):
+        result = await ph.execute("fake_users", {"count": 2, "format": "csv"})
+        assert "name,email,age" in result
+
+    @pytest.mark.asyncio
+    async def test_fake_data_ip(self, ph):
+        result = await ph.execute("fake_data", {"type": "ip", "count": 3})
+        lines = result.strip().splitlines()
+        assert len(lines) == 3
+        assert "." in lines[0]
+
+    @pytest.mark.asyncio
+    async def test_fake_data_email(self, ph):
+        result = await ph.execute("fake_data", {"type": "email", "count": 2})
+        assert "@" in result
