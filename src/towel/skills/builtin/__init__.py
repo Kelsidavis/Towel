@@ -1,0 +1,45 @@
+"""Built-in skills that ship with Towel."""
+
+from towel.skills.builtin.filesystem import FileSystemSkill
+from towel.skills.builtin.shell import ShellSkill
+from towel.skills.builtin.web import WebFetchSkill
+from towel.skills.builtin.memory_skill import MemorySkill
+from towel.skills.builtin.git import GitSkill
+from towel.skills.builtin.search import SearchSkill
+from towel.skills.builtin.clipboard import ClipboardSkill
+from towel.skills.builtin.data import DataSkill
+from towel.skills.builtin.system import SystemSkill
+from towel.skills.builtin.time_skill import TimeSkill
+from towel.skills.builtin.network import NetworkSkill
+from towel.skills.builtin.hash_skill import HashSkill
+from towel.skills.builtin.env_skill import EnvSkill
+from towel.skills.builtin.regex_skill import RegexSkill
+
+__all__ = [
+    "FileSystemSkill", "ShellSkill", "WebFetchSkill", "MemorySkill",
+    "GitSkill", "SearchSkill", "ClipboardSkill", "DataSkill", "SystemSkill",
+    "TimeSkill", "NetworkSkill", "HashSkill", "EnvSkill", "RegexSkill",
+]
+
+
+def register_builtins(
+    registry: "towel.skills.registry.SkillRegistry",
+    memory_store: "towel.memory.store.MemoryStore | None" = None,
+) -> None:
+    """Register all built-in skills."""
+    from towel.skills.registry import SkillRegistry
+
+    registry.register(FileSystemSkill())
+    registry.register(ShellSkill())
+    registry.register(WebFetchSkill())
+    registry.register(MemorySkill(store=memory_store))
+    registry.register(GitSkill())
+    registry.register(SearchSkill())
+    registry.register(ClipboardSkill())
+    registry.register(DataSkill())
+    registry.register(SystemSkill())
+    registry.register(TimeSkill())
+    registry.register(NetworkSkill())
+    registry.register(HashSkill())
+    registry.register(EnvSkill())
+    registry.register(RegexSkill())
