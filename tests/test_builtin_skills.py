@@ -1762,3 +1762,68 @@ class TestChangelogGenSkill:
     def test_tools(self, clog):
         names = {t.name for t in clog.tools()}
         assert names == {"changelog_generate"}
+
+
+class TestNoteSkill:
+    @pytest.fixture(autouse=True)
+    def reset(self):
+        from towel.skills.builtin.note_skill import _notes
+        _notes.clear()
+
+    @pytest.fixture
+    def note(self):
+        from towel.skills.builtin.note_skill import NoteSkill
+        return NoteSkill()
+
+    @pytest.mark.asyncio
+    async def test_set_and_get(self, note):
+        await note.execute("note_set", {"key": "api_url", "value": "http://localhost:8080"})
+        result = await note.execute("note_get", {"key": "api_url"})
+        assert "http://localhost:8080" in result
+
+    @pytest.mark.asyncio
+    async def test_list(self, note):
+        await note.execute("note_set", {"key": "a", "value": "1"})
+        await note.execute("note_set", {"key": "b", "value": "2"})
+        result = await note.execute("note_list", {})
+        assert "a" in result and "b" in result
+
+    @pytest.mark.asyncio
+    async def test_clear(self, note):
+        await note.execute("note_set", {"key": "x", "value": "y"})
+        result = await note.execute("note_clear", {})
+        assert "Cleared 1" in result
+        result = await note.execute("note_list", {})
+        assert "No notes" in result
+
+
+class TestHooks:
+    def test_hook_registry(self):
+        from towel.agent.hooks import HookRegistry
+        reg = HookRegistry()
+        called = []
+        async def my_hook(**kw): called.append(kw)
+        reg.on("test_event", "my_hook", my_hook)
+        assert reg.count == 1
+        assert "test_event" in reg.list_hooks()
+
+    @pytest.mark.asyncio
+    async def test_hook_emit(self):
+        from towel.agent.hooks import HookRegistry
+        reg = HookRegistry()
+        results = []
+        async def capture(**kw): results.append(kw)
+        reg.on("on_message", "capture", capture)
+        await reg.emit("on_message", text="hello")
+        assert len(results) == 1
+        assert results[0]["text"] == "hello"
+
+    @pytest.mark.asyncio
+    async def test_hook_off(self):
+        from towel.agent.hooks import HookRegistry
+        reg = HookRegistry()
+        async def noop(**kw): pass
+        reg.on("evt", "noop", noop)
+        assert reg.count == 1
+        reg.off("evt", "noop")
+        assert reg.count == 0
