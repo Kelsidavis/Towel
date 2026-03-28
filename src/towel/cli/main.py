@@ -2941,3 +2941,29 @@ def share(conversation_id: str | None, fmt: str, expire: str) -> None:
             console.print(f"[red]Upload failed:[/red] HTTP {resp.status_code}")
     except Exception as e:
         console.print(f"[red]Share failed:[/red] {e}")
+
+
+@cli.command()
+def repl() -> None:
+    """Interactive tool REPL — run skills directly without AI.
+
+    \b
+    Execute any of the 263 tools instantly, no model inference needed.
+    Much faster than chat for quick tool access.
+
+    \b
+    Examples inside the REPL:
+        tool> list                     show all tools
+        tool> list git                 show git skill tools
+        tool> weather_now city=Tokyo   run a tool with args
+        tool> hash_text text=hello     compute a hash
+        tool> random_quote             get a quote
+        tool> exit
+    """
+    config = TowelConfig.load()
+    from towel.memory.store import MemoryStore
+    memory = MemoryStore()
+    skills = _build_skill_registry(config, memory_store=memory)
+
+    from towel.cli.repl import run_repl
+    run_repl(skills)
