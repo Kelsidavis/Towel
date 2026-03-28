@@ -124,6 +124,25 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
 .message .content pre { background:var(--bg); border:1px solid var(--border);
   border-radius:6px; padding:12px; overflow-x:auto; margin:8px 0;
   font-family:var(--mono); font-size:13px; line-height:1.5; }
+/* ── Command Palette ── */
+#cmd-palette-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000;
+  display:none; align-items:flex-start; justify-content:center; padding-top:20vh;
+  backdrop-filter:blur(2px); }
+#cmd-palette-overlay.visible { display:flex; }
+#cmd-palette { width:480px; max-width:90vw; background:var(--bg-surface); border:1px solid var(--border);
+  border-radius:10px; box-shadow:0 8px 32px rgba(0,0,0,0.4); overflow:hidden; }
+#cmd-palette input { width:100%; padding:14px 16px; background:transparent; border:none;
+  border-bottom:1px solid var(--border); color:var(--text); font-size:15px;
+  font-family:var(--sans); outline:none; }
+#cmd-palette input::placeholder { color:var(--text-dim); }
+#cmd-results { max-height:300px; overflow-y:auto; }
+.cmd-item { padding:10px 16px; cursor:pointer; display:flex; align-items:center; gap:10px;
+  transition:background .1s; font-size:13px; }
+.cmd-item:hover, .cmd-item.selected { background:var(--bg-hover); }
+.cmd-item .cmd-icon { color:var(--text-dim); font-size:14px; width:20px; text-align:center; }
+.cmd-item .cmd-label { flex:1; }
+.cmd-item .cmd-hint { color:var(--text-dim); font-size:11px; font-family:var(--mono); }
+
 .tool-call { margin:6px 0; padding:8px 12px; background:rgba(230,200,76,0.06);
   border-left:3px solid var(--yellow); border-radius:0 6px 6px 0;
   font-family:var(--mono); font-size:12px; color:var(--yellow); }
@@ -194,6 +213,13 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
 </style>
 </head>
 <body>
+
+<div id="cmd-palette-overlay">
+  <div id="cmd-palette">
+    <input id="cmd-input" type="text" placeholder="Type a command..." autocomplete="off">
+    <div id="cmd-results"></div>
+  </div>
+</div>
 
 <div id="sidebar">
   <div id="sidebar-header">
@@ -611,8 +637,86 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   newChatBtn.addEventListener('click',startNewChat);
   convSearchEl.addEventListener('input',function(){renderConversationList(this.value);});
 
+  // ── Command Palette ──
+  const cmdOverlay = document.getElementById('cmd-palette-overlay');
+  const cmdInput = document.getElementById('cmd-input');
+  const cmdResults = document.getElementById('cmd-results');
+
+  const CMD_ACTIONS = [
+    {icon:'✚', label:'New Chat', hint:'Ctrl+N', action:()=>startNewChat()},
+    {icon:'🔍', label:'Search Conversations', hint:'Ctrl+K', action:()=>{closePalette();convSearchEl.focus();convSearchEl.select();}},
+    {icon:'🎨', label:'Cycle Theme', hint:'Ctrl+T', action:()=>cycleTheme()},
+    {icon:'📤', label:'Export Conversation', hint:'Ctrl+E', action:()=>exportConversation()},
+    {icon:'🗑', label:'Delete Conversation', hint:'', action:()=>deleteCurrentConversation()},
+    {icon:'✏️', label:'Clear Input', hint:'Ctrl+L', action:()=>{inputEl.value='';autoResize();inputEl.focus();}},
+    {icon:'⏹', label:'Stop Generation', hint:'Esc', action:()=>stopGeneration()},
+  ];
+
+  // Add conversations as palette entries
+  function getPaletteItems(query) {
+    const q = query.toLowerCase();
+    let items = [];
+    // Actions
+    for (const a of CMD_ACTIONS) {
+      if (!q || a.label.toLowerCase().includes(q)) {
+        items.push(a);
+      }
+    }
+    // Conversations
+    if (q.length >= 1) {
+      for (const c of allConversations) {
+        const title = c.title || c.summary || c.id;
+        if (title.toLowerCase().includes(q) || c.id.toLowerCase().includes(q)) {
+          items.push({icon:'💬', label:title, hint:c.id.slice(0,8), action:()=>switchSession(c.id)});
+        }
+      }
+    }
+    return items.slice(0, 12);
+  }
+
+  let cmdSelectedIdx = 0;
+
+  function openPalette() {
+    cmdOverlay.classList.add('visible');
+    cmdInput.value = '';
+    cmdSelectedIdx = 0;
+    renderPalette('');
+    cmdInput.focus();
+  }
+
+  function closePalette() {
+    cmdOverlay.classList.remove('visible');
+    inputEl.focus();
+  }
+
+  function renderPalette(query) {
+    const items = getPaletteItems(query);
+    cmdResults.innerHTML = '';
+    items.forEach((item, i) => {
+      const el = document.createElement('div');
+      el.className = 'cmd-item' + (i === cmdSelectedIdx ? ' selected' : '');
+      el.innerHTML = `<span class="cmd-icon">${item.icon}</span>
+        <span class="cmd-label">${escHtml(item.label)}</span>
+        <span class="cmd-hint">${item.hint||''}</span>`;
+      el.addEventListener('click', () => { closePalette(); item.action(); });
+      cmdResults.appendChild(el);
+    });
+  }
+
+  cmdInput.addEventListener('input', () => { cmdSelectedIdx = 0; renderPalette(cmdInput.value); });
+  cmdInput.addEventListener('keydown', (e) => {
+    const items = getPaletteItems(cmdInput.value);
+    if (e.key === 'ArrowDown') { e.preventDefault(); cmdSelectedIdx = Math.min(cmdSelectedIdx + 1, items.length - 1); renderPalette(cmdInput.value); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); cmdSelectedIdx = Math.max(cmdSelectedIdx - 1, 0); renderPalette(cmdInput.value); }
+    else if (e.key === 'Enter' && items[cmdSelectedIdx]) { e.preventDefault(); closePalette(); items[cmdSelectedIdx].action(); }
+    else if (e.key === 'Escape') { closePalette(); }
+  });
+  cmdOverlay.addEventListener('click', (e) => { if (e.target === cmdOverlay) closePalette(); });
+
   // ── Keyboard shortcuts ──
   document.addEventListener('keydown',function(e){
+    // Ctrl/Cmd+P — command palette
+    if((e.ctrlKey||e.metaKey)&&e.key==='p'){e.preventDefault();openPalette();return;}
     // Ctrl/Cmd+N — new chat
     if((e.ctrlKey||e.metaKey)&&e.key==='n'){e.preventDefault();startNewChat();}
     // Ctrl/Cmd+K — focus search
@@ -623,20 +727,6 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     if((e.ctrlKey||e.metaKey)&&e.key==='e'){e.preventDefault();exportConversation();}
     // Ctrl/Cmd+T — cycle theme
     if((e.ctrlKey||e.metaKey)&&e.key==='t'){e.preventDefault();cycleTheme();}
-    // Ctrl/Cmd+/ — show keyboard shortcuts help
-    if((e.ctrlKey||e.metaKey)&&e.key==='/'){
-      e.preventDefault();
-      const helpText='Keyboard shortcuts:\n\n'+
-        'Ctrl+N  New chat\n'+
-        'Ctrl+K  Focus search\n'+
-        'Ctrl+L  Clear input\n'+
-        'Ctrl+E  Export conversation\n'+
-        'Ctrl+T  Cycle theme\n'+
-        'Escape  Stop generation\n'+
-        'Enter   Send message\n'+
-        'Shift+Enter  New line';
-      alert(helpText);
-    }
   });
 
   // ── Init ──
