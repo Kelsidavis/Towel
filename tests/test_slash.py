@@ -135,6 +135,34 @@ class TestRetry:
         assert result is True  # no assistant to remove
 
 
+class TestFork:
+    def test_fork_creates_branch(self, ctx):
+        old_id = ctx.conv.id
+        handle_slash("/fork", ctx)
+        # ID should change
+        assert ctx.conv.id != old_id
+        # Messages preserved
+        assert len(ctx.conv) == 2
+        # Original was saved
+        ctx.store.save.assert_called()
+
+    def test_fork_with_custom_title(self, ctx):
+        handle_slash("/fork My exploration branch", ctx)
+        assert ctx.conv.title == "My exploration branch"
+
+    def test_fork_empty(self, ctx):
+        ctx.conv.messages.clear()
+        old_id = ctx.conv.id
+        handle_slash("/fork", ctx)
+        # Should not fork, ID unchanged
+        assert ctx.conv.id == old_id
+
+    def test_fork_preserves_message_content(self, ctx):
+        handle_slash("/fork", ctx)
+        assert ctx.conv.messages[0].content == "hello"
+        assert ctx.conv.messages[1].content == "hi there"
+
+
 class TestExport:
     def test_export_empty(self, ctx):
         ctx.conv.messages.clear()

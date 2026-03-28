@@ -42,6 +42,7 @@ HELP_TEXT = """[bold]Chat commands:[/bold]
   [green]/stats[/green]                Show session statistics (tokens, speed, cost)
   [green]/undo[/green]                 Remove last exchange (your message + response)
   [green]/retry[/green]                Remove last response and regenerate
+  [green]/fork[/green]                 Save current conversation and start a branch
   [green]/clear[/green]                Clear conversation history
   [green]/agent[/green] [name]         Switch agent / show current
   [green]/agents[/green]               List available agents
@@ -109,6 +110,9 @@ def handle_slash(user_input: str, ctx: SlashContext) -> bool | None:
 
         case "/retry":
             return _cmd_retry(ctx)
+
+        case "/fork":
+            _cmd_fork(ctx, arg)
 
         case "/clear":
             _cmd_clear(ctx)
@@ -294,6 +298,50 @@ def _cmd_retry(ctx: SlashContext) -> bool | None:
 
     # Return False to signal "run agent step" — the user message is already in conv
     return False
+
+
+def _cmd_fork(ctx: SlashContext, arg: str) -> None:
+    """Save current conversation and start a new branch with the same history."""
+    import uuid
+    from towel.agent.conversation import Conversation, Message
+
+    if not ctx.conv.messages:
+        console.print("[dim]Nothing to fork (conversation is empty).[/dim]")
+        return
+
+    # Save the current conversation first
+    old_id = ctx.conv.id
+    old_title = ctx.conv.display_title
+    ctx.store.save(ctx.conv)
+
+    # Create a new conversation with a copy of all messages
+    new_id = uuid.uuid4().hex[:16]
+    fork_title = arg.strip() if arg.strip() else f"Fork of {old_title}"
+
+    new_conv = Conversation(
+        id=new_id,
+        title=fork_title,
+        channel=ctx.conv.channel,
+        created_at=ctx.conv.created_at,
+    )
+    for msg in ctx.conv.messages:
+        new_conv.messages.append(Message(
+            role=msg.role,
+            content=msg.content,
+            timestamp=msg.timestamp,
+            metadata=dict(msg.metadata),
+            id=msg.id,
+        ))
+
+    # Switch to the fork
+    ctx.conv.id = new_conv.id
+    ctx.conv.title = new_conv.title
+    ctx.conv.messages = new_conv.messages
+
+    console.print(f"[green]Forked![/green] Original saved as [dim]{old_id}[/dim]")
+    console.print(f"  New branch: [bold]{fork_title}[/bold] ({new_id})")
+    console.print(f"  {len(ctx.conv)} messages carried over")
+    console.print(f"[dim]Resume original later: towel resume {old_id}[/dim]")
 
 
 def _cmd_clear(ctx: SlashContext) -> None:
