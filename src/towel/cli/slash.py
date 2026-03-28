@@ -40,6 +40,8 @@ HELP_TEXT = """[bold]Chat commands:[/bold]
   [green]/help[/green]                 Show this help
   [green]/info[/green]                 Show session info
   [green]/stats[/green]                Show session statistics (tokens, speed, cost)
+  [green]/undo[/green]                 Remove last exchange (your message + response)
+  [green]/retry[/green]                Remove last response and regenerate
   [green]/clear[/green]                Clear conversation history
   [green]/agent[/green] [name]         Switch agent / show current
   [green]/agents[/green]               List available agents
@@ -101,6 +103,12 @@ def handle_slash(user_input: str, ctx: SlashContext) -> bool | None:
 
         case "/stats":
             _cmd_stats(ctx)
+
+        case "/undo":
+            _cmd_undo(ctx)
+
+        case "/retry":
+            return _cmd_retry(ctx)
 
         case "/clear":
             _cmd_clear(ctx)
@@ -229,6 +237,63 @@ def _cmd_stats(ctx: SlashContext) -> None:
             est = (total_tokens / 1_000_000) * cost_per_m
             console.print(f"    [dim]{provider}: ~${est:.4f}[/dim]")
         console.print(f"    [green]Towel (local): $0.00[/green]")
+
+
+def _cmd_undo(ctx: SlashContext) -> None:
+    """Remove the last exchange (assistant response + user message that triggered it)."""
+    from towel.agent.conversation import Role
+
+    if not ctx.conv.messages:
+        console.print("[dim]Nothing to undo.[/dim]")
+        return
+
+    removed = 0
+    # Remove trailing tool/assistant messages
+    while ctx.conv.messages and ctx.conv.messages[-1].role in (Role.ASSISTANT, Role.TOOL):
+        ctx.conv.messages.pop()
+        removed += 1
+
+    # Remove the user message that triggered them
+    if ctx.conv.messages and ctx.conv.messages[-1].role == Role.USER:
+        ctx.conv.messages.pop()
+        removed += 1
+
+    console.print(f"[green]Undid {removed} message(s).[/green]")
+
+
+def _cmd_retry(ctx: SlashContext) -> bool | None:
+    """Remove last response and re-run the agent on the same user message.
+
+    Returns False to signal the caller to run an agent step (the user
+    message is already in the conversation).
+    """
+    from towel.agent.conversation import Role
+
+    if not ctx.conv.messages:
+        console.print("[dim]Nothing to retry.[/dim]")
+        return True  # consumed, nothing to do
+
+    # Remove trailing tool/assistant messages
+    removed = 0
+    while ctx.conv.messages and ctx.conv.messages[-1].role in (Role.ASSISTANT, Role.TOOL):
+        ctx.conv.messages.pop()
+        removed += 1
+
+    if removed == 0:
+        console.print("[dim]No assistant response to retry.[/dim]")
+        return True
+
+    # Check there's still a user message to re-run
+    if not ctx.conv.messages or ctx.conv.messages[-1].role != Role.USER:
+        console.print("[dim]No user message to retry.[/dim]")
+        return True
+
+    last_user = ctx.conv.messages[-1].content
+    preview = last_user[:60] + "..." if len(last_user) > 60 else last_user
+    console.print(f"[green]Retrying:[/green] {preview}")
+
+    # Return False to signal "run agent step" — the user message is already in conv
+    return False
 
 
 def _cmd_clear(ctx: SlashContext) -> None:

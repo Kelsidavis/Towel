@@ -93,6 +93,48 @@ class TestMemoryCommands:
         handle_slash("/forget nope", ctx)  # should not crash
 
 
+class TestUndo:
+    def test_undo_removes_exchange(self, ctx):
+        # ctx has: user("hello"), assistant("hi there")
+        assert len(ctx.conv) == 2
+        handle_slash("/undo", ctx)
+        assert len(ctx.conv) == 0  # both removed
+
+    def test_undo_with_tool_messages(self, ctx):
+        ctx.conv.add(Role.USER, "read file")
+        ctx.conv.add(Role.TOOL, "[read_file] contents")
+        ctx.conv.add(Role.ASSISTANT, "here are the contents")
+        assert len(ctx.conv) == 5
+        handle_slash("/undo", ctx)
+        # Should remove: assistant + tool + user = 3, leaving original 2
+        assert len(ctx.conv) == 2
+
+    def test_undo_empty(self, ctx):
+        ctx.conv.messages.clear()
+        handle_slash("/undo", ctx)  # should not crash
+
+
+class TestRetry:
+    def test_retry_returns_false(self, ctx):
+        # ctx has: user("hello"), assistant("hi there")
+        result = handle_slash("/retry", ctx)
+        assert result is False  # signals "run agent step"
+        # Assistant message removed, user message kept
+        assert len(ctx.conv) == 1
+        assert ctx.conv.messages[0].content == "hello"
+
+    def test_retry_empty(self, ctx):
+        ctx.conv.messages.clear()
+        result = handle_slash("/retry", ctx)
+        assert result is True  # consumed, nothing to do
+
+    def test_retry_no_assistant(self, ctx):
+        ctx.conv.messages.clear()
+        ctx.conv.add(Role.USER, "hello")
+        result = handle_slash("/retry", ctx)
+        assert result is True  # no assistant to remove
+
+
 class TestExport:
     def test_export_empty(self, ctx):
         ctx.conv.messages.clear()
