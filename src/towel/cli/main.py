@@ -1887,3 +1887,102 @@ def review(staged: bool, commit: str | None, focus: str | None, raw: bool) -> No
                             console.print(f"[dim]({meta['tps']:.1f} tok/s, {meta.get('tokens', 0)} tokens)[/dim]")
 
     asyncio.run(_run())
+
+
+@cli.command(name="commit")
+@click.option("--all", "-a", "stage_all", is_flag=True, help="Stage all changes before committing")
+@click.option("--edit", "-e", is_flag=True, help="Open the message in $EDITOR before committing")
+@click.option("--dry-run", is_flag=True, help="Generate message but don't commit")
+def commit_cmd(stage_all: bool, edit: bool, dry_run: bool) -> None:
+    """Generate an AI commit message and commit.
+
+    \b
+    Reads staged git changes, generates a conventional commit message,
+    and commits — all in one step.
+
+    \b
+    Examples:
+        git add -p && towel commit     Stage manually, then commit
+        towel commit -a                Stage all and commit
+        towel commit --dry-run         Just show the generated message
+        towel commit -e                Edit message before committing
+    """
+    import subprocess
+    import tempfile
+
+    if stage_all:
+        subprocess.run(["git", "add", "-A"], capture_output=True)
+
+    result = subprocess.run(["git", "diff", "--cached", "--stat"], capture_output=True, text=True)
+    stat = result.stdout.strip()
+    if not stat:
+        console.print("[dim]Nothing staged to commit.[/dim]")
+        console.print("[dim]Stage changes first: git add <files>  or  towel commit -a[/dim]")
+        return
+
+    diff_result = subprocess.run(["git", "diff", "--cached"], capture_output=True, text=True)
+    diff = diff_result.stdout
+
+    console.print(f"[dim]Staged:[/dim] {stat.splitlines()[-1].strip()}")
+
+    prompt = (
+        "Write a git commit message for the following diff. "
+        "Use conventional commits format (feat/fix/refactor/docs/test/chore). "
+        "First line: type(scope): description (under 72 chars). "
+        "Then blank line, then bullet points for details if non-trivial. "
+        "Be specific but concise. Output ONLY the commit message.\n\n"
+        f"```diff\n{diff[:30000]}\n```"
+    )
+
+    config = TowelConfig.load()
+    from towel.agent.runtime import AgentRuntime
+    from towel.agent.conversation import Conversation, Role
+    from towel.memory.store import MemoryStore
+
+    memory = MemoryStore()
+    skills_reg = _build_skill_registry(config, memory_store=memory)
+    agent_rt = AgentRuntime(config, skills=skills_reg, memory=memory)
+    conv = Conversation(channel="commit")
+    conv.add(Role.USER, prompt)
+
+    async def _gen() -> str:
+        await agent_rt.load_model()
+        resp = await agent_rt.step(conv)
+        return resp.content.strip()
+
+    console.print("[dim]Generating commit message...[/dim]")
+    commit_msg = asyncio.run(_gen())
+
+    # Strip markdown fences if model wrapped it
+    if commit_msg.startswith("```"):
+        lines = commit_msg.splitlines()
+        commit_msg = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
+
+    console.print(f"\n[bold green]Commit message:[/bold green]")
+    console.print(f"[cyan]{commit_msg}[/cyan]\n")
+
+    if dry_run:
+        console.print("[dim]Dry run — not committed.[/dim]")
+        return
+
+    if edit:
+        editor = os.environ.get("EDITOR", "vim")
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write(commit_msg)
+            tmpfile = f.name
+        subprocess.run([editor, tmpfile])
+        with open(tmpfile) as f:
+            commit_msg = f.read().strip()
+        os.unlink(tmpfile)
+        if not commit_msg:
+            console.print("[dim]Empty message — commit aborted.[/dim]")
+            return
+
+    cresult = subprocess.run(["git", "commit", "-m", commit_msg], capture_output=True, text=True)
+    if cresult.returncode == 0:
+        console.print(f"[green]Committed![/green]")
+        log = subprocess.run(["git", "log", "--oneline", "-1"], capture_output=True, text=True)
+        if log.stdout.strip():
+            console.print(f"  [dim]{log.stdout.strip()}[/dim]")
+    else:
+        console.print(f"[red]Commit failed:[/red] {cresult.stderr.strip()}")

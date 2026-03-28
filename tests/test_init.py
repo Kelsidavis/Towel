@@ -102,7 +102,7 @@ class TestCLICommands:
     """Verify all CLI commands are registered and show help."""
 
     @pytest.mark.parametrize("cmd", [
-        "bench", "config", "doctor", "gc", "history", "log",
+        "bench", "commit", "config", "doctor", "gc", "history", "log",
         "review", "search", "show", "skills", "status", "templates", "watch",
     ])
     def test_command_help(self, cmd):
