@@ -1660,3 +1660,115 @@ def bench(prompt: str, tokens: int, rounds: int) -> None:
         title="Results",
         border_style="green",
     ))
+
+
+@cli.command()
+@click.argument("files", nargs=-1, required=True, type=click.Path(exists=True))
+@click.option("--prompt", "-p", default=None, help="Prompt to run on each file change (default: review)")
+@click.option("--interval", "-i", default=2.0, help="Poll interval in seconds (default: 2)")
+@click.option("--once", is_flag=True, help="Run once and exit (no watching)")
+def watch(files: tuple[str, ...], prompt: str | None, interval: float, once: bool) -> None:
+    """Watch files and re-run a prompt when they change.
+
+    \b
+    Great for live development — get instant AI feedback on save.
+
+    \b
+    Examples:
+        towel watch src/main.py
+        towel watch src/*.py -p "find bugs in this code"
+        towel watch test.py -p "suggest better test names" --once
+        towel watch app.py config.yaml -i 5
+    """
+    import time as time_mod
+    from pathlib import Path
+
+    config = TowelConfig.load()
+    paths = [Path(f) for f in files]
+
+    default_prompt = prompt or "Review this code. Point out any bugs, issues, or improvements."
+
+    # Get initial mtimes
+    def get_mtimes() -> dict[str, float]:
+        result = {}
+        for p in paths:
+            try:
+                result[str(p)] = p.stat().st_mtime
+            except OSError:
+                pass
+        return result
+
+    def run_prompt(changed_files: list[str]) -> None:
+        """Run the prompt on changed files using towel ask logic."""
+        from towel.agent.runtime import AgentRuntime
+        from towel.agent.conversation import Conversation, Role
+        from towel.memory.store import MemoryStore
+
+        memory = MemoryStore()
+        skills = _build_skill_registry(config, memory_store=memory)
+        agent_rt = AgentRuntime(config, skills=skills, memory=memory)
+        conv = Conversation(channel="watch")
+
+        # Build content from changed files
+        file_blocks = []
+        for fpath in changed_files:
+            try:
+                content = Path(fpath).read_text(encoding="utf-8", errors="replace")
+                name = Path(fpath).name
+                ext = Path(fpath).suffix.lstrip(".")
+                file_blocks.append(f"**{name}**:\n```{ext}\n{content}\n```")
+            except OSError as e:
+                file_blocks.append(f"**{fpath}**: (error: {e})")
+
+        full = f"{default_prompt}\n\n" + "\n\n".join(file_blocks)
+        conv.add(Role.USER, full)
+
+        async def _run() -> None:
+            await agent_rt.load_model()
+            response = await agent_rt.step(conv)
+            console.print(f"\n[bold green]towel>[/bold green] {response.content}")
+            meta = response.metadata
+            if meta.get("tps"):
+                console.print(f"[dim]({meta['tps']:.1f} tok/s, {meta.get('tokens', 0)} tokens)[/dim]")
+
+        asyncio.run(_run())
+
+    console.print(Panel(
+        f"[bold]Watching {len(paths)} file(s)[/bold]\n"
+        + "\n".join(f"  [green]{p}[/green]" for p in paths)
+        + f"\n\n[dim]Prompt: {default_prompt[:60]}{'...' if len(default_prompt) > 60 else ''}[/dim]"
+        + f"\n[dim]Interval: {interval}s · {'once' if once else 'continuous (Ctrl+C to stop)'}[/dim]",
+        border_style="cyan",
+        title="towel watch",
+    ))
+
+    prev_mtimes = get_mtimes()
+
+    if once:
+        # Run immediately on all files
+        console.print(f"\n[dim]Running on {len(paths)} file(s)...[/dim]")
+        run_prompt([str(p) for p in paths])
+        return
+
+    # Run on initial state
+    console.print(f"\n[dim]Waiting for changes...[/dim]")
+
+    try:
+        while True:
+            time_mod.sleep(interval)
+            curr_mtimes = get_mtimes()
+
+            changed = []
+            for fpath, mtime in curr_mtimes.items():
+                if fpath not in prev_mtimes or mtime != prev_mtimes[fpath]:
+                    changed.append(fpath)
+
+            if changed:
+                ts = time_mod.strftime("%H:%M:%S")
+                console.print(f"\n[yellow]{ts}[/yellow] Changed: {', '.join(Path(f).name for f in changed)}")
+                run_prompt(changed)
+                console.print(f"\n[dim]Waiting for changes...[/dim]")
+                prev_mtimes = curr_mtimes
+
+    except KeyboardInterrupt:
+        console.print("\n[dim]Stopped watching.[/dim]")
