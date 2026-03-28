@@ -5,8 +5,8 @@
 [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-MLX-black?logo=apple)](https://ml-explore.github.io/mlx/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://docs.astral.sh/ruff/)
-[![Tests](https://img.shields.io/badge/tests-770%2B%20passing-brightgreen)]()
-[![Skills](https://img.shields.io/badge/skills-58%20built--in-blue)]()
+[![Tests](https://img.shields.io/badge/tests-800%2B%20passing-brightgreen)]()
+[![Skills](https://img.shields.io/badge/skills-60%20built--in-blue)]()
 
 **Don't Panic.**
 
@@ -30,7 +30,7 @@ towel ask "explain monads"  # one-shot query (pipeable)
 cat code.py | towel ask "review this"
 ```
 
-### Developer Tools
+### Developer CLI
 
 ```bash
 towel review                # AI code review of git changes
@@ -77,7 +77,7 @@ towel gc                    # clean up old conversations
 | `/alias` / `/snippet` | Custom shortcuts and text blocks |
 | `/t review @file` | Apply prompt templates |
 
-### 40 Built-in Skills
+### 60 Built-in Skills
 
 The agent has tools for:
 
@@ -167,7 +167,7 @@ towel skill-init my_tool    # generate a skill skeleton
 │     WebSocket + HTTP + OpenAI-compat API     │
 │                                              │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
-│  │ Sessions  │  │ Routing  │  │ 40 Skills │  │
+│  │ Sessions  │  │ Routing  │  │ 60 Skills │  │
 │  └──────────┘  └──────────┘  └──────────┘  │
 └──────────┬───────────────────────┬───────────┘
            │                       │
