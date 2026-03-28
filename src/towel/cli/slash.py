@@ -74,6 +74,7 @@ HELP_TEXT = """[bold]Chat commands:[/bold]
   [green]/alias[/green] <name> <prompt> Create a prompt shortcut (e.g., /alias review Review this code)
   [green]/aliases[/green]              List all defined aliases
   [green]/unalias[/green] <name>       Remove an alias
+  [green]/delegate[/green] <role> <task> Delegate to specialist (coder, reviewer, architect...)
   [green]/health[/green]              Show agent health and error counts
   [green]/loop[/green] <interval> <prompt> Run a prompt on a recurring interval (e.g., /loop 5m check status)
   [green]/system[/green] <prompt>      Override the system prompt
@@ -208,6 +209,9 @@ def handle_slash(user_input: str, ctx: SlashContext) -> bool | None:
 
         case "/context":
             _cmd_context(ctx)
+
+        case "/delegate":
+            return _cmd_delegate(ctx, arg)
 
         case "/health":
             _cmd_health(ctx)
@@ -1467,3 +1471,31 @@ def _cmd_health(ctx: SlashContext) -> None:
     console.print(f"  Errors: {status.total_errors} ({status.consecutive_errors} consecutive)")
     console.print(f"  Model loaded: {'yes' if status.model_loaded else 'no'}")
     console.print(f"  Generating: {'yes' if status.is_generating else 'no'}")
+
+
+def _cmd_delegate(ctx: SlashContext, arg: str) -> bool | None:
+    """Delegate a task to a specialist agent role."""
+    from towel.agent.conversation import Role
+
+    parts = arg.strip().split(None, 1)
+    if len(parts) < 2:
+        console.print("[red]Usage:[/red] /delegate <role> <task>")
+        console.print("  Roles: coder, researcher, reviewer, writer, architect, tester, debugger")
+        console.print("  Example: /delegate reviewer check my auth code for security issues")
+        return True
+
+    role, task = parts[0].lower(), parts[1]
+
+    from towel.agent.orchestrator import ROLE_PROMPTS
+    if role not in ROLE_PROMPTS:
+        console.print(f"[red]Unknown role:[/red] {role}")
+        console.print(f"[dim]Available: {', '.join(sorted(ROLE_PROMPTS.keys()))}[/dim]")
+        return True
+
+    # Inject the specialist prompt + task as user message
+    specialist_prompt = ROLE_PROMPTS[role]
+    full_msg = f"[Acting as {role}]\n\nSystem context: {specialist_prompt}\n\nTask: {task}"
+
+    console.print(f"[dim]  delegating to: {role}[/dim]")
+    ctx.conv.add(Role.USER, full_msg)
+    return False  # signal agent step
