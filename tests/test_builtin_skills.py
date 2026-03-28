@@ -1715,3 +1715,50 @@ class TestWebhookTriggerSkill:
     def test_tools(self, wh):
         names = {t.name for t in wh.tools()}
         assert names == {"webhook_send", "slack_message", "discord_message"}
+
+
+class TestDiagramSkill:
+    @pytest.fixture
+    def dia(self):
+        from towel.skills.builtin.diagram_skill import DiagramSkill
+        return DiagramSkill()
+
+    @pytest.mark.asyncio
+    async def test_flow_vertical(self, dia):
+        result = await dia.execute("diagram_flow", {"steps": ["Start", "Process", "End"]})
+        assert "Start" in result
+        assert "Process" in result
+        assert "|" in result
+
+    @pytest.mark.asyncio
+    async def test_flow_horizontal(self, dia):
+        result = await dia.execute("diagram_flow", {"steps": ["A", "B", "C"], "direction": "horizontal"})
+        assert "-->" in result
+        assert "[A]" in result
+
+    @pytest.mark.asyncio
+    async def test_tree(self, dia):
+        result = await dia.execute("diagram_tree", {"root": "src", "children": "components\n  Button\n  Card\nutils\n  helpers"})
+        assert "src" in result
+        assert "├" in result or "└" in result
+
+    @pytest.mark.asyncio
+    async def test_sequence(self, dia):
+        result = await dia.execute("diagram_sequence", {
+            "actors": ["Client", "Server", "DB"],
+            "messages": ["Client->Server: GET /api", "Server->DB: SELECT *", "DB->Server: rows", "Server->Client: 200 OK"],
+        })
+        assert "Client" in result
+        assert "Server" in result
+        assert ">" in result
+
+
+class TestChangelogGenSkill:
+    @pytest.fixture
+    def clog(self):
+        from towel.skills.builtin.changelog_gen_skill import ChangelogGenSkill
+        return ChangelogGenSkill()
+
+    def test_tools(self, clog):
+        names = {t.name for t in clog.tools()}
+        assert names == {"changelog_generate"}
