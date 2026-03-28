@@ -11,11 +11,12 @@ from towel.skills.builtin.data import DataSkill
 from towel.skills.builtin.system import SystemSkill
 from towel.skills.builtin.time_skill import TimeSkill
 from towel.skills.builtin.network import NetworkSkill
+from towel.skills.builtin.hash_skill import HashSkill
 
 __all__ = [
     "FileSystemSkill", "ShellSkill", "WebFetchSkill", "MemorySkill",
     "GitSkill", "SearchSkill", "ClipboardSkill", "DataSkill", "SystemSkill",
-    "TimeSkill", "NetworkSkill",
+    "TimeSkill", "NetworkSkill", "HashSkill",
 ]
 
 
@@ -37,3 +38,4 @@ def register_builtins(
     registry.register(SystemSkill())
     registry.register(TimeSkill())
     registry.register(NetworkSkill())
+    registry.register(HashSkill())

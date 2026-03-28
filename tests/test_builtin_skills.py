@@ -195,6 +195,61 @@ class TestNetworkSkill:
         assert "200" in result or "TIMEOUT" in result or "ERROR" in result
 
 
+class TestHashSkill:
+    @pytest.fixture
+    def hash_skill(self):
+        from towel.skills.builtin.hash_skill import HashSkill
+        return HashSkill()
+
+    def test_tools_defined(self, hash_skill):
+        tools = hash_skill.tools()
+        names = {t.name for t in tools}
+        assert names == {"hash_text", "hash_file", "base64_encode", "base64_decode", "url_encode"}
+
+    @pytest.mark.asyncio
+    async def test_hash_sha256(self, hash_skill):
+        result = await hash_skill.execute("hash_text", {"text": "hello"})
+        assert "sha256" in result
+        assert "2cf24dba" in result  # known sha256 prefix for "hello"
+
+    @pytest.mark.asyncio
+    async def test_hash_md5(self, hash_skill):
+        result = await hash_skill.execute("hash_text", {"text": "hello", "algorithm": "md5"})
+        assert "md5" in result
+        assert "5d41402a" in result
+
+    @pytest.mark.asyncio
+    async def test_hash_file(self, hash_skill, tmp_path):
+        f = tmp_path / "test.txt"
+        f.write_text("hello")
+        result = await hash_skill.execute("hash_file", {"path": str(f)})
+        assert "sha256" in result
+        assert "test.txt" in result
+
+    @pytest.mark.asyncio
+    async def test_hash_file_missing(self, hash_skill):
+        result = await hash_skill.execute("hash_file", {"path": "/nonexistent"})
+        assert "not found" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_base64_roundtrip(self, hash_skill):
+        encoded = await hash_skill.execute("base64_encode", {"text": "Don't Panic"})
+        assert "Base64:" in encoded
+        b64_val = encoded.split(": ", 1)[1]
+        decoded = await hash_skill.execute("base64_decode", {"data": b64_val})
+        assert "Don't Panic" in decoded
+
+    @pytest.mark.asyncio
+    async def test_url_encode(self, hash_skill):
+        result = await hash_skill.execute("url_encode", {"text": "hello world&foo=bar"})
+        assert "hello%20world" in result
+
+    @pytest.mark.asyncio
+    async def test_url_decode(self, hash_skill):
+        result = await hash_skill.execute("url_encode", {"text": "hello%20world", "decode": True})
+        assert "hello world" in result
+
+
 class TestRegisterBuiltins:
     def test_registers_all(self):
         reg = SkillRegistry()
@@ -205,4 +260,5 @@ class TestRegisterBuiltins:
         assert "web" in names
         assert "time" in names
         assert "network" in names
+        assert "hash" in names
         assert "system" in names
