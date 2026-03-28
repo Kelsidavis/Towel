@@ -843,3 +843,73 @@ class TestTextSkill:
     async def test_unique_lines(self, txt):
         result = await txt.execute("text_transform", {"text": "a\nb\na\nc\nb", "transform": "unique_lines"})
         assert result == "a\nb\nc"
+
+
+class TestKnowledgeSkill:
+    @pytest.fixture
+    def kb(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("towel.skills.builtin.knowledge_skill.KB_FILE", tmp_path / "kb.json")
+        from towel.skills.builtin.knowledge_skill import KnowledgeSkill
+        return KnowledgeSkill()
+
+    @pytest.mark.asyncio
+    async def test_add_and_search(self, kb):
+        await kb.execute("kb_add", {"content": "Python uses indentation", "tags": ["python", "syntax"]})
+        result = await kb.execute("kb_search", {"query": "indentation"})
+        assert "indentation" in result
+
+    @pytest.mark.asyncio
+    async def test_list(self, kb):
+        await kb.execute("kb_add", {"content": "note 1"})
+        await kb.execute("kb_add", {"content": "note 2"})
+        result = await kb.execute("kb_list", {})
+        assert "2 entries" in result
+
+    @pytest.mark.asyncio
+    async def test_delete(self, kb):
+        await kb.execute("kb_add", {"content": "temp note"})
+        result = await kb.execute("kb_delete", {"index": 0})
+        assert "Deleted" in result
+
+
+class TestTranslateSkill:
+    @pytest.fixture
+    def tr(self):
+        from towel.skills.builtin.translate_skill import TranslateSkill
+        return TranslateSkill()
+
+    @pytest.mark.asyncio
+    async def test_detect_spanish(self, tr):
+        result = await tr.execute("detect_language", {"text": "el gato está en la mesa de la cocina"})
+        assert "Spanish" in result
+
+    @pytest.mark.asyncio
+    async def test_translation_prompt(self, tr):
+        result = await tr.execute("translation_prompt", {"text": "Hello world", "target_language": "French"})
+        assert "French" in result
+        assert "Hello world" in result
+
+
+class TestSecuritySkill:
+    @pytest.fixture
+    def sec(self):
+        from towel.skills.builtin.security_skill import SecuritySkill
+        return SecuritySkill()
+
+    @pytest.mark.asyncio
+    async def test_scan_clean(self, sec, tmp_path):
+        (tmp_path / "clean.py").write_text("x = 42\n")
+        result = await sec.execute("scan_secrets", {"path": str(tmp_path)})
+        assert "No secrets" in result
+
+    @pytest.mark.asyncio
+    async def test_scan_finds_key(self, sec, tmp_path):
+        (tmp_path / "bad.py").write_text('API_KEY = "sk-abc123def456ghi789jkl012mno345pqr"\n')
+        result = await sec.execute("scan_secrets", {"path": str(tmp_path)})
+        assert "API key" in result or "secret" in result.lower() or "OpenAI" in result
+
+    @pytest.mark.asyncio
+    async def test_deps_scan(self, sec, tmp_path):
+        (tmp_path / "requirements.txt").write_text("flask\nrequests\nnumpy==1.24.0\n")
+        result = await sec.execute("scan_dependencies", {"path": str(tmp_path)})
+        assert "unpinned" in result
