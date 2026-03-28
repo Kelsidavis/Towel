@@ -2419,3 +2419,124 @@ def plugins(action: str, name: str) -> None:
     else:
         console.print(f"[red]Unknown action:[/red] {action}")
         console.print("[dim]Actions: list, create, validate[/dim]")
+
+
+@cli.command()
+@click.argument("file", type=click.Path(exists=True))
+@click.argument("error", required=False)
+@click.option("--line", "-l", default=None, type=int, help="Error line number")
+@click.option("--raw", "-r", is_flag=True, help="Plain text output")
+def fix(file: str, error: str | None, line: int | None, raw: bool) -> None:
+    """Fix a bug — give it a file and an error message.
+
+    \b
+    Examples:
+        towel fix src/main.py "TypeError: cannot unpack"
+        towel fix app.py -l 42 "index out of range"
+        python app.py 2>&1 | towel fix app.py
+    """
+    from pathlib import Path
+
+    content = Path(file).read_text(encoding="utf-8", errors="replace")
+    ext = Path(file).suffix.lstrip(".")
+
+    # Read error from stdin if not provided as argument
+    if not error and not sys.stdin.isatty():
+        error = sys.stdin.read().strip()[:5000]
+
+    if not error:
+        console.print("[red]No error message.[/red]")
+        console.print("  towel fix app.py \"the error message\"")
+        console.print("  python app.py 2>&1 | towel fix app.py")
+        return
+
+    # Build focused context around error line
+    if line:
+        lines = content.splitlines()
+        start = max(0, line - 10)
+        end = min(len(lines), line + 10)
+        context = "\n".join(f"{i+1:4d}  {'>>>' if i+1 == line else '   '} {lines[i]}" for i in range(start, end))
+        prompt = (
+            f"Fix the bug in this {ext} code. The error occurs at line {line}.\n\n"
+            f"Error: {error}\n\n"
+            f"Context around line {line}:\n```\n{context}\n```\n\n"
+            f"Full file ({Path(file).name}):\n```{ext}\n{content[:30000]}\n```\n\n"
+            f"Provide the fix with explanation. Show the corrected code."
+        )
+    else:
+        prompt = (
+            f"Fix the bug in this {ext} code.\n\n"
+            f"Error: {error}\n\n"
+            f"File ({Path(file).name}):\n```{ext}\n{content[:30000]}\n```\n\n"
+            f"Identify the root cause, explain why it happens, and provide the corrected code."
+        )
+
+    config = TowelConfig.load()
+    if not raw:
+        console.print(f"[dim]Analyzing {Path(file).name} + error...[/dim]")
+    _oneshot(config, prompt, raw)
+
+
+@cli.command(name="test-gen")
+@click.argument("file", type=click.Path(exists=True))
+@click.option("--framework", "-f", default=None, help="Test framework (pytest, jest, go test, etc.)")
+@click.option("--output", "-o", default=None, help="Write tests to file instead of stdout")
+@click.option("--raw", "-r", is_flag=True, help="Plain text output")
+def test_gen(file: str, framework: str | None, output: str | None, raw: bool) -> None:
+    """Generate tests for a file.
+
+    \b
+    Examples:
+        towel test-gen src/auth.py
+        towel test-gen src/api.ts -f jest
+        towel test-gen lib.go -o lib_test.go
+    """
+    from pathlib import Path
+
+    content = Path(file).read_text(encoding="utf-8", errors="replace")
+    ext = Path(file).suffix.lstrip(".")
+
+    fw_map = {"py": "pytest", "js": "jest", "ts": "jest", "go": "go test",
+              "rs": "cargo test", "java": "JUnit", "rb": "RSpec"}
+    fw = framework or fw_map.get(ext, "appropriate framework")
+
+    prompt = (
+        f"Write comprehensive tests for this {ext} code using {fw}.\n"
+        f"Cover: normal behavior, edge cases, error conditions.\n"
+        f"Include setup/teardown if needed.\n\n"
+        f"File ({Path(file).name}):\n```{ext}\n{content[:30000]}\n```\n\n"
+        f"Output only the test code, ready to run."
+    )
+
+    config = TowelConfig.load()
+
+    if output:
+        # Capture to file
+        from towel.agent.runtime import AgentRuntime
+        from towel.agent.conversation import Conversation, Role
+        from towel.memory.store import MemoryStore
+        memory = MemoryStore()
+        skills_reg = _build_skill_registry(config, memory_store=memory)
+        agent_rt = AgentRuntime(config, skills=skills_reg, memory=memory)
+        conv = Conversation(channel="test-gen")
+        conv.add(Role.USER, prompt)
+
+        async def _gen():
+            await agent_rt.load_model()
+            resp = await agent_rt.step(conv)
+            return resp.content
+
+        console.print(f"[dim]Generating tests for {Path(file).name}...[/dim]")
+        result = asyncio.run(_gen())
+
+        # Strip markdown fences
+        if result.startswith("```"):
+            lines = result.splitlines()
+            result = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
+
+        Path(output).write_text(result + "\n", encoding="utf-8")
+        console.print(f"[green]Tests written to:[/green] {output}")
+    else:
+        if not raw:
+            console.print(f"[dim]Generating tests for {Path(file).name}...[/dim]")
+        _oneshot(config, prompt, raw)
