@@ -1231,3 +1231,92 @@ class {class_name}(Skill):
     console.print(f"  Class: [bold]{class_name}[/bold]")
     console.print(f"  Tool:  {name}_example")
     console.print(f"\n[dim]Edit the file and restart Towel to load it.[/dim]")
+
+
+@cli.command()
+@click.option("--days", "-d", default=30, help="Delete conversations older than N days (default: 30)")
+@click.option("--dry-run", is_flag=True, help="Show what would be deleted without deleting")
+@click.option("--cache", is_flag=True, help="Also report model cache sizes")
+def gc(days: int, dry_run: bool, cache: bool) -> None:
+    """Clean up old conversations and show disk usage.
+
+    \b
+    Examples:
+        towel gc                  Delete conversations older than 30 days
+        towel gc -d 7             Delete conversations older than 7 days
+        towel gc --dry-run        Preview what would be deleted
+        towel gc --cache          Also show model cache sizes
+    """
+    import json as json_mod
+    from datetime import datetime, timezone, timedelta
+    from pathlib import Path
+    from towel.persistence.store import ConversationStore
+    from towel.agent.conversation import Conversation
+
+    store = ConversationStore()
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    conv_dir = store.store_dir
+
+    if not conv_dir.exists():
+        console.print("[dim]No conversations directory.[/dim]")
+        return
+
+    json_files = sorted(conv_dir.glob("*.json"))
+    total_size = 0
+    old_files: list[tuple[Path, str, int]] = []  # (path, summary, size)
+    kept_count = 0
+    kept_size = 0
+
+    for path in json_files:
+        size = path.stat().st_size
+        total_size += size
+        try:
+            data = json_mod.loads(path.read_text(encoding="utf-8"))
+            conv = Conversation.from_dict(data)
+            if conv.created_at < cutoff:
+                summary = conv.display_title[:50]
+                old_files.append((path, summary, size))
+            else:
+                kept_count += 1
+                kept_size += size
+        except (json_mod.JSONDecodeError, KeyError, ValueError):
+            old_files.append((path, "(corrupt)", size))
+
+    console.print(f"[bold]Conversation cleanup[/bold] (older than {days} days)\n")
+    console.print(f"  Total conversations: {len(json_files)}")
+    console.print(f"  Total size: {total_size / 1024:.0f} KB")
+
+    if old_files:
+        old_total = sum(s for _, _, s in old_files)
+        console.print(f"\n  [yellow]To remove: {len(old_files)} conversation(s) ({old_total / 1024:.0f} KB)[/yellow]")
+        for path, summary, size in old_files[:10]:
+            console.print(f"    [dim]{path.stem}[/dim]  {summary}  [dim]({size / 1024:.1f} KB)[/dim]")
+        if len(old_files) > 10:
+            console.print(f"    [dim]... and {len(old_files) - 10} more[/dim]")
+
+        if dry_run:
+            console.print(f"\n  [dim]Dry run — nothing deleted.[/dim]")
+        else:
+            for path, _, _ in old_files:
+                path.unlink()
+            console.print(f"\n  [green]Deleted {len(old_files)} old conversation(s).[/green]")
+            console.print(f"  Remaining: {kept_count} conversations ({kept_size / 1024:.0f} KB)")
+    else:
+        console.print(f"\n  [green]Nothing to clean up.[/green] All conversations are recent.")
+
+    # Cache report
+    if cache:
+        console.print(f"\n[bold]Model caches:[/bold]")
+        cache_dirs = {
+            "HuggingFace": Path.home() / ".cache" / "huggingface",
+            "MLX": Path.home() / ".cache" / "mlx",
+        }
+        for label, cache_path in cache_dirs.items():
+            if cache_path.exists():
+                try:
+                    size = sum(f.stat().st_size for f in cache_path.rglob("*") if f.is_file())
+                    console.print(f"  {label}: {size / (1024**3):.1f} GB  [dim]({cache_path})[/dim]")
+                except OSError:
+                    console.print(f"  {label}: [dim](error reading)[/dim]")
+            else:
+                console.print(f"  {label}: [dim](not found)[/dim]")

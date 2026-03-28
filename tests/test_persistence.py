@@ -124,6 +124,60 @@ class TestConversationStore:
         assert len(summaries) == 0
 
 
+class TestGarbageCollection:
+    """Test that old conversations can be identified and deleted."""
+
+    def test_old_conversation_detected(self, store):
+        old = _make_conversation("old-conv")
+        old.created_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        store.save(old)
+
+        recent = _make_conversation("new-conv")
+        store.save(recent)
+
+        # Simulate what gc does: find files older than cutoff
+        from datetime import timedelta
+        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+
+        old_ids = []
+        for path in store.store_dir.glob("*.json"):
+            data = json.loads(path.read_text())
+            conv = Conversation.from_dict(data)
+            if conv.created_at < cutoff:
+                old_ids.append(conv.id)
+
+        assert "old-conv" in old_ids
+        assert "new-conv" not in old_ids
+
+    def test_delete_old_conversations(self, store):
+        old = _make_conversation("old-conv")
+        old.created_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        store.save(old)
+        recent = _make_conversation("new-conv")
+        store.save(recent)
+
+        assert store.count == 2
+        store.delete("old-conv")
+        assert store.count == 1
+        assert store.exists("new-conv")
+        assert not store.exists("old-conv")
+
+    def test_all_recent_nothing_to_delete(self, store):
+        for i in range(3):
+            store.save(_make_conversation(f"recent-{i}"))
+
+        from datetime import timedelta
+        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+        old_count = 0
+        for path in store.store_dir.glob("*.json"):
+            data = json.loads(path.read_text())
+            conv = Conversation.from_dict(data)
+            if conv.created_at < cutoff:
+                old_count += 1
+
+        assert old_count == 0
+
+
 class TestSessionManagerPersistence:
     def test_save_and_resume(self, store):
         from towel.gateway.sessions import SessionManager
