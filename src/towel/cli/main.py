@@ -2364,3 +2364,58 @@ def version_cmd(full: bool) -> None:
         console.print(f"  MLX:            {getattr(mlx, '__version__', '?')}")
     except ImportError:
         console.print(f"  MLX:            not installed")
+
+
+@cli.command()
+@click.argument("action", default="list")
+@click.argument("name", required=False, default="")
+def plugins(action: str, name: str) -> None:
+    """Manage plugins — list, create, validate.
+
+    \b
+    Examples:
+        towel plugins                List installed plugins
+        towel plugins create weather Create a new plugin scaffold
+        towel plugins validate ./my-plugin  Validate a plugin
+    """
+    from towel.skills.plugin import discover_plugins, validate_plugin, create_plugin_scaffold, PLUGINS_DIR
+    from pathlib import Path
+
+    if action == "list":
+        found = discover_plugins()
+        if not found:
+            console.print("[dim]No plugins installed.[/dim]")
+            console.print(f"[dim]Plugin directory: {PLUGINS_DIR}[/dim]")
+            console.print("[dim]Create one: towel plugins create my-plugin[/dim]")
+            return
+        console.print(f"[bold]Plugins ({len(found)}):[/bold]\n")
+        for p in found:
+            tags = " ".join(f"[dim]#{t}[/dim]" for t in p.tags) if p.tags else ""
+            console.print(f"  [green]{p.name}[/green] v{p.version} {tags}")
+            if p.description: console.print(f"    {p.description}")
+            if p.author: console.print(f"    [dim]by {p.author}[/dim]")
+
+    elif action == "create":
+        if not name:
+            console.print("[red]Usage:[/red] towel plugins create <name>")
+            return
+        path = create_plugin_scaffold(name)
+        console.print(f"[green]Created plugin scaffold:[/green] {path}")
+        console.print(f"  Edit: {path / 'skill.py'}")
+        console.print(f"  Manifest: {path / 'towel-plugin.toml'}")
+
+    elif action == "validate":
+        if not name:
+            console.print("[red]Usage:[/red] towel plugins validate <path>")
+            return
+        issues = validate_plugin(Path(name))
+        if not issues:
+            console.print(f"[green]Plugin is valid![/green]")
+        else:
+            console.print(f"[red]Found {len(issues)} issue(s):[/red]")
+            for issue in issues:
+                console.print(f"  [yellow]•[/yellow] {issue}")
+
+    else:
+        console.print(f"[red]Unknown action:[/red] {action}")
+        console.print("[dim]Actions: list, create, validate[/dim]")
