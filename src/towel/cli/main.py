@@ -2330,3 +2330,37 @@ def dashboard() -> None:
         border_style="green",
         title="Dashboard",
     ))
+
+
+@cli.command(name="version")
+@click.option("--full", "-f", is_flag=True, help="Show full system inventory")
+def version_cmd(full: bool) -> None:
+    """Show Towel version and system info."""
+    import platform
+
+    console.print(f"[green]Towel[/green] v{__version__}")
+
+    if not full:
+        return
+
+    config = TowelConfig.load()
+    skills_reg = _build_skill_registry(config)
+
+    # Count slash commands
+    from towel.cli.slash import HELP_TEXT
+    slash_count = HELP_TEXT.count("/")
+
+    console.print(f"\n[bold]System inventory:[/bold]")
+    console.print(f"  Skills:         {len(skills_reg)}")
+    console.print(f"  Tools:          {len(skills_reg.tool_definitions())}")
+    console.print(f"  Slash commands: ~{slash_count}")
+    console.print(f"  CLI commands:   {len(cli.commands)}")
+    console.print(f"  Model:          {config.model.name}")
+    console.print(f"  Python:         {platform.python_version()}")
+    console.print(f"  Platform:       {platform.system()} {platform.machine()}")
+
+    try:
+        import mlx
+        console.print(f"  MLX:            {getattr(mlx, '__version__', '?')}")
+    except ImportError:
+        console.print(f"  MLX:            not installed")
