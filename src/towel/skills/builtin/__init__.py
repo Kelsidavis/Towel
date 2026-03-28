@@ -31,12 +31,15 @@ from towel.skills.builtin.security_skill import SecuritySkill
 from towel.skills.builtin.todo_skill import TodoSkill
 from towel.skills.builtin.template_gen_skill import TemplateGenSkill
 from towel.skills.builtin.math_skill import MathSkill
+from towel.skills.builtin.docker_skill import DockerSkill
+from towel.skills.builtin.calendar_skill import CalendarSkill
+from towel.skills.builtin.qr_skill import QrSkill
 
 __all__ = [
     "FileSystemSkill", "ShellSkill", "WebFetchSkill", "MemorySkill",
     "GitSkill", "SearchSkill", "ClipboardSkill", "DataSkill", "SystemSkill",
     "TimeSkill", "NetworkSkill", "HashSkill", "EnvSkill", "RegexSkill",
-    "ConvertSkill", "JsonSkill", "DiffSkill", "ArchiveSkill", "CronSkill", "MarkdownSkill", "HttpSkill", "SqlSkill", "ImageSkill", "ProcessSkill", "TextSkill", "KnowledgeSkill", "TranslateSkill", "SecuritySkill", "TodoSkill", "TemplateGenSkill", "MathSkill",
+    "ConvertSkill", "JsonSkill", "DiffSkill", "ArchiveSkill", "CronSkill", "MarkdownSkill", "HttpSkill", "SqlSkill", "ImageSkill", "ProcessSkill", "TextSkill", "KnowledgeSkill", "TranslateSkill", "SecuritySkill", "TodoSkill", "TemplateGenSkill", "MathSkill", "DockerSkill", "CalendarSkill", "QrSkill",
 ]
 
 
@@ -78,3 +81,6 @@ def register_builtins(
     registry.register(TodoSkill())
     registry.register(TemplateGenSkill())
     registry.register(MathSkill())
+    registry.register(DockerSkill())
+    registry.register(CalendarSkill())
+    registry.register(QrSkill())

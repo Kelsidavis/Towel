@@ -1004,3 +1004,70 @@ class TestMathSkill:
     async def test_primes(self, m):
         result = await m.execute("math_sequence", {"type": "primes", "count": 5})
         assert "2, 3, 5, 7, 11" == result
+
+
+class TestDockerSkill:
+    @pytest.fixture
+    def dock(self):
+        from towel.skills.builtin.docker_skill import DockerSkill
+        return DockerSkill()
+
+    def test_tools_defined(self, dock):
+        names = {t.name for t in dock.tools()}
+        assert names == {"docker_ps", "docker_images", "docker_logs", "docker_inspect", "docker_stats"}
+
+    @pytest.mark.asyncio
+    async def test_ps(self, dock):
+        result = await dock.execute("docker_ps", {})
+        # Either shows containers or says docker isn't running
+        assert "NAMES" in result or "Docker" in result or "not" in result.lower()
+
+
+class TestCalendarSkill:
+    @pytest.fixture
+    def cal(self):
+        from towel.skills.builtin.calendar_skill import CalendarSkill
+        return CalendarSkill()
+
+    def test_tools_defined(self, cal):
+        names = {t.name for t in cal.tools()}
+        assert names == {"cal_month", "cal_business_days", "cal_add_days", "cal_countdown"}
+
+    @pytest.mark.asyncio
+    async def test_month(self, cal):
+        result = await cal.execute("cal_month", {"year": 2026, "month": 1})
+        assert "January 2026" in result
+        assert "Mo" in result or "Mon" in result
+
+    @pytest.mark.asyncio
+    async def test_business_days(self, cal):
+        result = await cal.execute("cal_business_days", {"start": "2026-03-23", "end": "2026-03-27"})
+        assert "Business days: 5" in result
+
+    @pytest.mark.asyncio
+    async def test_add_days(self, cal):
+        result = await cal.execute("cal_add_days", {"date": "2026-01-01", "days": 10})
+        assert "2026-01-11" in result
+
+    @pytest.mark.asyncio
+    async def test_countdown(self, cal):
+        result = await cal.execute("cal_countdown", {"target": "2030-01-01", "label": "New Decade"})
+        assert "New Decade" in result
+        assert "days" in result
+
+
+class TestQrSkill:
+    @pytest.fixture
+    def qr(self):
+        from towel.skills.builtin.qr_skill import QrSkill
+        return QrSkill()
+
+    def test_tools_defined(self, qr):
+        names = {t.name for t in qr.tools()}
+        assert names == {"qr_generate"}
+
+    @pytest.mark.asyncio
+    async def test_generate(self, qr):
+        result = await qr.execute("qr_generate", {"data": "https://towel.dev"})
+        assert "█" in result or "▀" in result
+        assert "towel.dev" in result
