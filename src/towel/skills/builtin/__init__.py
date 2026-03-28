@@ -73,6 +73,16 @@ from towel.skills.builtin.cert_skill import CertSkill
 from towel.skills.builtin.random_skill import RandomSkill
 from towel.skills.builtin.country_skill import CountrySkill
 from towel.skills.builtin.jwt_gen_skill import JwtGenSkill
+from towel.skills.builtin.cheat_skill import CheatSkill
+from towel.skills.builtin.mime_skill import MimeSkill
+from towel.skills.builtin.quote_skill import QuoteSkill
+from towel.skills.builtin.npm_registry_skill import NpmRegistrySkill
+from towel.skills.builtin.cve_skill import CveSkill
+from towel.skills.builtin.xml_skill import XmlSkill
+from towel.skills.builtin.base_convert_skill import BaseConvertSkill
+from towel.skills.builtin.port_scanner_skill import PortScannerSkill
+from towel.skills.builtin.tz_skill import TimezoneSkill
+from towel.skills.builtin.rss_skill import RssSkill
 from towel.skills.builtin.openrouter_skill import OpenRouterSkill
 from towel.skills.builtin.systemd_skill import SystemdSkill
 from towel.skills.builtin.date_format_skill import DateFormatSkill
@@ -95,7 +105,7 @@ __all__ = [
     "FileSystemSkill", "ShellSkill", "WebFetchSkill", "MemorySkill",
     "GitSkill", "SearchSkill", "ClipboardSkill", "DataSkill", "SystemSkill",
     "TimeSkill", "NetworkSkill", "HashSkill", "EnvSkill", "RegexSkill",
-    "ConvertSkill", "JsonSkill", "DiffSkill", "ArchiveSkill", "CronSkill", "MarkdownSkill", "HttpSkill", "SqlSkill", "ImageSkill", "ProcessSkill", "TextSkill", "KnowledgeSkill", "TranslateSkill", "SecuritySkill", "TodoSkill", "TemplateGenSkill", "MathSkill", "DockerSkill", "CalendarSkill", "QrSkill", "JwtSkill", "ColorSkill", "UuidSkill", "YamlSkill", "SnippetGenSkill", "CsvSkill", "SemverSkill", "IpCalcSkill", "DotenvSkill", "LogAnalyzerSkill", "HttpHeaderSkill", "AsciiSkill", "StringSkill", "SshSkill", "NpmSkill", "PipSkill", "MetricsSkill", "PdfSkill", "PlaceholderSkill", "WebhookTriggerSkill", "GitignoreSkill", "LintSkill", "DiagramSkill", "ChangelogGenSkill", "NoteSkill", "ClipboardHistorySkill", "CrontabSkill", "BookmarkSkill", "KeychainSkill", "OpenApiSkill", "TypoSkill", "MakeSkill", "ManSkill", "GithubSkill", "PypiSkill", "CertSkill", "RandomSkill", "CountrySkill", "JwtGenSkill", "OpenRouterSkill", "SystemdSkill", "DateFormatSkill", "GithubActionsSkill", "EmojiSkill", "UrlSkill", "FigletSkill", "PomodoroSkill", "UptimeSkill", "WhoisSkill", "DnsSkill", "StackOverflowSkill", "RedditSkill", "CurrencySkill", "HackerNewsSkill", "WikipediaSkill", "WeatherSkill",
+    "ConvertSkill", "JsonSkill", "DiffSkill", "ArchiveSkill", "CronSkill", "MarkdownSkill", "HttpSkill", "SqlSkill", "ImageSkill", "ProcessSkill", "TextSkill", "KnowledgeSkill", "TranslateSkill", "SecuritySkill", "TodoSkill", "TemplateGenSkill", "MathSkill", "DockerSkill", "CalendarSkill", "QrSkill", "JwtSkill", "ColorSkill", "UuidSkill", "YamlSkill", "SnippetGenSkill", "CsvSkill", "SemverSkill", "IpCalcSkill", "DotenvSkill", "LogAnalyzerSkill", "HttpHeaderSkill", "AsciiSkill", "StringSkill", "SshSkill", "NpmSkill", "PipSkill", "MetricsSkill", "PdfSkill", "PlaceholderSkill", "WebhookTriggerSkill", "GitignoreSkill", "LintSkill", "DiagramSkill", "ChangelogGenSkill", "NoteSkill", "ClipboardHistorySkill", "CrontabSkill", "BookmarkSkill", "KeychainSkill", "OpenApiSkill", "TypoSkill", "MakeSkill", "ManSkill", "GithubSkill", "PypiSkill", "CertSkill", "RandomSkill", "CountrySkill", "JwtGenSkill", "CheatSkill", "MimeSkill", "QuoteSkill", "NpmRegistrySkill", "CveSkill", "XmlSkill", "BaseConvertSkill", "PortScannerSkill", "TimezoneSkill", "RssSkill", "OpenRouterSkill", "SystemdSkill", "DateFormatSkill", "GithubActionsSkill", "EmojiSkill", "UrlSkill", "FigletSkill", "PomodoroSkill", "UptimeSkill", "WhoisSkill", "DnsSkill", "StackOverflowSkill", "RedditSkill", "CurrencySkill", "HackerNewsSkill", "WikipediaSkill", "WeatherSkill",
 ]
 
 
@@ -179,6 +189,16 @@ def register_builtins(
     registry.register(RandomSkill())
     registry.register(CountrySkill())
     registry.register(JwtGenSkill())
+    registry.register(CheatSkill())
+    registry.register(MimeSkill())
+    registry.register(QuoteSkill())
+    registry.register(NpmRegistrySkill())
+    registry.register(CveSkill())
+    registry.register(XmlSkill())
+    registry.register(BaseConvertSkill())
+    registry.register(PortScannerSkill())
+    registry.register(TimezoneSkill())
+    registry.register(RssSkill())
     registry.register(OpenRouterSkill())
     registry.register(SystemdSkill())
     registry.register(DateFormatSkill())
