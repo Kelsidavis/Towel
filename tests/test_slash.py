@@ -200,6 +200,35 @@ class TestPin:
         assert "pinned" not in d  # only serialized when True
 
 
+class TestSave:
+    def test_save_code_block(self, ctx, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        ctx.conv.add(Role.ASSISTANT, "Here:\n```python\nprint('hello')\n```")
+        handle_slash(f"/save {tmp_path / 'out.py'}", ctx)
+        result = (tmp_path / "out.py").read_text()
+        assert "print('hello')" in result
+
+    def test_save_second_block(self, ctx, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        ctx.conv.add(Role.ASSISTANT, "A:\n```py\nfirst\n```\nB:\n```py\nsecond\n```")
+        handle_slash(f"/save {tmp_path / 'out.py'} 2", ctx)
+        result = (tmp_path / "out.py").read_text()
+        assert "second" in result
+        assert "first" not in result
+
+    def test_save_no_blocks(self, ctx):
+        ctx.conv.add(Role.ASSISTANT, "Just text, no code.")
+        handle_slash("/save out.py", ctx)  # should print "no code blocks"
+
+    def test_save_no_args(self, ctx):
+        handle_slash("/save", ctx)  # should print usage
+
+    def test_save_invalid_block_index(self, ctx, tmp_path):
+        ctx.conv.add(Role.ASSISTANT, "One:\n```py\nonly\n```")
+        handle_slash(f"/save {tmp_path / 'out.py'} 5", ctx)  # block 5 doesn't exist
+        assert not (tmp_path / "out.py").exists()
+
+
 class TestCopy:
     def test_copy_no_response(self, ctx):
         ctx.conv.messages.clear()

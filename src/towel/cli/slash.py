@@ -54,6 +54,7 @@ HELP_TEXT = """[bold]Chat commands:[/bold]
   [green]/grep[/green] <query>          Search within this conversation
   [green]/pin[/green]                  Pin last response (stays in context even when old msgs drop)
   [green]/pins[/green]                 List pinned messages
+  [green]/save[/green] <file> [n]       Save code block from last response to a file (n=block index)
   [green]/copy[/green] [code]           Copy last response to clipboard (or just code blocks)
   [green]/tag[/green] <name>            Add a tag to this conversation (or remove with -name)
   [green]/tags[/green]                 Show tags on this conversation
@@ -155,6 +156,9 @@ def handle_slash(user_input: str, ctx: SlashContext) -> bool | None:
 
         case "/pins":
             _cmd_pins(ctx)
+
+        case "/save":
+            _cmd_save(ctx, arg)
 
         case "/copy":
             _cmd_copy(ctx, arg)
@@ -648,6 +652,63 @@ def _cmd_pins(ctx: SlashContext) -> None:
         role_color = "cyan" if msg.role.value == "user" else "green"
         console.print(f"  [{role_color}]{msg.role.value}[/{role_color}] {preview}")
         console.print(f"    [dim]id: {msg.id}[/dim]")
+
+
+def _cmd_save(ctx: SlashContext, arg: str) -> None:
+    """Save a code block from the last assistant response to a file."""
+    import re
+    from pathlib import Path
+    from towel.agent.conversation import Role
+
+    parts = arg.strip().split()
+    if not parts:
+        console.print("[red]Usage:[/red] /save <filename> [block_number]")
+        console.print("  /save main.py       Save first code block to main.py")
+        console.print("  /save util.py 2     Save second code block")
+        return
+
+    filename = parts[0]
+    block_idx = int(parts[1]) - 1 if len(parts) > 1 and parts[1].isdigit() else 0
+
+    # Find last assistant message
+    last_asst = None
+    for msg in reversed(ctx.conv.messages):
+        if msg.role == Role.ASSISTANT:
+            last_asst = msg
+            break
+
+    if not last_asst:
+        console.print("[dim]No assistant response to extract from.[/dim]")
+        return
+
+    blocks = re.findall(r"```\w*\n(.*?)```", last_asst.content, re.DOTALL)
+    if not blocks:
+        console.print("[dim]No code blocks found in last response.[/dim]")
+        return
+
+    if block_idx < 0 or block_idx >= len(blocks):
+        console.print(f"[red]Block {block_idx + 1} not found.[/red] Response has {len(blocks)} code block(s).")
+        if len(blocks) > 1:
+            for i, b in enumerate(blocks):
+                preview = b.strip().split("\n")[0][:60]
+                console.print(f"  [dim]{i+1}. {preview}...[/dim]")
+        return
+
+    content = blocks[block_idx].strip()
+    target = Path(filename)
+
+    # Safety: don't overwrite without notice
+    if target.exists():
+        size = target.stat().st_size
+        console.print(f"[yellow]Overwriting:[/yellow] {target} ({size} bytes)")
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content + "\n", encoding="utf-8")
+        lines = content.count("\n") + 1
+        console.print(f"[green]Saved:[/green] {target} ({lines} lines, {len(content)} bytes)")
+    except OSError as e:
+        console.print(f"[red]Failed to save:[/red] {e}")
 
 
 def _cmd_copy(ctx: SlashContext, arg: str) -> None:
