@@ -1071,3 +1071,80 @@ class TestQrSkill:
         result = await qr.execute("qr_generate", {"data": "https://towel.dev"})
         assert "█" in result or "▀" in result
         assert "towel.dev" in result
+
+
+class TestJwtSkill:
+    @pytest.fixture
+    def jwt(self):
+        from towel.skills.builtin.jwt_skill import JwtSkill
+        return JwtSkill()
+
+    @pytest.mark.asyncio
+    async def test_decode_valid(self, jwt):
+        # A real JWT (expired, public test token)
+        token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        result = await jwt.execute("jwt_decode", {"token": token})
+        assert "John Doe" in result
+        assert "HS256" in result
+
+    @pytest.mark.asyncio
+    async def test_decode_invalid(self, jwt):
+        result = await jwt.execute("jwt_decode", {"token": "not.a.jwt.at.all"})
+        assert "Invalid" in result or "Failed" in result
+
+
+class TestColorSkill:
+    @pytest.fixture
+    def col(self):
+        from towel.skills.builtin.color_skill import ColorSkill
+        return ColorSkill()
+
+    @pytest.mark.asyncio
+    async def test_convert_hex(self, col):
+        result = await col.execute("color_convert", {"color": "#ff6600"})
+        assert "RGB: rgb(255, 102, 0)" in result
+        assert "HSL" in result
+
+    @pytest.mark.asyncio
+    async def test_convert_named(self, col):
+        result = await col.execute("color_convert", {"color": "red"})
+        assert "rgb(255, 0, 0)" in result
+
+    @pytest.mark.asyncio
+    async def test_palette(self, col):
+        result = await col.execute("color_palette", {"base": "#ff0000", "type": "triadic"})
+        assert "Palette" in result
+        assert "#" in result
+
+    @pytest.mark.asyncio
+    async def test_contrast(self, col):
+        result = await col.execute("color_contrast", {"color1": "#000000", "color2": "#ffffff"})
+        assert "21" in result  # black/white is 21:1
+        assert "PASS" in result
+
+
+class TestUuidSkill:
+    @pytest.fixture
+    def uu(self):
+        from towel.skills.builtin.uuid_skill import UuidSkill
+        return UuidSkill()
+
+    @pytest.mark.asyncio
+    async def test_generate_uuid(self, uu):
+        result = await uu.execute("generate_uuid", {"count": 3})
+        lines = result.strip().splitlines()
+        assert len(lines) == 3
+        assert "-" in lines[0]
+
+    @pytest.mark.asyncio
+    async def test_generate_password(self, uu):
+        result = await uu.execute("generate_password", {"length": 32})
+        assert "32 chars" in result
+
+    @pytest.mark.asyncio
+    async def test_generate_token(self, uu):
+        result = await uu.execute("generate_token", {"bytes": 16, "encoding": "hex"})
+        assert "hex" in result
+        # hex token from 16 bytes = 32 hex chars
+        token_part = result.split(": ", 1)[1]
+        assert len(token_part) == 32
