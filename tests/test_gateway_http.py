@@ -211,3 +211,43 @@ class TestConversationsAPI:
     def test_export_nonexistent(self, client):
         resp = client.get("/conversations/nope/export")
         assert resp.status_code == 404
+
+
+class TestSimpleAskAPI:
+    def test_ask_missing_message(self, client):
+        resp = client.post("/api/ask", json={})
+        assert resp.status_code == 400
+        assert "message" in resp.json()["error"]
+
+    def test_ask_empty_message(self, client):
+        resp = client.post("/api/ask", json={"message": ""})
+        assert resp.status_code == 400
+
+    def test_ask_invalid_json(self, client):
+        resp = client.post("/api/ask", content=b"not json", headers={"content-type": "application/json"})
+        assert resp.status_code == 400
+
+    def test_ask_creates_session(self, gateway, client):
+        # The actual model call will fail (no model loaded), but we test the session creation
+        resp = client.post("/api/ask", json={"message": "hello", "session": "test-ask"})
+        # Will be 500 (model not loaded) but session should exist
+        session = gateway.sessions.get_or_create("test-ask")
+        assert len(session.conversation) >= 1  # at least the user message
+
+
+class TestApiSessions:
+    def test_api_sessions_empty(self, client):
+        resp = client.get("/api/sessions")
+        assert resp.status_code == 200
+        assert resp.json()["sessions"] == []
+
+    def test_api_sessions_with_tags(self, store, client):
+        conv = Conversation(id="tagged-1", channel="api")
+        conv.tags = ["work", "urgent"]
+        conv.add(Role.USER, "hello")
+        store.save(conv)
+
+        resp = client.get("/api/sessions")
+        data = resp.json()
+        assert len(data["sessions"]) == 1
+        assert data["sessions"][0]["tags"] == ["work", "urgent"]

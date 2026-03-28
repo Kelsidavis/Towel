@@ -317,6 +317,76 @@ class GatewayServer:
                 headers={"Content-Disposition": f'attachment; filename="{filename}"'},
             )
 
+        async def simple_ask(request: Request) -> JSONResponse:
+            """POST /api/ask — simple one-shot question/answer endpoint.
+
+            Body: {"message": "...", "session": "default", "system": null}
+            Response: {"response": "...", "session": "...", "tokens": N, "tps": N.N}
+
+            Much simpler than /v1/chat/completions for quick integrations.
+            """
+            try:
+                body = await request.json()
+            except Exception:
+                return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+            message = body.get("message", "").strip()
+            if not message:
+                return JSONResponse({"error": "message is required"}, status_code=400)
+
+            session_id = body.get("session", "api-default")
+            system_override = body.get("system")
+
+            session = self.sessions.get_or_create(session_id)
+            session.conversation.channel = "api"
+            session.conversation.add(Role.USER, message)
+
+            # Temporary system prompt override
+            old_identity = self.config.identity
+            if system_override:
+                self.config.identity = system_override
+                self.agent.config = self.config
+
+            try:
+                response = await self.agent.step(session.conversation)
+                self.sessions.save(session_id)
+
+                return JSONResponse({
+                    "response": response.content,
+                    "session": session_id,
+                    "tokens": response.metadata.get("tokens", 0),
+                    "tps": round(response.metadata.get("tps", 0), 1),
+                })
+            except Exception as e:
+                return JSONResponse({"error": str(e)}, status_code=500)
+            finally:
+                if system_override:
+                    self.config.identity = old_identity
+                    self.agent.config = self.config
+
+        async def api_sessions(request: Request) -> JSONResponse:
+            """GET /api/sessions — list active and stored sessions with tags."""
+            store = self.sessions.store
+            if not store:
+                return JSONResponse({"sessions": []})
+            summaries = store.list_conversations(limit=50)
+            items = []
+            for s in summaries:
+                item: dict[str, Any] = {
+                    "id": s.id, "title": s.title, "channel": s.channel,
+                    "created_at": s.created_at, "message_count": s.message_count,
+                    "summary": s.summary,
+                }
+                # Load tags
+                try:
+                    import json as _json
+                    data = _json.loads(store._path_for(s.id).read_text(encoding="utf-8"))
+                    item["tags"] = data.get("tags", [])
+                except Exception:
+                    item["tags"] = []
+                items.append(item)
+            return JSONResponse({"sessions": items})
+
         # OpenAI-compatible API routes
         from towel.gateway.openai_compat import build_openai_routes
         openai_routes = build_openai_routes(self.agent, self.config)
@@ -330,6 +400,8 @@ class GatewayServer:
             Route("/conversations/{conv_id}/rename", conversation_rename, methods=["POST"]),
             Route("/conversations/{conv_id}/export", conversation_export),
             Route("/search", search_conversations),
+            Route("/api/ask", simple_ask, methods=["POST"]),
+            Route("/api/sessions", api_sessions, methods=["GET"]),
             *openai_routes,
             Route("/", webchat),
         ]
