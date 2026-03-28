@@ -2259,3 +2259,74 @@ def marketplace(action: str, query: str) -> None:
     else:
         console.print(f"[red]Unknown action:[/red] {action}")
         console.print("[dim]Actions: browse, search, install, remove, installed[/dim]")
+
+
+@cli.command()
+def dashboard() -> None:
+    """Show a system dashboard — skills, conversations, memory, config at a glance."""
+    from pathlib import Path
+    from towel.config import TowelConfig, TOWEL_HOME
+    from towel.persistence.store import ConversationStore
+    from towel.memory.store import MemoryStore
+
+    config = TowelConfig.load()
+    store = ConversationStore()
+    memory = MemoryStore()
+
+    # Skills
+    skills_reg = _build_skill_registry(config, memory_store=memory)
+    skill_count = len(skills_reg)
+    tool_count = len(skills_reg.tool_definitions())
+
+    # Conversations
+    convos = store.list_conversations(limit=1000)
+    total_msgs = sum(c.message_count for c in convos)
+
+    # Storage
+    conv_dir = TOWEL_HOME / "conversations"
+    storage_kb = 0
+    if conv_dir.exists():
+        storage_kb = sum(f.stat().st_size for f in conv_dir.glob("*.json")) // 1024
+
+    # Memory
+    mem_count = memory.count
+
+    # Templates
+    from towel.templates.engine import TemplateEngine
+    tpl_count = len(TemplateEngine().list_templates())
+
+    # Aliases & snippets
+    try:
+        from towel.cli.aliases import list_aliases
+        alias_count = len(list_aliases())
+    except: alias_count = 0
+    try:
+        from towel.cli.snippets import list_snippets
+        snippet_count = len(list_snippets())
+    except: snippet_count = 0
+
+    console.print(Panel(
+        f"[bold green]Towel v{__version__}[/bold green] — Don't Panic.\n\n"
+        f"  [bold]Agent[/bold]\n"
+        f"    Model:          [green]{config.model.name}[/green]\n"
+        f"    Context window: {config.model.context_window:,} tokens\n"
+        f"    Max output:     {config.model.max_tokens:,} tokens\n"
+        f"    Temperature:    {config.model.temperature}\n\n"
+        f"  [bold]Skills & Tools[/bold]\n"
+        f"    Skills:    [green]{skill_count}[/green] registered\n"
+        f"    Tools:     [green]{tool_count}[/green] available\n"
+        f"    Templates: {tpl_count}\n"
+        f"    Aliases:   {alias_count}\n"
+        f"    Snippets:  {snippet_count}\n\n"
+        f"  [bold]Data[/bold]\n"
+        f"    Conversations: {len(convos):,}\n"
+        f"    Messages:      {total_msgs:,}\n"
+        f"    Memories:      {mem_count}\n"
+        f"    Storage:       {storage_kb:,} KB\n\n"
+        f"  [bold]Gateway[/bold]\n"
+        f"    WebSocket: ws://{config.gateway.host}:{config.gateway.port}\n"
+        f"    HTTP API:  http://{config.gateway.host}:{config.gateway.port + 1}\n"
+        f"    Home:      {TOWEL_HOME}",
+        border_style="green",
+        title="Dashboard",
+    ))

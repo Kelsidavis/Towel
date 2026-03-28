@@ -74,6 +74,7 @@ HELP_TEXT = """[bold]Chat commands:[/bold]
   [green]/alias[/green] <name> <prompt> Create a prompt shortcut (e.g., /alias review Review this code)
   [green]/aliases[/green]              List all defined aliases
   [green]/unalias[/green] <name>       Remove an alias
+  [green]/whoami[/green]              Show agent identity, model, and context budget
   [green]/delegate[/green] <role> <task> Delegate to specialist (coder, reviewer, architect...)
   [green]/health[/green]              Show agent health and error counts
   [green]/loop[/green] <interval> <prompt> Run a prompt on a recurring interval (e.g., /loop 5m check status)
@@ -212,6 +213,9 @@ def handle_slash(user_input: str, ctx: SlashContext) -> bool | None:
 
         case "/delegate":
             return _cmd_delegate(ctx, arg)
+
+        case "/whoami":
+            _cmd_whoami(ctx)
 
         case "/health":
             _cmd_health(ctx)
@@ -1499,3 +1503,40 @@ def _cmd_delegate(ctx: SlashContext, arg: str) -> bool | None:
     console.print(f"[dim]  delegating to: {role}[/dim]")
     ctx.conv.add(Role.USER, full_msg)
     return False  # signal agent step
+
+
+def _cmd_whoami(ctx: SlashContext) -> None:
+    """Show agent identity, model, skills, and context budget."""
+    from towel.agent.context import count_tokens_fallback
+
+    config = ctx.config
+    conv = ctx.conv
+
+    # Count tokens in system prompt
+    system = config.identity
+    sys_tokens = count_tokens_fallback(system)
+
+    # Count conversation tokens
+    conv_chars = sum(len(m.content) for m in conv.messages)
+    conv_tokens = count_tokens_fallback(str(conv_chars))
+
+    # Skills
+    skills = ctx.agent.skills
+    skill_count = len(skills) if skills else 0
+    tool_count = len(skills.tool_definitions()) if skills else 0
+
+    console.print(f"[bold]Agent identity:[/bold]")
+    console.print(f"  Model: [green]{config.model.name}[/green]")
+    console.print(f"  Agent: {ctx.current_agent_name or 'default'}")
+    console.print(f"  Identity: [dim]{config.identity[:80]}{'...' if len(config.identity) > 80 else ''}[/dim]")
+    console.print(f"\n[bold]Context budget:[/bold]")
+    console.print(f"  Window:     {config.model.context_window:,} tokens")
+    console.print(f"  Max output: {config.model.max_tokens:,} tokens")
+    console.print(f"  System:     ~{sys_tokens:,} tokens")
+    console.print(f"  Messages:   {len(conv)} ({conv_chars:,} chars)")
+    pinned = sum(1 for m in conv.messages if m.pinned)
+    if pinned: console.print(f"  Pinned:     {pinned}")
+    console.print(f"\n[bold]Capabilities:[/bold]")
+    console.print(f"  Skills: {skill_count}  Tools: {tool_count}")
+    if conv.tags:
+        console.print(f"  Tags: {' '.join(f'#{t}' for t in conv.tags)}")
