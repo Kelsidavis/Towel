@@ -1,6 +1,6 @@
 [project]
 name = "towel-ai"
-version = "2.1.0"
+version = "2.2.0"
 description = "Don't Panic. Your local AI assistant, powered by MLX."
 readme = "README.md"
 license = "MIT"
