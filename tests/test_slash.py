@@ -135,6 +135,50 @@ class TestRetry:
         assert result is True  # no assistant to remove
 
 
+class TestCompact:
+    def test_compact_reduces_messages(self, ctx):
+        # Add more messages to have something to compact
+        for i in range(10):
+            ctx.conv.add(Role.USER, f"Question {i}")
+            ctx.conv.add(Role.ASSISTANT, f"Answer {i} with some detail and explanation")
+        total_before = len(ctx.conv)
+        handle_slash("/compact 4", ctx)
+        # Should have: 1 summary + 4 recent
+        assert len(ctx.conv) < total_before
+        assert len(ctx.conv) == 5  # summary + 4 kept
+
+    def test_compact_preserves_recent(self, ctx):
+        ctx.conv.add(Role.USER, "important question")
+        ctx.conv.add(Role.ASSISTANT, "important answer")
+        handle_slash("/compact 4", ctx)
+        # Last messages should be unchanged
+        contents = [m.content for m in ctx.conv.messages]
+        assert "important answer" in contents
+
+    def test_compact_preserves_pinned(self, ctx):
+        ctx.conv.messages[1].pinned = True  # pin "hi there"
+        for i in range(8):
+            ctx.conv.add(Role.USER, f"Q{i}")
+            ctx.conv.add(Role.ASSISTANT, f"A{i}")
+        handle_slash("/compact 4", ctx)
+        pinned = [m for m in ctx.conv.messages if m.pinned]
+        assert len(pinned) == 1
+        assert pinned[0].content == "hi there"
+
+    def test_compact_too_few_messages(self, ctx):
+        # Only 2 messages, compact 4 should do nothing
+        handle_slash("/compact 4", ctx)
+        assert len(ctx.conv) == 2
+
+    def test_compact_summary_is_system(self, ctx):
+        for i in range(10):
+            ctx.conv.add(Role.USER, f"Q{i}")
+            ctx.conv.add(Role.ASSISTANT, f"A{i}")
+        handle_slash("/compact 2", ctx)
+        assert ctx.conv.messages[0].role == Role.SYSTEM
+        assert "Compacted" in ctx.conv.messages[0].content
+
+
 class TestDiff:
     def test_diff_identical(self, ctx, tmp_path):
         from towel.persistence.store import ConversationStore

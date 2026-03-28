@@ -51,6 +51,7 @@ HELP_TEXT = """[bold]Chat commands:[/bold]
   [green]/forget[/green] <key>         Remove a memory
   [green]/t[/green] <template> <input>  Apply a prompt template (e.g., /t review code here)
   [green]/templates[/green]            List available templates
+  [green]/compact[/green] [n]            Summarize old messages to free context (keep last n, default 4)
   [green]/diff[/green] <id>             Compare this conversation with a saved one
   [green]/grep[/green] <query>          Search within this conversation
   [green]/pin[/green]                  Pin last response (stays in context even when old msgs drop)
@@ -151,6 +152,9 @@ def handle_slash(user_input: str, ctx: SlashContext) -> bool | None:
 
         case "/templates":
             _cmd_templates(ctx)
+
+        case "/compact":
+            _cmd_compact(ctx, arg)
 
         case "/diff":
             _cmd_diff(ctx, arg)
@@ -565,6 +569,89 @@ def _cmd_delagent(ctx: SlashContext, arg: str) -> None:
         console.print(f"[green]Deleted agent:[/green] {name}")
     else:
         console.print(f"[red]Agent not found:[/red] {name}")
+
+
+def _cmd_compact(ctx: SlashContext, arg: str) -> None:
+    """Compress older messages into a summary to free context window space.
+
+    Keeps the last N messages intact and replaces everything before them
+    with a condensed summary. Pinned messages are always preserved.
+    """
+    import re
+    from towel.agent.conversation import Role, Message
+
+    keep_count = int(arg.strip()) if arg.strip().isdigit() else 4
+    msgs = ctx.conv.messages
+
+    if len(msgs) <= keep_count:
+        console.print(f"[dim]Only {len(msgs)} messages — nothing to compact.[/dim]")
+        return
+
+    # Split into old (to compress) and recent (to keep)
+    # But always preserve pinned messages
+    old_msgs = msgs[:-keep_count]
+    recent_msgs = msgs[-keep_count:]
+
+    pinned_old = [m for m in old_msgs if m.pinned]
+    compressible = [m for m in old_msgs if not m.pinned]
+
+    if not compressible:
+        console.print("[dim]All old messages are pinned — nothing to compact.[/dim]")
+        return
+
+    # Build a condensed summary from old messages
+    summary_parts: list[str] = []
+    summary_parts.append(f"[Compacted summary of {len(compressible)} earlier messages]\n")
+
+    for msg in compressible:
+        role = msg.role.value
+        content = msg.content
+
+        if msg.role == Role.TOOL:
+            # Just note the tool was called
+            if content.startswith("[") and "]" in content:
+                tool_name = content[1:content.index("]")]
+                summary_parts.append(f"- Tool: {tool_name}")
+            continue
+
+        if msg.role == Role.SYSTEM:
+            continue
+
+        # Extract first meaningful line
+        lines = [l.strip() for l in content.split("\n") if l.strip()]
+        first_line = lines[0][:120] if lines else ""
+
+        # Extract code blocks (preserve them fully — they're high-value)
+        code_blocks = re.findall(r"```\w*\n(.*?)```", content, re.DOTALL)
+
+        label = "Q" if msg.role == Role.USER else "A"
+        summary_parts.append(f"- {label}: {first_line}")
+
+        for block in code_blocks[:2]:  # max 2 code blocks per message
+            trimmed = block.strip()
+            if len(trimmed) > 300:
+                trimmed = trimmed[:300] + "\n..."
+            summary_parts.append(f"  ```\n  {trimmed}\n  ```")
+
+    summary_text = "\n".join(summary_parts)
+
+    # Replace old messages with summary + pinned
+    summary_msg = Message(
+        role=Role.SYSTEM,
+        content=summary_text,
+        metadata={"compacted": True, "original_count": len(compressible)},
+    )
+
+    ctx.conv.messages = [summary_msg] + pinned_old + recent_msgs
+
+    old_chars = sum(len(m.content) for m in compressible)
+    new_chars = len(summary_text)
+    saved_pct = ((old_chars - new_chars) / old_chars * 100) if old_chars > 0 else 0
+
+    console.print(f"[green]Compacted {len(compressible)} messages into summary.[/green]")
+    console.print(f"  {old_chars:,} chars → {new_chars:,} chars ({saved_pct:.0f}% reduction)")
+    console.print(f"  Kept: {keep_count} recent + {len(pinned_old)} pinned")
+    console.print(f"  Total messages: {len(ctx.conv.messages)}")
 
 
 def _cmd_diff(ctx: SlashContext, arg: str) -> None:
