@@ -2773,3 +2773,36 @@ def telegram(token: str) -> None:
         gateway_url=f"ws://{TowelConfig.load().gateway.host}:{TowelConfig.load().gateway.port}",
     )
     asyncio.run(channel.listen())
+
+
+@cli.command()
+@click.option("--bot-token", "-b", required=True, envvar="SLACK_BOT_TOKEN", help="Slack bot token (xoxb-...)")
+@click.option("--app-token", "-a", required=True, envvar="SLACK_APP_TOKEN", help="Slack app token (xapp-...)")
+def slack(bot_token: str, app_token: str) -> None:
+    """Run Towel as a Slack bot via Socket Mode.
+
+    \b
+    Setup:
+      1. Create app at api.slack.com/apps
+      2. Enable Socket Mode, get app-level token (xapp-...)
+      3. Add scopes: chat:write, app_mentions:read, im:history
+      4. Install to workspace, get bot token (xoxb-...)
+      5. Run: towel slack -b xoxb-... -a xapp-...
+
+    \b
+    The bot responds to @mentions and direct messages.
+    """
+    from towel.channels.slack import SlackChannel
+
+    console.print(Panel(
+        f"[bold green]Slack Bot[/bold green] (Socket Mode)\n\n"
+        f"[dim]Make sure 'towel serve' is running in another terminal.[/dim]",
+        border_style="blue",
+        title="Don't Panic.",
+    ))
+
+    channel = SlackChannel(
+        bot_token=bot_token, app_token=app_token,
+        gateway_url=f"ws://{TowelConfig.load().gateway.host}:{TowelConfig.load().gateway.port}",
+    )
+    asyncio.run(channel.listen())
