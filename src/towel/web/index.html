@@ -611,6 +611,34 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   newChatBtn.addEventListener('click',startNewChat);
   convSearchEl.addEventListener('input',function(){renderConversationList(this.value);});
 
+  // ── Keyboard shortcuts ──
+  document.addEventListener('keydown',function(e){
+    // Ctrl/Cmd+N — new chat
+    if((e.ctrlKey||e.metaKey)&&e.key==='n'){e.preventDefault();startNewChat();}
+    // Ctrl/Cmd+K — focus search
+    if((e.ctrlKey||e.metaKey)&&e.key==='k'){e.preventDefault();convSearchEl.focus();convSearchEl.select();}
+    // Ctrl/Cmd+L — clear input
+    if((e.ctrlKey||e.metaKey)&&e.key==='l'){e.preventDefault();inputEl.value='';autoResize();inputEl.focus();}
+    // Ctrl/Cmd+E — export conversation
+    if((e.ctrlKey||e.metaKey)&&e.key==='e'){e.preventDefault();exportConversation();}
+    // Ctrl/Cmd+T — cycle theme
+    if((e.ctrlKey||e.metaKey)&&e.key==='t'){e.preventDefault();cycleTheme();}
+    // Ctrl/Cmd+/ — show keyboard shortcuts help
+    if((e.ctrlKey||e.metaKey)&&e.key==='/'){
+      e.preventDefault();
+      const helpText='Keyboard shortcuts:\n\n'+
+        'Ctrl+N  New chat\n'+
+        'Ctrl+K  Focus search\n'+
+        'Ctrl+L  Clear input\n'+
+        'Ctrl+E  Export conversation\n'+
+        'Ctrl+T  Cycle theme\n'+
+        'Escape  Stop generation\n'+
+        'Enter   Send message\n'+
+        'Shift+Enter  New line';
+      alert(helpText);
+    }
+  });
+
   // ── Init ──
   saveSession(); connect(); updateUI();
 })();
