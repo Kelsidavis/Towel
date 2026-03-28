@@ -110,6 +110,34 @@ class TestExport:
         assert "Towel" in content
 
 
+class TestStats:
+    def test_stats_empty(self, ctx):
+        ctx.conv.messages.clear()
+        handle_slash("/stats", ctx)  # should not crash
+
+    def test_stats_basic(self, ctx):
+        handle_slash("/stats", ctx)  # should not crash with 2 messages
+
+    def test_stats_with_metadata(self, ctx):
+        ctx.conv.add(Role.ASSISTANT, "Generated text here", metadata={"tps": 42.5, "tokens": 100})
+        handle_slash("/stats", ctx)  # should show token stats
+
+    def test_stats_cost_comparison(self, ctx):
+        ctx.conv.add(Role.ASSISTANT, "Answer", metadata={"tps": 30.0, "tokens": 5000})
+        # Should run without errors and show cost comparison
+        handle_slash("/stats", ctx)
+
+
+class TestExportHtml:
+    def test_export_html_file(self, ctx, tmp_path):
+        f = tmp_path / "out.html"
+        handle_slash(f"/export {f}", ctx)
+        assert f.exists()
+        content = f.read_text()
+        assert "<!DOCTYPE html>" in content
+        assert "hello" in content
+
+
 class TestSystem:
     def test_show_current(self, ctx):
         handle_slash("/system", ctx)

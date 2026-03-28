@@ -39,6 +39,7 @@ HELP_TEXT = """[bold]Chat commands:[/bold]
 
   [green]/help[/green]                 Show this help
   [green]/info[/green]                 Show session info
+  [green]/stats[/green]                Show session statistics (tokens, speed, cost)
   [green]/clear[/green]                Clear conversation history
   [green]/agent[/green] [name]         Switch agent / show current
   [green]/agents[/green]               List available agents
@@ -48,7 +49,7 @@ HELP_TEXT = """[bold]Chat commands:[/bold]
   [green]/t[/green] <template> <input>  Apply a prompt template (e.g., /t review code here)
   [green]/templates[/green]            List available templates
   [green]/rename[/green] <title>       Set a title for this conversation
-  [green]/export[/green] [file]        Export conversation to markdown
+  [green]/export[/green] [file]        Export conversation to markdown (.html for HTML)
   [green]/newagent[/green] <name> <model> <prompt>  Create new agent
   [green]/delagent[/green] <name>      Delete user agent
   [green]/context[/green]              Show loaded .towel.md project context
@@ -97,6 +98,9 @@ def handle_slash(user_input: str, ctx: SlashContext) -> bool | None:
 
         case "/info":
             _cmd_info(ctx)
+
+        case "/stats":
+            _cmd_stats(ctx)
 
         case "/clear":
             _cmd_clear(ctx)
@@ -165,6 +169,66 @@ def _cmd_info(ctx: SlashContext) -> None:
             console.print(f"    [dim]{p}[/dim]")
     else:
         console.print(f"  [green]Project context:[/green] [dim]none (create .towel.md)[/dim]")
+
+
+def _cmd_stats(ctx: SlashContext) -> None:
+    from towel.agent.conversation import Role
+
+    msgs = ctx.conv.messages
+    if not msgs:
+        console.print("[dim]No messages yet.[/dim]")
+        return
+
+    user_msgs = [m for m in msgs if m.role == Role.USER]
+    asst_msgs = [m for m in msgs if m.role == Role.ASSISTANT]
+    tool_msgs = [m for m in msgs if m.role == Role.TOOL]
+
+    total_tokens = 0
+    tps_values: list[float] = []
+    for m in asst_msgs:
+        t = m.metadata.get("tokens", 0)
+        if t:
+            total_tokens += t
+        s = m.metadata.get("tps", 0)
+        if s:
+            tps_values.append(s)
+
+    # Character counts
+    user_chars = sum(len(m.content) for m in user_msgs)
+    asst_chars = sum(len(m.content) for m in asst_msgs)
+
+    # Duration
+    if len(msgs) >= 2:
+        duration = msgs[-1].timestamp - msgs[0].timestamp
+        mins = duration.total_seconds() / 60
+        duration_str = f"{mins:.1f} min" if mins >= 1 else f"{duration.total_seconds():.0f} sec"
+    else:
+        duration_str = "—"
+
+    console.print("[bold]Session statistics:[/bold]")
+    console.print(f"  [green]Messages:[/green]     {len(user_msgs)} you, {len(asst_msgs)} towel, {len(tool_msgs)} tool")
+    console.print(f"  [green]Characters:[/green]   {user_chars:,} in, {asst_chars:,} out")
+    console.print(f"  [green]Tokens out:[/green]   {total_tokens:,}")
+    if tps_values:
+        avg_tps = sum(tps_values) / len(tps_values)
+        max_tps = max(tps_values)
+        console.print(f"  [green]Speed:[/green]        {avg_tps:.1f} tok/s avg, {max_tps:.1f} tok/s peak")
+    console.print(f"  [green]Duration:[/green]     {duration_str}")
+    console.print(f"  [green]Model:[/green]        {ctx.config.model.name}")
+
+    # Cost comparison: show how much this would cost on cloud APIs
+    if total_tokens > 0:
+        # Rough estimates per 1M output tokens (as of 2026)
+        cloud_costs = {
+            "GPT-4o": 10.0,
+            "Claude Sonnet": 15.0,
+            "Claude Opus": 75.0,
+        }
+        console.print(f"\n  [dim]Cloud API cost comparison ({total_tokens:,} output tokens):[/dim]")
+        for provider, cost_per_m in cloud_costs.items():
+            est = (total_tokens / 1_000_000) * cost_per_m
+            console.print(f"    [dim]{provider}: ~${est:.4f}[/dim]")
+        console.print(f"    [green]Towel (local): $0.00[/green]")
 
 
 def _cmd_clear(ctx: SlashContext) -> None:
