@@ -3201,3 +3201,90 @@ def agent_cmd(action: str, name: str | None, goal: str | None, interval: int, to
 
     else:
         console.print(f"[red]Unknown:[/red] {action}")
+
+
+@cli.command(name="ab-test")
+@click.argument("prompt")
+@click.option("--model-a", "-a", default=None, help="First model (default: current)")
+@click.option("--model-b", "-b", required=True, help="Second model to compare")
+@click.option("--tokens", "-t", default=256, help="Max tokens per response")
+def ab_test(prompt: str, model_a: str | None, model_b: str, tokens: int) -> None:
+    """Compare two models on the same prompt.
+
+    \b
+    Examples:
+        towel ab-test "explain monads" -b mlx-community/Llama-3.2-3B-Instruct-4bit
+        towel ab-test "write fizzbuzz" -a model1 -b model2 -t 512
+    """
+    from towel.agent.ab_test import ABResult, ABTestResult
+
+    config = TowelConfig.load()
+    model_a_name = model_a or config.model.name
+
+    console.print(Panel(
+        f"[bold]A/B Test[/bold]\n\n"
+        f"  A: [green]{model_a_name}[/green]\n"
+        f"  B: [green]{model_b}[/green]\n"
+        f"  Prompt: {prompt[:60]}{'...' if len(prompt) > 60 else ''}\n"
+        f"  Max tokens: {tokens}",
+        border_style="cyan",
+    ))
+
+    result = ABTestResult(prompt=prompt)
+    result.a.label = model_a_name.split("/")[-1][:20]
+    result.b.label = model_b.split("/")[-1][:20]
+
+    # Run A
+    console.print(f"\n[dim]Running model A ({model_a_name})...[/dim]")
+    try:
+        import copy
+        config_a = copy.deepcopy(config)
+        config_a.model.name = model_a_name
+        config_a.model.max_tokens = tokens
+
+        from towel.agent.runtime import AgentRuntime
+        from towel.agent.conversation import Conversation, Role
+
+        rt_a = AgentRuntime(config_a)
+        conv_a = Conversation(channel="ab-test")
+        conv_a.add(Role.USER, prompt)
+
+        start = time.perf_counter()
+        resp_a = asyncio.run(_ab_step(rt_a, conv_a))
+        result.a.elapsed = time.perf_counter() - start
+        result.a.response = resp_a.content
+        result.a.tokens = resp_a.metadata.get("tokens", 0)
+        result.a.tps = resp_a.metadata.get("tps", 0)
+        console.print(f"  [green]A done:[/green] {result.a.elapsed:.1f}s, {result.a.tokens} tokens")
+    except Exception as e:
+        result.a.error = str(e)
+        console.print(f"  [red]A error:[/red] {e}")
+
+    # Run B
+    console.print(f"\n[dim]Running model B ({model_b})...[/dim]")
+    try:
+        config_b = copy.deepcopy(config)
+        config_b.model.name = model_b
+        config_b.model.max_tokens = tokens
+
+        rt_b = AgentRuntime(config_b)
+        conv_b = Conversation(channel="ab-test")
+        conv_b.add(Role.USER, prompt)
+
+        start = time.perf_counter()
+        resp_b = asyncio.run(_ab_step(rt_b, conv_b))
+        result.b.elapsed = time.perf_counter() - start
+        result.b.response = resp_b.content
+        result.b.tokens = resp_b.metadata.get("tokens", 0)
+        result.b.tps = resp_b.metadata.get("tps", 0)
+        console.print(f"  [green]B done:[/green] {result.b.elapsed:.1f}s, {result.b.tokens} tokens")
+    except Exception as e:
+        result.b.error = str(e)
+        console.print(f"  [red]B error:[/red] {e}")
+
+    console.print(f"\n{result.summary()}")
+
+
+async def _ab_step(runtime, conv):
+    await runtime.load_model()
+    return await runtime.step(conv)
