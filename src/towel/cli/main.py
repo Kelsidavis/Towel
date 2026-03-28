@@ -2190,3 +2190,72 @@ def explain(target: str, detail: bool, raw: bool) -> None:
         f"Explain this {ext} code {mode}.\n\n```{ext}\n{content}\n```",
         raw,
     )
+
+
+@cli.command()
+@click.argument("action", required=False, default="browse")
+@click.argument("query", required=False, default="")
+def marketplace(action: str, query: str) -> None:
+    """Browse and install community skills.
+
+    \b
+    Examples:
+        towel marketplace                  Browse all available skills
+        towel marketplace search web       Search for skills
+        towel marketplace install weather  Install a skill
+        towel marketplace remove weather   Uninstall a skill
+        towel marketplace installed        List installed skills
+    """
+    from towel.skills.marketplace import (
+        COMMUNITY_SKILLS, search_marketplace, list_installed,
+        install_skill, remove_skill,
+    )
+
+    if action == "browse" or action == "list":
+        installed = set(list_installed())
+        console.print(f"[bold]Skill Marketplace[/bold] ({len(COMMUNITY_SKILLS)} available)\n")
+        for s in COMMUNITY_SKILLS:
+            mark = " [green]installed[/green]" if s["name"] in installed else ""
+            tags = " ".join(f"[dim]#{t}[/dim]" for t in s.get("tags", "").split(",") if t)
+            console.print(f"  [green]{s['name']}[/green]{mark}")
+            console.print(f"    {s['description']}  {tags}")
+        console.print(f"\n[dim]Install: towel marketplace install <name>[/dim]")
+
+    elif action == "search":
+        if not query:
+            console.print("[red]Usage:[/red] towel marketplace search <query>")
+            return
+        results = search_marketplace(query)
+        if not results:
+            console.print(f"[dim]No skills matching '{query}'[/dim]")
+            return
+        console.print(f"[bold]Results for '{query}':[/bold]\n")
+        for s in results:
+            console.print(f"  [green]{s['name']}[/green] — {s['description']}")
+
+    elif action == "install":
+        if not query:
+            console.print("[red]Usage:[/red] towel marketplace install <name>")
+            return
+        console.print(f"[dim]Installing {query}...[/dim]")
+        result = asyncio.run(install_skill(query))
+        console.print(result)
+
+    elif action == "remove":
+        if not query:
+            console.print("[red]Usage:[/red] towel marketplace remove <name>")
+            return
+        console.print(remove_skill(query))
+
+    elif action == "installed":
+        installed = list_installed()
+        if not installed:
+            console.print("[dim]No community skills installed.[/dim]")
+            return
+        console.print(f"[bold]Installed community skills ({len(installed)}):[/bold]")
+        for name in sorted(installed):
+            console.print(f"  [green]{name}[/green]")
+
+    else:
+        console.print(f"[red]Unknown action:[/red] {action}")
+        console.print("[dim]Actions: browse, search, install, remove, installed[/dim]")
