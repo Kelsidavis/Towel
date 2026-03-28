@@ -1827,3 +1827,42 @@ class TestHooks:
         assert reg.count == 1
         reg.off("evt", "noop")
         assert reg.count == 0
+
+
+class TestBookmarkSkill:
+    @pytest.fixture
+    def bm(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("towel.skills.builtin.bookmark_skill.BM_FILE", tmp_path / "bm.json")
+        from towel.skills.builtin.bookmark_skill import BookmarkSkill
+        return BookmarkSkill()
+
+    @pytest.mark.asyncio
+    async def test_add_and_search(self, bm):
+        await bm.execute("bookmark_add", {"url": "https://example.com", "title": "Example", "tags": ["test"]})
+        result = await bm.execute("bookmark_search", {"query": "example"})
+        assert "Example" in result
+        assert "example.com" in result
+
+    @pytest.mark.asyncio
+    async def test_list(self, bm):
+        await bm.execute("bookmark_add", {"url": "https://a.com"})
+        await bm.execute("bookmark_add", {"url": "https://b.com"})
+        result = await bm.execute("bookmark_list", {})
+        assert "2 total" in result
+
+    @pytest.mark.asyncio
+    async def test_delete(self, bm):
+        await bm.execute("bookmark_add", {"url": "https://del.com", "title": "Delete Me"})
+        result = await bm.execute("bookmark_delete", {"index": 0})
+        assert "Deleted" in result
+
+
+class TestCrontabSkill:
+    @pytest.fixture
+    def ct(self):
+        from towel.skills.builtin.crontab_skill import CrontabSkill
+        return CrontabSkill()
+
+    def test_tools(self, ct):
+        names = {t.name for t in ct.tools()}
+        assert names == {"crontab_list", "crontab_add", "crontab_remove"}
