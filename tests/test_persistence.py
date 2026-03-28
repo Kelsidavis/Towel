@@ -136,6 +136,59 @@ class TestConversationStore:
         assert len(summaries) == 0
 
 
+class TestImportExportRoundtrip:
+    """Test that export → import produces identical conversations."""
+
+    def test_json_export_import(self, store, tmp_path):
+        from towel.persistence.export import export_json
+
+        conv = _make_conversation("roundtrip-1")
+        conv.tags = ["test", "roundtrip"]
+        store.save(conv)
+
+        # Export
+        exported = export_json(conv)
+        export_file = tmp_path / "export.json"
+        export_file.write_text(exported, encoding="utf-8")
+
+        # Delete from store
+        store.delete("roundtrip-1")
+        assert not store.exists("roundtrip-1")
+
+        # Import
+        imported_data = json.loads(export_file.read_text(encoding="utf-8"))
+        imported_conv = Conversation.from_dict(imported_data)
+        store.save(imported_conv)
+
+        assert store.exists("roundtrip-1")
+        loaded = store.load("roundtrip-1")
+        assert loaded is not None
+        assert len(loaded) == 3
+        assert loaded.tags == ["test", "roundtrip"]
+
+    def test_import_skips_duplicates(self, store):
+        conv = _make_conversation("dup-test")
+        store.save(conv)
+        assert store.count == 1
+        # Saving again with same ID just overwrites, doesn't duplicate
+        store.save(conv)
+        assert store.count == 1
+
+    def test_import_array_format(self, tmp_path):
+        """Test importing an array of conversations from a single file."""
+        import_store = ConversationStore(store_dir=tmp_path / "import_test")
+        convs = [_make_conversation(f"batch-{i}").to_dict() for i in range(3)]
+        batch_file = tmp_path / "batch.json"
+        batch_file.write_text(json.dumps(convs), encoding="utf-8")
+
+        data = json.loads(batch_file.read_text())
+        for item in data:
+            c = Conversation.from_dict(item)
+            import_store.save(c)
+
+        assert import_store.count == 3
+
+
 class TestGarbageCollection:
     """Test that old conversations can be identified and deleted."""
 

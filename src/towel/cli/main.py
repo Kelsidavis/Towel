@@ -569,7 +569,7 @@ def show(conversation_id: str, tail: int) -> None:
 
 @cli.command(name="export")
 @click.argument("conversation_id")
-@click.option("--format", "-f", "fmt", default="markdown", type=click.Choice(["markdown", "text", "json"]), help="Export format")
+@click.option("--format", "-f", "fmt", default="markdown", type=click.Choice(["markdown", "text", "json", "html"]), help="Export format")
 @click.option("--output", "-o", default=None, type=click.Path(), help="Write to file instead of stdout")
 @click.option("--metadata", "-m", is_flag=True, help="Include timestamps and stats (markdown only)")
 def export_cmd(conversation_id: str, fmt: str, output: str | None, metadata: bool) -> None:
@@ -584,7 +584,7 @@ def export_cmd(conversation_id: str, fmt: str, output: str | None, metadata: boo
         towel export abc123 -m   # include timestamps
     """
     from towel.persistence.store import ConversationStore
-    from towel.persistence.export import export_markdown, export_text, export_json
+    from towel.persistence.export import export_markdown, export_text, export_json, export_html
 
     store = ConversationStore()
     conv = store.load(conversation_id)
@@ -600,6 +600,8 @@ def export_cmd(conversation_id: str, fmt: str, output: str | None, metadata: boo
             result = export_text(conv)
         case "json":
             result = export_json(conv)
+        case "html":
+            result = export_html(conv, include_metadata=metadata)
         case _:
             result = export_markdown(conv)
 
@@ -609,6 +611,89 @@ def export_cmd(conversation_id: str, fmt: str, output: str | None, metadata: boo
         console.print(f"[green]Exported to:[/green] {output}")
     else:
         print(result)
+
+
+@cli.command(name="import")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--tag", "-t", default=None, help="Add a tag to imported conversations")
+def import_cmd(path: str, tag: str | None) -> None:
+    """Import conversations from JSON files.
+
+    \b
+    Accepts a single JSON file or a directory of JSON files.
+    Supports both single-conversation and array-of-conversations formats.
+
+    \b
+    Examples:
+        towel import backup.json
+        towel import conversations/
+        towel import backup.json --tag imported
+    """
+    import json as json_mod
+    from pathlib import Path
+    from towel.persistence.store import ConversationStore
+    from towel.agent.conversation import Conversation
+
+    store = ConversationStore()
+    target = Path(path)
+
+    files: list[Path] = []
+    if target.is_dir():
+        files = sorted(target.glob("*.json"))
+        if not files:
+            console.print(f"[dim]No JSON files found in {target}[/dim]")
+            return
+    else:
+        files = [target]
+
+    imported = 0
+    skipped = 0
+    errors = 0
+
+    for f in files:
+        try:
+            data = json_mod.loads(f.read_text(encoding="utf-8"))
+        except (json_mod.JSONDecodeError, OSError) as e:
+            console.print(f"  [red]Error reading {f.name}:[/red] {e}")
+            errors += 1
+            continue
+
+        # Handle both single conversation and array of conversations
+        items: list[dict] = []
+        if isinstance(data, list):
+            items = data
+        elif isinstance(data, dict) and "id" in data and "messages" in data:
+            items = [data]
+        else:
+            console.print(f"  [yellow]Skipping {f.name}:[/yellow] unrecognized format")
+            errors += 1
+            continue
+
+        for item in items:
+            try:
+                conv = Conversation.from_dict(item)
+            except (KeyError, ValueError) as e:
+                console.print(f"  [yellow]Skipping entry in {f.name}:[/yellow] {e}")
+                errors += 1
+                continue
+
+            if store.exists(conv.id):
+                skipped += 1
+                continue
+
+            if tag:
+                if tag.lower() not in conv.tags:
+                    conv.tags.append(tag.lower())
+
+            store.save(conv)
+            imported += 1
+
+    console.print(f"\n[bold]Import complete:[/bold]")
+    console.print(f"  [green]Imported:[/green] {imported}")
+    if skipped:
+        console.print(f"  [dim]Skipped (already exist):[/dim] {skipped}")
+    if errors:
+        console.print(f"  [yellow]Errors:[/yellow] {errors}")
 
 
 @cli.command()
