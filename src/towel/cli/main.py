@@ -2996,3 +2996,43 @@ def matrix(homeserver: str, token: str) -> None:
         gateway_url=f"ws://{TowelConfig.load().gateway.host}:{TowelConfig.load().gateway.port}",
     )
     asyncio.run(channel.listen())
+
+
+@cli.command()
+@click.argument("name", required=False)
+@click.option("--list", "-l", "list_all", is_flag=True, help="List available pipelines")
+def pipeline(name: str | None, list_all: bool) -> None:
+    """Run a tool pipeline — chain tools together.
+
+    \b
+    Examples:
+        towel pipeline --list              Show available pipelines
+        towel pipeline security-audit      Run security audit pipeline
+        towel pipeline project-health      Check project health
+        towel pipeline morning-briefing    Start your day
+    """
+    from towel.agent.pipelines import get_pipeline, list_pipelines, Pipeline
+    from towel.memory.store import MemoryStore
+
+    if list_all or not name:
+        names = list_pipelines()
+        console.print("[bold]Available pipelines:[/bold]")
+        for n in names:
+            p = get_pipeline(n)
+            if p:
+                steps = ", ".join(s.tool for s in p.steps)
+                console.print(f"  [green]{n}[/green]: {steps}")
+        return
+
+    pipe = get_pipeline(name)
+    if not pipe:
+        console.print(f"[red]Unknown pipeline:[/red] {name}")
+        return
+
+    config = TowelConfig.load()
+    memory = MemoryStore()
+    skills = _build_skill_registry(config, memory_store=memory)
+
+    console.print(f"[bold]Running pipeline:[/bold] {name}")
+    result = asyncio.run(pipe.run(skills))
+    console.print(result.summary())
