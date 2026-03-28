@@ -60,6 +60,8 @@ HELP_TEXT = """[bold]Chat commands:[/bold]
   [green]/copy[/green] [code]           Copy last response to clipboard (or just code blocks)
   [green]/tag[/green] <name>            Add a tag to this conversation (or remove with -name)
   [green]/tags[/green]                 Show tags on this conversation
+  [green]/history[/green] [n]           Browse recent conversations (default: 10)
+  [green]/resume[/green] <id>          Switch to a saved conversation
   [green]/rename[/green] <title>       Set a title for this conversation
   [green]/export[/green] [file]        Export conversation to markdown (.html for HTML)
   [green]/newagent[/green] <name> <model> <prompt>  Create new agent
@@ -179,6 +181,12 @@ def handle_slash(user_input: str, ctx: SlashContext) -> bool | None:
 
         case "/tags":
             _cmd_tags(ctx)
+
+        case "/history":
+            _cmd_history(ctx, arg)
+
+        case "/resume":
+            _cmd_resume(ctx, arg)
 
         case "/rename":
             _cmd_rename(ctx, arg)
@@ -960,6 +968,74 @@ def _cmd_tags(ctx: SlashContext) -> None:
         console.print(f"  Tags: {tag_str}")
     else:
         console.print("[dim]No tags. Add with: /tag <name>[/dim]")
+
+
+def _cmd_history(ctx: SlashContext, arg: str) -> None:
+    """Show recent conversations inline — browse without leaving chat."""
+    limit = int(arg.strip()) if arg.strip().isdigit() else 10
+    convos = ctx.store.list_conversations(limit=limit)
+
+    if not convos:
+        console.print("[dim]No saved conversations.[/dim]")
+        return
+
+    console.print(f"[bold]Recent conversations ({len(convos)}):[/bold]\n")
+    for c in convos:
+        marker = " [green]<-- current[/green]" if c.id == ctx.conv.id else ""
+        # Load tags
+        tag_str = ""
+        try:
+            import json as _json
+            data = _json.loads(ctx.store._path_for(c.id).read_text(encoding="utf-8"))
+            tags = data.get("tags", [])
+            if tags:
+                tag_str = " " + " ".join(f"[yellow]#{t}[/yellow]" for t in tags)
+        except Exception:
+            pass
+
+        console.print(
+            f"  [green]{c.id}[/green]  "
+            f"[dim]{c.created_at[:16]}[/dim]  "
+            f"[dim]({c.message_count} msgs)[/dim]{tag_str}{marker}"
+        )
+        console.print(f"    {c.summary}")
+
+    console.print(f"\n[dim]Switch with: /resume <id>[/dim]")
+
+
+def _cmd_resume(ctx: SlashContext, arg: str) -> None:
+    """Switch to a different saved conversation."""
+    conv_id = arg.strip()
+    if not conv_id:
+        console.print("[red]Usage:[/red] /resume <conversation_id>")
+        console.print("[dim]Browse with: /history[/dim]")
+        return
+
+    # Save current conversation first
+    if ctx.conv.messages:
+        ctx.store.save(ctx.conv)
+
+    other = ctx.store.load(conv_id)
+    if not other:
+        console.print(f"[red]Conversation not found:[/red] {conv_id}")
+        return
+
+    old_id = ctx.conv.id
+
+    # Swap the conversation in-place
+    ctx.conv.id = other.id
+    ctx.conv.title = other.title
+    ctx.conv.tags = other.tags
+    ctx.conv.messages = other.messages
+    ctx.conv.created_at = other.created_at
+    ctx.conv.channel = other.channel
+
+    console.print(f"[green]Resumed:[/green] {other.display_title}")
+    console.print(f"  {len(other)} messages, {other.channel}")
+    if other.tags:
+        tag_str = " ".join(f"[yellow]#{t}[/yellow]" for t in other.tags)
+        console.print(f"  Tags: {tag_str}")
+    console.print(f"[dim]Previous conversation saved as {old_id}[/dim]")
 
 
 def _cmd_rename(ctx: SlashContext, arg: str) -> None:
