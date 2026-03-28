@@ -161,6 +161,40 @@ class TestTimeSkill:
         assert "1970" in result
 
 
+class TestNetworkSkill:
+    @pytest.fixture
+    def net_skill(self):
+        from towel.skills.builtin.network import NetworkSkill
+        return NetworkSkill()
+
+    def test_tools_defined(self, net_skill):
+        tools = net_skill.tools()
+        names = {t.name for t in tools}
+        assert names == {"dns_lookup", "port_check", "http_ping", "whois_lookup"}
+
+    @pytest.mark.asyncio
+    async def test_dns_lookup_localhost(self, net_skill):
+        result = await net_skill.execute("dns_lookup", {"hostname": "localhost"})
+        assert "127.0.0.1" in result or "::1" in result
+
+    @pytest.mark.asyncio
+    async def test_dns_lookup_invalid(self, net_skill):
+        result = await net_skill.execute("dns_lookup", {"hostname": "this.does.not.exist.invalid"})
+        assert "failed" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_port_check_closed(self, net_skill):
+        # Port 1 is almost certainly closed
+        result = await net_skill.execute("port_check", {"host": "127.0.0.1", "port": 1, "timeout": 1})
+        assert "CLOSED" in result or "TIMEOUT" in result
+
+    @pytest.mark.asyncio
+    async def test_http_ping(self, net_skill):
+        # Ping a reliable host
+        result = await net_skill.execute("http_ping", {"url": "https://httpbin.org/status/200", "timeout": 5})
+        assert "200" in result or "TIMEOUT" in result or "ERROR" in result
+
+
 class TestRegisterBuiltins:
     def test_registers_all(self):
         reg = SkillRegistry()
@@ -170,4 +204,5 @@ class TestRegisterBuiltins:
         assert "shell" in names
         assert "web" in names
         assert "time" in names
+        assert "network" in names
         assert "system" in names
