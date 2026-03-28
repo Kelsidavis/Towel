@@ -303,6 +303,53 @@ class TestExportHtml:
         assert "hello" in content
 
 
+class TestAliases:
+    def test_create_alias(self, ctx, tmp_path, monkeypatch):
+        monkeypatch.setattr("towel.cli.aliases.ALIASES_FILE", tmp_path / "aliases.json")
+        handle_slash("/alias review Review this code carefully", ctx)
+        from towel.cli.aliases import get_alias
+        monkeypatch.setattr("towel.cli.aliases.ALIASES_FILE", tmp_path / "aliases.json")
+        assert get_alias("review") == "Review this code carefully"
+
+    def test_list_aliases(self, ctx, tmp_path, monkeypatch):
+        monkeypatch.setattr("towel.cli.aliases.ALIASES_FILE", tmp_path / "aliases.json")
+        handle_slash("/alias test A test alias", ctx)
+        handle_slash("/aliases", ctx)  # should not crash
+
+    def test_remove_alias(self, ctx, tmp_path, monkeypatch):
+        monkeypatch.setattr("towel.cli.aliases.ALIASES_FILE", tmp_path / "aliases.json")
+        handle_slash("/alias temp Temporary alias", ctx)
+        handle_slash("/unalias temp", ctx)
+        from towel.cli.aliases import get_alias
+        monkeypatch.setattr("towel.cli.aliases.ALIASES_FILE", tmp_path / "aliases.json")
+        assert get_alias("temp") is None
+
+    def test_alias_expansion(self, ctx, tmp_path, monkeypatch):
+        monkeypatch.setattr("towel.cli.aliases.ALIASES_FILE", tmp_path / "aliases.json")
+        from towel.cli.aliases import set_alias
+        set_alias("greet", "Say hello to")
+        result = handle_slash("/greet the world", ctx)
+        assert result is False  # should signal agent step
+        # Last user message should contain the expanded alias
+        last_user = [m for m in ctx.conv.messages if m.role == Role.USER][-1]
+        assert "Say hello to" in last_user.content
+        assert "the world" in last_user.content
+
+    def test_alias_no_args(self, ctx, tmp_path, monkeypatch):
+        monkeypatch.setattr("towel.cli.aliases.ALIASES_FILE", tmp_path / "aliases.json")
+        from towel.cli.aliases import set_alias
+        set_alias("status", "What is the current project status?")
+        result = handle_slash("/status", ctx)
+        assert result is False
+        last_user = [m for m in ctx.conv.messages if m.role == Role.USER][-1]
+        assert "current project status" in last_user.content
+
+    def test_unknown_still_errors(self, ctx, tmp_path, monkeypatch):
+        monkeypatch.setattr("towel.cli.aliases.ALIASES_FILE", tmp_path / "aliases.json")
+        result = handle_slash("/totallyunknown", ctx)
+        assert result is True  # consumed as unknown command
+
+
 class TestSystem:
     def test_show_current(self, ctx):
         handle_slash("/system", ctx)

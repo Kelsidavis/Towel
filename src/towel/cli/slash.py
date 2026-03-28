@@ -61,6 +61,9 @@ HELP_TEXT = """[bold]Chat commands:[/bold]
   [green]/newagent[/green] <name> <model> <prompt>  Create new agent
   [green]/delagent[/green] <name>      Delete user agent
   [green]/context[/green]              Show loaded .towel.md project context
+  [green]/alias[/green] <name> <prompt> Create a prompt shortcut (e.g., /alias review Review this code)
+  [green]/aliases[/green]              List all defined aliases
+  [green]/unalias[/green] <name>       Remove an alias
   [green]/system[/green] <prompt>      Override the system prompt
 """
 
@@ -176,7 +179,20 @@ def handle_slash(user_input: str, ctx: SlashContext) -> bool | None:
         case "/system":
             _cmd_system(ctx, arg)
 
+        case "/alias":
+            _cmd_alias(ctx, arg)
+
+        case "/aliases":
+            _cmd_aliases(ctx)
+
+        case "/unalias":
+            _cmd_unalias(ctx, arg)
+
         case _:
+            # Check if it's a user-defined alias
+            alias_result = _try_alias(ctx, cmd, arg)
+            if alias_result is not None:
+                return alias_result
             console.print(f"[red]Unknown command:[/red] {cmd}")
             console.print("[dim]Type /help for available commands[/dim]")
 
@@ -728,6 +744,82 @@ def _cmd_export(ctx: SlashContext, arg: str) -> None:
         console.print(f"[green]Exported to:[/green] {filename}")
     else:
         print(content)
+
+
+def _cmd_alias(ctx: SlashContext, arg: str) -> None:
+    from towel.cli.aliases import set_alias
+
+    parts = arg.split(None, 1)
+    if len(parts) < 2:
+        console.print("[red]Usage:[/red] /alias <name> <prompt>")
+        console.print("  Example: /alias review Review this code for bugs and improvements")
+        console.print("  Then use: /review @myfile.py")
+        return
+
+    name, prompt = parts[0].lower(), parts[1]
+    set_alias(name, prompt)
+    console.print(f"[green]Alias created:[/green] /{name}")
+    console.print(f"  [dim]{prompt[:80]}{'...' if len(prompt) > 80 else ''}[/dim]")
+
+
+def _cmd_aliases(ctx: SlashContext) -> None:
+    from towel.cli.aliases import list_aliases
+
+    aliases = list_aliases()
+    if not aliases:
+        console.print("[dim]No aliases defined. Create one with: /alias <name> <prompt>[/dim]")
+        return
+
+    console.print(f"[bold]Aliases ({len(aliases)}):[/bold]")
+    for name, prompt in sorted(aliases.items()):
+        preview = prompt[:60] + "..." if len(prompt) > 60 else prompt
+        console.print(f"  [green]/{name}[/green]  {preview}")
+
+
+def _cmd_unalias(ctx: SlashContext, arg: str) -> None:
+    from towel.cli.aliases import remove_alias
+
+    name = arg.strip().lower()
+    if not name:
+        console.print("[red]Usage:[/red] /unalias <name>")
+        return
+
+    if remove_alias(name):
+        console.print(f"[green]Removed alias:[/green] /{name}")
+    else:
+        console.print(f"[dim]Alias not found:[/dim] /{name}")
+
+
+def _try_alias(ctx: SlashContext, cmd: str, arg: str) -> bool | None:
+    """Try to expand a slash command as a user alias.
+
+    Returns False to signal agent step, True if consumed, None if not an alias.
+    """
+    from towel.cli.aliases import get_alias
+    from towel.agent.conversation import Role
+    from towel.agent.refs import expand_refs, parse_refs
+
+    # cmd is like "/review" — strip the slash
+    alias_name = cmd.lstrip("/")
+    prompt_template = get_alias(alias_name)
+    if prompt_template is None:
+        return None
+
+    # Build the full prompt: alias template + user input
+    if arg.strip():
+        full_prompt = f"{prompt_template}\n\n{arg}"
+    else:
+        full_prompt = prompt_template
+
+    # Expand @file references
+    refs = parse_refs(full_prompt)
+    if refs:
+        full_prompt = expand_refs(full_prompt)
+
+    console.print(f"[dim]  alias: {alias_name}[/dim]")
+    ctx.conv.add(Role.USER, full_prompt)
+
+    return False  # signal: run agent step
 
 
 def _cmd_system(ctx: SlashContext, arg: str) -> None:
