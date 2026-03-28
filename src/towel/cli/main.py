@@ -2639,3 +2639,70 @@ def completions(shell: str) -> None:
     elif shell == "fish":
         script = f'{env_var}=fish_source towel | source'
     print(script)
+
+
+@cli.command()
+@click.option("--chat", "-c", is_flag=True, help="Continuous voice chat mode")
+@click.option("--file", "-f", "audio_file", default=None, type=click.Path(exists=True), help="Transcribe an audio file")
+@click.option("--duration", "-d", default=10.0, help="Max recording duration in seconds")
+def voice(chat: bool, audio_file: str | None, duration: float) -> None:
+    """Talk to Towel with your voice.
+
+    \b
+    Uses mlx-whisper for on-device speech-to-text. No audio leaves your Mac.
+
+    \b
+    Examples:
+        towel voice                    Record and transcribe once
+        towel voice --chat             Continuous voice conversation
+        towel voice -f recording.wav   Transcribe a file
+        towel voice -d 30              Record up to 30 seconds
+    """
+    from towel.cli.voice import check_voice_deps, record_audio, transcribe_audio, transcribe_bytes
+
+    err = check_voice_deps()
+    if err:
+        console.print(f"[red]{err}[/red]")
+        return
+
+    if audio_file:
+        text = transcribe_audio(audio_file)
+        console.print(f"[cyan]{text}[/cyan]")
+        return
+
+    if chat:
+        console.print(Panel(
+            "[bold green]Voice Chat[/bold green] — speak and get AI responses.\n"
+            "[dim]Press Ctrl+C to stop recording. Say 'exit' or 'quit' to end.[/dim]",
+            border_style="green",
+        ))
+
+        config = TowelConfig.load()
+
+        while True:
+            wav = record_audio(duration)
+            if isinstance(wav, str):
+                console.print(f"[red]{wav}[/red]")
+                break
+
+            text = transcribe_bytes(wav)
+            console.print(f"\n[bold cyan]you>[/bold cyan] {text}")
+
+            if text.lower().strip() in ("exit", "quit", "bye", "stop"):
+                console.print("[dim]Goodbye.[/dim]")
+                break
+
+            if not text or text == "(no speech detected)":
+                continue
+
+            # Send to agent
+            console.print("[bold green]towel>[/bold green] ", end="")
+            _oneshot(config, text)
+            console.print()
+    else:
+        wav = record_audio(duration)
+        if isinstance(wav, str):
+            console.print(f"[red]{wav}[/red]")
+            return
+        text = transcribe_bytes(wav)
+        console.print(f"[cyan]{text}[/cyan]")
