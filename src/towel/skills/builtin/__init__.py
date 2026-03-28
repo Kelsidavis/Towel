@@ -68,6 +68,9 @@ from towel.skills.builtin.typo_skill import TypoSkill
 from towel.skills.builtin.make_skill import MakeSkill
 from towel.skills.builtin.man_skill import ManSkill
 from towel.skills.builtin.github_skill import GithubSkill
+from towel.skills.builtin.pypi_skill import PypiSkill
+from towel.skills.builtin.stackoverflow_skill import StackOverflowSkill
+from towel.skills.builtin.reddit_skill import RedditSkill
 from towel.skills.builtin.currency_skill import CurrencySkill
 from towel.skills.builtin.hackernews_skill import HackerNewsSkill
 from towel.skills.builtin.wikipedia_skill import WikipediaSkill
@@ -77,7 +80,7 @@ __all__ = [
     "FileSystemSkill", "ShellSkill", "WebFetchSkill", "MemorySkill",
     "GitSkill", "SearchSkill", "ClipboardSkill", "DataSkill", "SystemSkill",
     "TimeSkill", "NetworkSkill", "HashSkill", "EnvSkill", "RegexSkill",
-    "ConvertSkill", "JsonSkill", "DiffSkill", "ArchiveSkill", "CronSkill", "MarkdownSkill", "HttpSkill", "SqlSkill", "ImageSkill", "ProcessSkill", "TextSkill", "KnowledgeSkill", "TranslateSkill", "SecuritySkill", "TodoSkill", "TemplateGenSkill", "MathSkill", "DockerSkill", "CalendarSkill", "QrSkill", "JwtSkill", "ColorSkill", "UuidSkill", "YamlSkill", "SnippetGenSkill", "CsvSkill", "SemverSkill", "IpCalcSkill", "DotenvSkill", "LogAnalyzerSkill", "HttpHeaderSkill", "AsciiSkill", "StringSkill", "SshSkill", "NpmSkill", "PipSkill", "MetricsSkill", "PdfSkill", "PlaceholderSkill", "WebhookTriggerSkill", "GitignoreSkill", "LintSkill", "DiagramSkill", "ChangelogGenSkill", "NoteSkill", "ClipboardHistorySkill", "CrontabSkill", "BookmarkSkill", "KeychainSkill", "OpenApiSkill", "TypoSkill", "MakeSkill", "ManSkill", "GithubSkill", "CurrencySkill", "HackerNewsSkill", "WikipediaSkill", "WeatherSkill",
+    "ConvertSkill", "JsonSkill", "DiffSkill", "ArchiveSkill", "CronSkill", "MarkdownSkill", "HttpSkill", "SqlSkill", "ImageSkill", "ProcessSkill", "TextSkill", "KnowledgeSkill", "TranslateSkill", "SecuritySkill", "TodoSkill", "TemplateGenSkill", "MathSkill", "DockerSkill", "CalendarSkill", "QrSkill", "JwtSkill", "ColorSkill", "UuidSkill", "YamlSkill", "SnippetGenSkill", "CsvSkill", "SemverSkill", "IpCalcSkill", "DotenvSkill", "LogAnalyzerSkill", "HttpHeaderSkill", "AsciiSkill", "StringSkill", "SshSkill", "NpmSkill", "PipSkill", "MetricsSkill", "PdfSkill", "PlaceholderSkill", "WebhookTriggerSkill", "GitignoreSkill", "LintSkill", "DiagramSkill", "ChangelogGenSkill", "NoteSkill", "ClipboardHistorySkill", "CrontabSkill", "BookmarkSkill", "KeychainSkill", "OpenApiSkill", "TypoSkill", "MakeSkill", "ManSkill", "GithubSkill", "PypiSkill", "StackOverflowSkill", "RedditSkill", "CurrencySkill", "HackerNewsSkill", "WikipediaSkill", "WeatherSkill",
 ]
 
 
@@ -156,6 +159,9 @@ def register_builtins(
     registry.register(MakeSkill())
     registry.register(ManSkill())
     registry.register(GithubSkill())
+    registry.register(PypiSkill())
+    registry.register(StackOverflowSkill())
+    registry.register(RedditSkill())
     registry.register(CurrencySkill())
     registry.register(HackerNewsSkill())
     registry.register(WikipediaSkill())
