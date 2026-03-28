@@ -53,12 +53,15 @@ from towel.skills.builtin.pip_skill import PipSkill
 from towel.skills.builtin.metrics_skill import MetricsSkill
 from towel.skills.builtin.pdf_skill import PdfSkill
 from towel.skills.builtin.placeholder_skill import PlaceholderSkill
+from towel.skills.builtin.webhook_trigger_skill import WebhookTriggerSkill
+from towel.skills.builtin.gitignore_skill import GitignoreSkill
+from towel.skills.builtin.lint_skill import LintSkill
 
 __all__ = [
     "FileSystemSkill", "ShellSkill", "WebFetchSkill", "MemorySkill",
     "GitSkill", "SearchSkill", "ClipboardSkill", "DataSkill", "SystemSkill",
     "TimeSkill", "NetworkSkill", "HashSkill", "EnvSkill", "RegexSkill",
-    "ConvertSkill", "JsonSkill", "DiffSkill", "ArchiveSkill", "CronSkill", "MarkdownSkill", "HttpSkill", "SqlSkill", "ImageSkill", "ProcessSkill", "TextSkill", "KnowledgeSkill", "TranslateSkill", "SecuritySkill", "TodoSkill", "TemplateGenSkill", "MathSkill", "DockerSkill", "CalendarSkill", "QrSkill", "JwtSkill", "ColorSkill", "UuidSkill", "YamlSkill", "SnippetGenSkill", "CsvSkill", "SemverSkill", "IpCalcSkill", "DotenvSkill", "LogAnalyzerSkill", "HttpHeaderSkill", "AsciiSkill", "StringSkill", "SshSkill", "NpmSkill", "PipSkill", "MetricsSkill", "PdfSkill", "PlaceholderSkill",
+    "ConvertSkill", "JsonSkill", "DiffSkill", "ArchiveSkill", "CronSkill", "MarkdownSkill", "HttpSkill", "SqlSkill", "ImageSkill", "ProcessSkill", "TextSkill", "KnowledgeSkill", "TranslateSkill", "SecuritySkill", "TodoSkill", "TemplateGenSkill", "MathSkill", "DockerSkill", "CalendarSkill", "QrSkill", "JwtSkill", "ColorSkill", "UuidSkill", "YamlSkill", "SnippetGenSkill", "CsvSkill", "SemverSkill", "IpCalcSkill", "DotenvSkill", "LogAnalyzerSkill", "HttpHeaderSkill", "AsciiSkill", "StringSkill", "SshSkill", "NpmSkill", "PipSkill", "MetricsSkill", "PdfSkill", "PlaceholderSkill", "WebhookTriggerSkill", "GitignoreSkill", "LintSkill",
 ]
 
 
@@ -122,3 +125,6 @@ def register_builtins(
     registry.register(MetricsSkill())
     registry.register(PdfSkill())
     registry.register(PlaceholderSkill())
+    registry.register(WebhookTriggerSkill())
+    registry.register(GitignoreSkill())
+    registry.register(LintSkill())

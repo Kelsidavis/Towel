@@ -1645,3 +1645,73 @@ class TestPlaceholderSkill:
     async def test_fake_data_email(self, ph):
         result = await ph.execute("fake_data", {"type": "email", "count": 2})
         assert "@" in result
+
+
+class TestGitignoreSkill:
+    @pytest.fixture
+    def gi(self):
+        from towel.skills.builtin.gitignore_skill import GitignoreSkill
+        return GitignoreSkill()
+
+    @pytest.mark.asyncio
+    async def test_generate_python(self, gi):
+        result = await gi.execute("gitignore_generate", {"languages": ["python"]})
+        assert "__pycache__/" in result
+        assert "*.pyc" in result
+
+    @pytest.mark.asyncio
+    async def test_generate_multi(self, gi):
+        result = await gi.execute("gitignore_generate", {"languages": ["python", "node"], "extras": ["*.bak"]})
+        assert "__pycache__/" in result
+        assert "node_modules/" in result
+        assert "*.bak" in result
+
+    @pytest.mark.asyncio
+    async def test_check(self, gi, tmp_path):
+        (tmp_path / ".gitignore").write_text("*.pyc\n__pycache__/\n")
+        result = await gi.execute("gitignore_check", {"path": str(tmp_path)})
+        assert "*.pyc" in result
+
+
+class TestLintSkill:
+    @pytest.fixture
+    def lint(self):
+        from towel.skills.builtin.lint_skill import LintSkill
+        return LintSkill()
+
+    @pytest.mark.asyncio
+    async def test_clean_code(self, lint):
+        result = await lint.execute("lint_text", {"code": "x = 1\ny = 2\n"})
+        assert "No issues" in result
+
+    @pytest.mark.asyncio
+    async def test_trailing_whitespace(self, lint):
+        result = await lint.execute("lint_text", {"code": "x = 1   \n"})
+        assert "trailing_whitespace" in result
+
+    @pytest.mark.asyncio
+    async def test_bare_except(self, lint):
+        result = await lint.execute("lint_text", {"code": "try:\n    pass\nexcept:\n    pass\n"})
+        assert "bare_except" in result
+
+    @pytest.mark.asyncio
+    async def test_todo(self, lint):
+        result = await lint.execute("lint_text", {"code": "# TODO fix this\n"})
+        assert "TODO" in result
+
+    @pytest.mark.asyncio
+    async def test_file(self, lint, tmp_path):
+        (tmp_path / "test.py").write_text("from os import *\n")
+        result = await lint.execute("lint_file", {"path": str(tmp_path / "test.py")})
+        assert "import_star" in result
+
+
+class TestWebhookTriggerSkill:
+    @pytest.fixture
+    def wh(self):
+        from towel.skills.builtin.webhook_trigger_skill import WebhookTriggerSkill
+        return WebhookTriggerSkill()
+
+    def test_tools(self, wh):
+        names = {t.name for t in wh.tools()}
+        assert names == {"webhook_send", "slack_message", "discord_message"}
