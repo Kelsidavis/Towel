@@ -250,6 +250,63 @@ class TestHashSkill:
         assert "hello world" in result
 
 
+class TestEnvSkill:
+    @pytest.fixture
+    def env_skill(self):
+        from towel.skills.builtin.env_skill import EnvSkill
+        return EnvSkill()
+
+    def test_tools_defined(self, env_skill):
+        tools = env_skill.tools()
+        names = {t.name for t in tools}
+        assert names == {"env_get", "env_list", "env_path", "env_which"}
+
+    @pytest.mark.asyncio
+    async def test_env_get_home(self, env_skill):
+        result = await env_skill.execute("env_get", {"name": "HOME"})
+        assert "HOME=" in result
+
+    @pytest.mark.asyncio
+    async def test_env_get_missing(self, env_skill):
+        result = await env_skill.execute("env_get", {"name": "TOWEL_NONEXISTENT_VAR_XYZ"})
+        assert "not set" in result
+
+    @pytest.mark.asyncio
+    async def test_env_list(self, env_skill):
+        result = await env_skill.execute("env_list", {})
+        assert "Environment" in result
+        assert "HOME" in result
+
+    @pytest.mark.asyncio
+    async def test_env_list_prefix(self, env_skill):
+        result = await env_skill.execute("env_list", {"prefix": "HOME"})
+        assert "HOME" in result
+
+    @pytest.mark.asyncio
+    async def test_env_path(self, env_skill):
+        result = await env_skill.execute("env_path", {})
+        assert "PATH entries" in result
+        assert "/usr" in result or "/bin" in result
+
+    @pytest.mark.asyncio
+    async def test_env_which_python(self, env_skill):
+        result = await env_skill.execute("env_which", {"command": "python3"})
+        assert "python3:" in result
+        assert "not found" not in result
+
+    @pytest.mark.asyncio
+    async def test_env_which_missing(self, env_skill):
+        result = await env_skill.execute("env_which", {"command": "nonexistent_binary_xyz"})
+        assert "not found" in result
+
+    @pytest.mark.asyncio
+    async def test_env_list_redacts_secrets(self, env_skill, monkeypatch):
+        monkeypatch.setenv("MY_SECRET_TOKEN", "super-secret-value")
+        result = await env_skill.execute("env_list", {"prefix": "MY_SECRET"})
+        assert "****" in result
+        assert "super-secret-value" not in result
+
+
 class TestRegisterBuiltins:
     def test_registers_all(self):
         reg = SkillRegistry()
@@ -261,4 +318,5 @@ class TestRegisterBuiltins:
         assert "time" in names
         assert "network" in names
         assert "hash" in names
+        assert "env" in names
         assert "system" in names
