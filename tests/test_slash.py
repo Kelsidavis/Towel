@@ -135,6 +135,47 @@ class TestRetry:
         assert result is True  # no assistant to remove
 
 
+class TestDiff:
+    def test_diff_identical(self, ctx, tmp_path):
+        from towel.persistence.store import ConversationStore
+        from towel.agent.conversation import Conversation
+        store = ConversationStore(store_dir=tmp_path / "convs")
+        ctx.store = store
+
+        # Save a copy as "other"
+        other = Conversation(id="other-1", channel="cli")
+        other.add(Role.USER, "hello")
+        other.add(Role.ASSISTANT, "hi there")
+        store.save(other)
+
+        handle_slash("/diff other-1", ctx)  # should say identical
+
+    def test_diff_divergent(self, ctx, tmp_path):
+        from towel.persistence.store import ConversationStore
+        from towel.agent.conversation import Conversation
+        store = ConversationStore(store_dir=tmp_path / "convs")
+        ctx.store = store
+
+        # Same start, different continuation
+        other = Conversation(id="other-2", channel="cli")
+        other.add(Role.USER, "hello")
+        other.add(Role.ASSISTANT, "hi there")
+        other.add(Role.USER, "different question")
+        other.add(Role.ASSISTANT, "different answer")
+        store.save(other)
+
+        ctx.conv.add(Role.USER, "my question")
+        ctx.conv.add(Role.ASSISTANT, "my answer")
+
+        handle_slash("/diff other-2", ctx)  # should show divergence
+
+    def test_diff_not_found(self, ctx):
+        handle_slash("/diff nonexistent", ctx)  # should print not found
+
+    def test_diff_no_arg(self, ctx):
+        handle_slash("/diff", ctx)  # should print usage
+
+
 class TestGrep:
     def test_grep_finds_match(self, ctx):
         ctx.conv.add(Role.ASSISTANT, "The answer is 42, obviously.")

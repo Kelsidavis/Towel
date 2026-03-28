@@ -51,6 +51,7 @@ HELP_TEXT = """[bold]Chat commands:[/bold]
   [green]/forget[/green] <key>         Remove a memory
   [green]/t[/green] <template> <input>  Apply a prompt template (e.g., /t review code here)
   [green]/templates[/green]            List available templates
+  [green]/diff[/green] <id>             Compare this conversation with a saved one
   [green]/grep[/green] <query>          Search within this conversation
   [green]/pin[/green]                  Pin last response (stays in context even when old msgs drop)
   [green]/pins[/green]                 List pinned messages
@@ -147,6 +148,9 @@ def handle_slash(user_input: str, ctx: SlashContext) -> bool | None:
 
         case "/templates":
             _cmd_templates(ctx)
+
+        case "/diff":
+            _cmd_diff(ctx, arg)
 
         case "/grep":
             _cmd_grep(ctx, arg)
@@ -549,6 +553,68 @@ def _cmd_delagent(ctx: SlashContext, arg: str) -> None:
         console.print(f"[green]Deleted agent:[/green] {name}")
     else:
         console.print(f"[red]Agent not found:[/red] {name}")
+
+
+def _cmd_diff(ctx: SlashContext, arg: str) -> None:
+    """Compare this conversation with a saved one, showing where they diverge."""
+    conv_id = arg.strip()
+    if not conv_id:
+        console.print("[red]Usage:[/red] /diff <conversation_id>")
+        console.print("[dim]Compare with a forked or saved conversation.[/dim]")
+        return
+
+    other = ctx.store.load(conv_id)
+    if not other:
+        console.print(f"[red]Conversation not found:[/red] {conv_id}")
+        return
+
+    current = ctx.conv
+    cur_msgs = current.messages
+    oth_msgs = other.messages
+
+    # Find divergence point
+    common = 0
+    limit = min(len(cur_msgs), len(oth_msgs))
+    while common < limit and cur_msgs[common].content == oth_msgs[common].content:
+        common += 1
+
+    console.print(f"[bold]Diff:[/bold] current vs [green]{conv_id}[/green]\n")
+    console.print(f"  Shared history: {common} message(s)")
+    console.print(f"  Current:  {len(cur_msgs)} total ({len(cur_msgs) - common} unique)")
+    console.print(f"  Other:    {len(oth_msgs)} total ({len(oth_msgs) - common} unique)")
+
+    if common == len(cur_msgs) and common == len(oth_msgs):
+        console.print("\n  [green]Conversations are identical.[/green]")
+        return
+
+    console.print(f"\n[bold]Diverges after message {common}:[/bold]\n")
+
+    # Show diverging messages side by side
+    max_show = 5
+    cur_unique = cur_msgs[common:common + max_show]
+    oth_unique = oth_msgs[common:common + max_show]
+
+    if cur_unique:
+        console.print("  [cyan]Current branch:[/cyan]")
+        for msg in cur_unique:
+            preview = msg.content[:80].replace("\n", " ")
+            if len(msg.content) > 80:
+                preview += "..."
+            role_color = {"user": "cyan", "assistant": "green", "tool": "yellow"}.get(msg.role.value, "dim")
+            console.print(f"    [{role_color}]{msg.role.value}[/{role_color}] {preview}")
+        if len(cur_msgs) - common > max_show:
+            console.print(f"    [dim]... and {len(cur_msgs) - common - max_show} more[/dim]")
+
+    if oth_unique:
+        console.print(f"\n  [green]Other ({conv_id}):[/green]")
+        for msg in oth_unique:
+            preview = msg.content[:80].replace("\n", " ")
+            if len(msg.content) > 80:
+                preview += "..."
+            role_color = {"user": "cyan", "assistant": "green", "tool": "yellow"}.get(msg.role.value, "dim")
+            console.print(f"    [{role_color}]{msg.role.value}[/{role_color}] {preview}")
+        if len(oth_msgs) - common > max_show:
+            console.print(f"    [dim]... and {len(oth_msgs) - common - max_show} more[/dim]")
 
 
 def _cmd_grep(ctx: SlashContext, arg: str) -> None:
