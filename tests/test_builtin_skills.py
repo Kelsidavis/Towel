@@ -1866,3 +1866,49 @@ class TestCrontabSkill:
     def test_tools(self, ct):
         names = {t.name for t in ct.tools()}
         assert names == {"crontab_list", "crontab_add", "crontab_remove"}
+
+
+class TestOpenApiSkill:
+    @pytest.fixture
+    def oa(self):
+        from towel.skills.builtin.openapi_skill import OpenApiSkill
+        return OpenApiSkill()
+
+    SPEC = '{"info":{"title":"Pet Store","version":"1.0.0"},"paths":{"/pets":{"get":{"summary":"List pets","tags":["pets"]},"post":{"summary":"Create pet","tags":["pets"]}},"/pets/{id}":{"get":{"summary":"Get pet","parameters":[{"name":"id","in":"path","required":true,"schema":{"type":"integer"}}],"responses":{"200":{"description":"OK"},"404":{"description":"Not found"}}}}}}'
+
+    @pytest.mark.asyncio
+    async def test_summary(self, oa):
+        result = await oa.execute("openapi_summary", {"spec": self.SPEC})
+        assert "Pet Store" in result
+        assert "3" in result  # 3 endpoints
+
+    @pytest.mark.asyncio
+    async def test_endpoints(self, oa):
+        result = await oa.execute("openapi_endpoints", {"spec": self.SPEC})
+        assert "/pets" in result
+        assert "GET" in result
+        assert "POST" in result
+
+    @pytest.mark.asyncio
+    async def test_detail(self, oa):
+        result = await oa.execute("openapi_detail", {"spec": self.SPEC, "path": "/pets/{id}", "method": "get"})
+        assert "Get pet" in result
+        assert "id" in result
+        assert "200" in result
+        assert "404" in result
+
+    @pytest.mark.asyncio
+    async def test_filter_by_tag(self, oa):
+        result = await oa.execute("openapi_endpoints", {"spec": self.SPEC, "tag": "pets"})
+        assert "List pets" in result
+
+
+class TestKeychainSkill:
+    @pytest.fixture
+    def kc(self):
+        from towel.skills.builtin.keychain_skill import KeychainSkill
+        return KeychainSkill()
+
+    def test_tools(self, kc):
+        names = {t.name for t in kc.tools()}
+        assert names == {"secret_set", "secret_get", "secret_delete", "secret_list"}
