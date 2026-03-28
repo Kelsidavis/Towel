@@ -128,6 +128,57 @@ class TestExpandRefs:
         assert "second" in result
 
 
+class TestUrlRefs:
+    def test_url_pattern_parsed(self):
+        from towel.agent.refs import _URL_PATTERN
+        m = _URL_PATTERN.findall("check @https://example.com/api.json please")
+        assert len(m) == 1
+        assert m[0] == "https://example.com/api.json"
+
+    def test_http_pattern(self):
+        from towel.agent.refs import _URL_PATTERN
+        m = _URL_PATTERN.findall("see @http://localhost:8080/health")
+        assert len(m) == 1
+
+    def test_url_not_confused_with_file(self):
+        # URL should not appear in file refs
+        refs = parse_refs("check @https://example.com/file.py")
+        # File parser shouldn't match URLs (they start with https://)
+        for r in refs:
+            assert not r.path.startswith("https://")
+
+    def test_expand_url_fetch(self):
+        """Test URL expansion with a mocked httpx response."""
+        from unittest.mock import patch, MagicMock
+
+        mock_resp = MagicMock()
+        mock_resp.text = '{"status": "ok"}'
+        mock_resp.headers = {"content-type": "application/json"}
+
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.get.return_value = mock_resp
+
+        with patch("httpx.Client", return_value=mock_client):
+            result = expand_refs("check @https://api.example.com/status.json")
+        assert '{"status": "ok"}' in result
+        assert "```json" in result
+
+    def test_expand_url_failure(self):
+        """Failed URL fetch should show error inline."""
+        from unittest.mock import patch, MagicMock
+
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.get.side_effect = ConnectionError("refused")
+
+        with patch("httpx.Client", return_value=mock_client):
+            result = expand_refs("check @https://down.example.com/api")
+        assert "Failed to fetch" in result
+
+
 class TestExtToLang:
     def test_python(self):
         assert _ext_to_lang("py") == "python"

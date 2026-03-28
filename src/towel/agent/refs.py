@@ -1,13 +1,13 @@
-"""@ file references — expand @path tokens in user messages.
+"""@ references — expand @path and @url tokens in user messages.
 
 Syntax:
     @path/to/file        Inject the full file content
     @path/to/file:10-20  Inject lines 10-20 only
     @dir/*.py            Inject all matching files (glob)
-    @url                 Ignored (not a file reference)
+    @https://example.com Fetch URL content and inject inline
 
 References are expanded inline, replacing the @token with a fenced
-code block containing the file content. This is faster than tool calls
+code block containing the content. This is faster than tool calls
 because the content goes straight into the user message.
 """
 
@@ -27,8 +27,15 @@ _REF_PATTERN = re.compile(
 )
 
 MAX_FILE_SIZE = 500_000  # 500KB per file
+MAX_URL_SIZE = 200_000  # 200KB per URL fetch
 MAX_TOTAL_INJECT = 1_000_000  # 1MB total injection per message
 MAX_GLOB_FILES = 20
+URL_TIMEOUT = 10  # seconds
+
+# Match @https://... and @http://... URLs
+_URL_PATTERN = re.compile(
+    r"(?<!\w)@(https?://[^\s\])<>\"']+)",
+)
 
 
 class FileRef(NamedTuple):
@@ -59,18 +66,31 @@ def parse_refs(text: str) -> list[FileRef]:
 
 
 def expand_refs(text: str) -> str:
-    """Expand all @file references in a message, replacing them with file content."""
-    refs = parse_refs(text)
-    if not refs:
-        return text
-
+    """Expand all @file and @url references in a message."""
+    # Expand URLs first (so they don't get matched as file paths)
+    url_matches = list(_URL_PATTERN.finditer(text))
     total_injected = 0
     result = text
 
+    for match in url_matches:
+        url = match.group(1)
+        token = f"@{url}"
+        fetched = _fetch_url(url)
+        if fetched is None:
+            continue
+
+        total_injected += len(fetched)
+        if total_injected > MAX_TOTAL_INJECT:
+            fetched = "[Content truncated — total injection limit reached]"
+
+        result = result.replace(token, fetched, 1)
+
+    # Then expand file refs
+    refs = parse_refs(result)
     for ref in refs:
         expanded = _resolve_ref(ref)
         if expanded is None:
-            continue  # leave the @token as-is if resolution fails
+            continue
 
         total_injected += len(expanded)
         if total_injected > MAX_TOTAL_INJECT:
@@ -155,6 +175,54 @@ def _read_file(path: Path, line_start: int | None, line_end: int | None) -> str 
     except OSError as e:
         log.warning(f"Failed to read {path}: {e}")
         return None
+
+
+def _fetch_url(url: str) -> str | None:
+    """Fetch a URL and return its content as a fenced block."""
+    try:
+        import httpx as _httpx
+    except ImportError:
+        log.warning("httpx not installed — cannot expand @url references")
+        return None
+
+    try:
+        with _httpx.Client(timeout=URL_TIMEOUT, follow_redirects=True) as client:
+            resp = client.get(url, headers={"User-Agent": "Towel/1.0"})
+            resp.raise_for_status()
+
+            content_type = resp.headers.get("content-type", "")
+            body = resp.text[:MAX_URL_SIZE]
+
+            if len(resp.text) > MAX_URL_SIZE:
+                body += f"\n\n[... truncated at {MAX_URL_SIZE} bytes]"
+
+            # Guess language from URL or content-type
+            lang = ""
+            if "json" in content_type or url.endswith(".json"):
+                lang = "json"
+            elif "yaml" in content_type or url.endswith((".yml", ".yaml")):
+                lang = "yaml"
+            elif "html" in content_type:
+                lang = "html"
+            elif "xml" in content_type or url.endswith(".xml"):
+                lang = "xml"
+            elif url.endswith(".py"):
+                lang = "python"
+            elif url.endswith(".js"):
+                lang = "javascript"
+            elif url.endswith(".ts"):
+                lang = "typescript"
+            elif url.endswith((".md", ".markdown")):
+                lang = "markdown"
+
+            # Shorten display URL
+            display = url if len(url) <= 80 else url[:77] + "..."
+
+            return f"\n**{display}**:\n```{lang}\n{body}\n```"
+
+    except Exception as e:
+        log.warning(f"Failed to fetch {url}: {e}")
+        return f"\n[Failed to fetch {url}: {e}]\n"
 
 
 def _ext_to_lang(ext: str) -> str:
