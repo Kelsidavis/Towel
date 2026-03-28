@@ -1233,3 +1233,107 @@ class TestSnippetGenSkill:
     async def test_unknown_template(self, cg):
         result = await cg.execute("codegen_generate", {"template": "nope", "name": "x"})
         assert "Unknown" in result
+
+
+class TestCsvToolsSkill:
+    @pytest.fixture
+    def cs(self):
+        from towel.skills.builtin.csv_skill import CsvSkill
+        return CsvSkill()
+
+    CSV = "name,age,city\nAlice,30,NYC\nBob,25,LA\nCharlie,35,NYC\nDiana,28,LA"
+
+    @pytest.mark.asyncio
+    async def test_filter(self, cs):
+        result = await cs.execute("csv_filter", {"data": self.CSV, "column": "city", "value": "NYC"})
+        assert "Alice" in result
+        assert "Charlie" in result
+        assert "Bob" not in result
+        assert "2 rows" in result
+
+    @pytest.mark.asyncio
+    async def test_filter_numeric(self, cs):
+        result = await cs.execute("csv_filter", {"data": self.CSV, "column": "age", "value": ">28"})
+        assert "Alice" in result
+        assert "Charlie" in result
+
+    @pytest.mark.asyncio
+    async def test_sort(self, cs):
+        result = await cs.execute("csv_sort", {"data": self.CSV, "column": "age"})
+        lines = result.strip().splitlines()
+        assert "Bob" in lines[1]  # youngest first
+
+    @pytest.mark.asyncio
+    async def test_aggregate(self, cs):
+        result = await cs.execute("csv_aggregate", {"data": self.CSV, "group_by": "city", "value_column": "age", "operation": "avg"})
+        assert "NYC" in result
+        assert "LA" in result
+
+    @pytest.mark.asyncio
+    async def test_columns(self, cs):
+        result = await cs.execute("csv_columns", {"data": self.CSV})
+        assert "name" in result
+        assert "age" in result
+        assert "numeric" in result
+
+
+class TestSemverSkill:
+    @pytest.fixture
+    def sv(self):
+        from towel.skills.builtin.semver_skill import SemverSkill
+        return SemverSkill()
+
+    @pytest.mark.asyncio
+    async def test_parse(self, sv):
+        result = await sv.execute("semver_parse", {"version": "1.2.3"})
+        assert "Major: 1" in result
+        assert "Minor: 2" in result
+        assert "Patch: 3" in result
+
+    @pytest.mark.asyncio
+    async def test_bump_minor(self, sv):
+        result = await sv.execute("semver_bump", {"version": "1.2.3", "bump": "minor"})
+        assert "1.3.0" in result
+
+    @pytest.mark.asyncio
+    async def test_bump_major(self, sv):
+        result = await sv.execute("semver_bump", {"version": "1.2.3", "bump": "major"})
+        assert "2.0.0" in result
+
+    @pytest.mark.asyncio
+    async def test_compare(self, sv):
+        result = await sv.execute("semver_compare", {"a": "2.0.0", "b": "1.9.9"})
+        assert "NEWER" in result
+
+
+class TestIpCalcSkill:
+    @pytest.fixture
+    def ip(self):
+        from towel.skills.builtin.ip_calc_skill import IpCalcSkill
+        return IpCalcSkill()
+
+    @pytest.mark.asyncio
+    async def test_subnet_info(self, ip):
+        result = await ip.execute("ipcalc_info", {"address": "192.168.1.0/24"})
+        assert "Netmask: 255.255.255.0" in result
+        assert "Hosts: 254" in result
+
+    @pytest.mark.asyncio
+    async def test_ip_info(self, ip):
+        result = await ip.execute("ipcalc_info", {"address": "10.0.0.1"})
+        assert "Private: True" in result
+
+    @pytest.mark.asyncio
+    async def test_contains_yes(self, ip):
+        result = await ip.execute("ipcalc_contains", {"subnet": "10.0.0.0/8", "ip": "10.1.2.3"})
+        assert "IS within" in result
+
+    @pytest.mark.asyncio
+    async def test_contains_no(self, ip):
+        result = await ip.execute("ipcalc_contains", {"subnet": "10.0.0.0/8", "ip": "192.168.1.1"})
+        assert "NOT within" in result
+
+    @pytest.mark.asyncio
+    async def test_split(self, ip):
+        result = await ip.execute("ipcalc_split", {"subnet": "10.0.0.0/24", "new_prefix": 26})
+        assert "4 subnets" in result

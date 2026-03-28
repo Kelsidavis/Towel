@@ -39,12 +39,15 @@ from towel.skills.builtin.color_skill import ColorSkill
 from towel.skills.builtin.uuid_skill import UuidSkill
 from towel.skills.builtin.yaml_skill import YamlSkill
 from towel.skills.builtin.snippet_gen_skill import SnippetGenSkill
+from towel.skills.builtin.csv_skill import CsvSkill
+from towel.skills.builtin.semver_skill import SemverSkill
+from towel.skills.builtin.ip_calc_skill import IpCalcSkill
 
 __all__ = [
     "FileSystemSkill", "ShellSkill", "WebFetchSkill", "MemorySkill",
     "GitSkill", "SearchSkill", "ClipboardSkill", "DataSkill", "SystemSkill",
     "TimeSkill", "NetworkSkill", "HashSkill", "EnvSkill", "RegexSkill",
-    "ConvertSkill", "JsonSkill", "DiffSkill", "ArchiveSkill", "CronSkill", "MarkdownSkill", "HttpSkill", "SqlSkill", "ImageSkill", "ProcessSkill", "TextSkill", "KnowledgeSkill", "TranslateSkill", "SecuritySkill", "TodoSkill", "TemplateGenSkill", "MathSkill", "DockerSkill", "CalendarSkill", "QrSkill", "JwtSkill", "ColorSkill", "UuidSkill", "YamlSkill", "SnippetGenSkill",
+    "ConvertSkill", "JsonSkill", "DiffSkill", "ArchiveSkill", "CronSkill", "MarkdownSkill", "HttpSkill", "SqlSkill", "ImageSkill", "ProcessSkill", "TextSkill", "KnowledgeSkill", "TranslateSkill", "SecuritySkill", "TodoSkill", "TemplateGenSkill", "MathSkill", "DockerSkill", "CalendarSkill", "QrSkill", "JwtSkill", "ColorSkill", "UuidSkill", "YamlSkill", "SnippetGenSkill", "CsvSkill", "SemverSkill", "IpCalcSkill",
 ]
 
 
@@ -94,3 +97,6 @@ def register_builtins(
     registry.register(UuidSkill())
     registry.register(YamlSkill())
     registry.register(SnippetGenSkill())
+    registry.register(CsvSkill())
+    registry.register(SemverSkill())
+    registry.register(IpCalcSkill())
