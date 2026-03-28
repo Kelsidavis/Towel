@@ -2008,3 +2008,203 @@ class TestManSkill:
     async def test_help_nonexistent(self, man):
         result = await man.execute("man_help", {"command": "zzz_nonexistent_cmd"})
         assert "not found" in result.lower() or "error" in result.lower() or "No" in result
+
+
+class TestWeatherSkill:
+    def test_tools(self):
+        from towel.skills.builtin.weather_skill import WeatherSkill
+        assert {t.name for t in WeatherSkill().tools()} == {"weather_now", "weather_forecast"}
+
+
+class TestWikipediaSkill:
+    def test_tools(self):
+        from towel.skills.builtin.wikipedia_skill import WikipediaSkill
+        assert {t.name for t in WikipediaSkill().tools()} == {"wiki_search", "wiki_summary"}
+
+
+class TestHackerNewsSkill2:
+    def test_tools(self):
+        from towel.skills.builtin.hackernews_skill import HackerNewsSkill
+        assert {t.name for t in HackerNewsSkill().tools()} == {"hn_top"}
+
+
+class TestCurrencySkill:
+    def test_tools(self):
+        from towel.skills.builtin.currency_skill import CurrencySkill
+        assert {t.name for t in CurrencySkill().tools()} == {"currency_convert", "currency_rates"}
+
+
+class TestGithubSkill:
+    def test_tools(self):
+        from towel.skills.builtin.github_skill import GithubSkill
+        names = {t.name for t in GithubSkill().tools()}
+        assert "github_repo" in names
+        assert "github_search" in names
+        assert "github_user" in names
+
+
+class TestRedditSkill:
+    def test_tools(self):
+        from towel.skills.builtin.reddit_skill import RedditSkill
+        assert {t.name for t in RedditSkill().tools()} == {"reddit_hot", "reddit_search"}
+
+
+class TestStackOverflowSkill2:
+    def test_tools(self):
+        from towel.skills.builtin.stackoverflow_skill import StackOverflowSkill
+        assert {t.name for t in StackOverflowSkill().tools()} == {"so_search"}
+
+
+class TestPypiSkill:
+    def test_tools(self):
+        from towel.skills.builtin.pypi_skill import PypiSkill
+        assert {t.name for t in PypiSkill().tools()} == {"pypi_info", "pypi_search"}
+
+
+class TestDnsSkill:
+    @pytest.mark.asyncio
+    async def test_resolve_localhost(self):
+        from towel.skills.builtin.dns_skill import DnsSkill
+        result = await DnsSkill().execute("dns_resolve", {"domain": "localhost"})
+        assert "127.0.0.1" in result or "::1" in result
+
+
+class TestWhoisSkill2:
+    def test_tools(self):
+        from towel.skills.builtin.whois_skill import WhoisSkill
+        assert {t.name for t in WhoisSkill().tools()} == {"whois_lookup"}
+
+
+class TestCertSkill:
+    def test_tools(self):
+        from towel.skills.builtin.cert_skill import CertSkill
+        assert {t.name for t in CertSkill().tools()} == {"cert_check"}
+
+
+class TestUptimeSkill:
+    def test_tools(self):
+        from towel.skills.builtin.uptime_skill import UptimeSkill
+        assert {t.name for t in UptimeSkill().tools()} == {"uptime_check", "uptime_batch", "uptime_history"}
+
+
+class TestRandomSkill:
+    @pytest.fixture
+    def rnd(self):
+        from towel.skills.builtin.random_skill import RandomSkill
+        return RandomSkill()
+
+    @pytest.mark.asyncio
+    async def test_dice(self, rnd):
+        result = await rnd.execute("roll_dice", {"notation": "2d6"})
+        assert "Rolling" in result
+        assert "=" in result
+
+    @pytest.mark.asyncio
+    async def test_coin(self, rnd):
+        result = await rnd.execute("flip_coin", {"count": 10})
+        assert "Heads" in result or "Tails" in result
+
+    @pytest.mark.asyncio
+    async def test_choice(self, rnd):
+        result = await rnd.execute("random_choice", {"options": ["a", "b", "c"]})
+        assert result.startswith("Picked:")
+
+
+class TestPomodoroSkill:
+    @pytest.fixture(autouse=True)
+    def reset(self):
+        from towel.skills.builtin.pomodoro_skill import _active
+        _active.clear()
+
+    @pytest.mark.asyncio
+    async def test_start_and_status(self):
+        from towel.skills.builtin.pomodoro_skill import PomodoroSkill
+        p = PomodoroSkill()
+        result = await p.execute("pomo_start", {"minutes": 25, "task": "Code"})
+        assert "started" in result.lower()
+        status = await p.execute("pomo_status", {})
+        assert "remaining" in status.lower()
+
+
+class TestUrlSkill:
+    @pytest.mark.asyncio
+    async def test_parse(self):
+        from towel.skills.builtin.url_skill import UrlSkill
+        result = await UrlSkill().execute("url_parse", {"url": "https://example.com:8080/path?q=1#frag"})
+        assert "example.com" in result
+        assert "8080" in result
+        assert "frag" in result
+
+
+class TestEmojiSkill:
+    @pytest.mark.asyncio
+    async def test_search(self):
+        from towel.skills.builtin.emoji_skill import EmojiSkill
+        result = await EmojiSkill().execute("emoji_search", {"query": "fire"})
+        assert "🔥" in result
+
+
+class TestCountrySkill2:
+    def test_tools(self):
+        from towel.skills.builtin.country_skill import CountrySkill
+        assert {t.name for t in CountrySkill().tools()} == {"country_info"}
+
+
+class TestBaseConvertSkill:
+    @pytest.mark.asyncio
+    async def test_all_bases(self):
+        from towel.skills.builtin.base_convert_skill import BaseConvertSkill
+        result = await BaseConvertSkill().execute("show_all_bases", {"number": "255"})
+        assert "0xff" in result
+        assert "0b11111111" in result
+        assert "0o377" in result
+
+
+class TestXmlSkill:
+    @pytest.mark.asyncio
+    async def test_to_json(self):
+        from towel.skills.builtin.xml_skill import XmlSkill
+        result = await XmlSkill().execute("xml_to_json", {"xml": "<root><name>Alice</name></root>"})
+        assert "Alice" in result
+
+
+class TestRssSkill:
+    def test_tools(self):
+        from towel.skills.builtin.rss_skill import RssSkill
+        assert {t.name for t in RssSkill().tools()} == {"rss_read"}
+
+
+class TestTimezoneSkill:
+    @pytest.mark.asyncio
+    async def test_convert(self):
+        from towel.skills.builtin.tz_skill import TimezoneSkill
+        result = await TimezoneSkill().execute("tz_convert", {"time": "09:00", "from_tz": "PST", "to_tz": "EST"})
+        assert "12:00" in result
+
+
+class TestPortScannerSkill:
+    def test_tools(self):
+        from towel.skills.builtin.port_scanner_skill import PortScannerSkill
+        assert {t.name for t in PortScannerSkill().tools()} == {"scan_ports"}
+
+
+class TestQuoteSkill:
+    @pytest.mark.asyncio
+    async def test_random(self):
+        from towel.skills.builtin.quote_skill import QuoteSkill
+        result = await QuoteSkill().execute("random_quote", {})
+        assert "—" in result
+
+
+class TestMimeSkill:
+    @pytest.mark.asyncio
+    async def test_json(self):
+        from towel.skills.builtin.mime_skill import MimeSkill
+        result = await MimeSkill().execute("mime_type", {"path": ".json"})
+        assert "application/json" in result
+
+
+class TestCheatSkill:
+    def test_tools(self):
+        from towel.skills.builtin.cheat_skill import CheatSkill
+        assert {t.name for t in CheatSkill().tools()} == {"cheat_sheet"}
