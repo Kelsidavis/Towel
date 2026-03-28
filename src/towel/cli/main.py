@@ -3036,3 +3036,65 @@ def pipeline(name: str | None, list_all: bool) -> None:
     console.print(f"[bold]Running pipeline:[/bold] {name}")
     result = asyncio.run(pipe.run(skills))
     console.print(result.summary())
+
+
+@cli.command()
+@click.argument("action", default="list")
+@click.argument("args", nargs=-1)
+@click.option("--cron", "-c", default=None, help="Cron expression")
+@click.option("--run", "-r", default=None, help="Action (pipeline:name, tool:name)")
+def schedule(action: str, args: tuple, cron: str | None, run: str | None) -> None:
+    """Manage scheduled tasks.
+
+    \b
+    Examples:
+        towel schedule list                          show all schedules
+        towel schedule add daily-check -c "0 9 * * *" -r pipeline:project-health
+        towel schedule add backup -c "0 0 * * 0" -r tool:git_status
+        towel schedule remove daily-check
+        towel schedule toggle daily-check
+    """
+    from towel.agent.scheduling import (
+        add_schedule, remove_schedule, list_schedules, toggle_schedule,
+    )
+
+    if action == "list":
+        schedules = list_schedules()
+        if not schedules:
+            console.print("[dim]No scheduled tasks.[/dim]")
+            console.print("[dim]Add one: towel schedule add <name> -c '<cron>' -r '<action>'[/dim]")
+            return
+        console.print(f"[bold]Scheduled tasks ({len(schedules)}):[/bold]")
+        for s in schedules:
+            icon = "[green]●[/green]" if s.enabled else "[dim]○[/dim]"
+            last = s.last_run[:16] if s.last_run else "never"
+            console.print(f"  {icon} [green]{s.name}[/green]  {s.cron}  →  {s.action}")
+            console.print(f"      [dim]Last: {last} · Runs: {s.run_count}[/dim]")
+
+    elif action == "add":
+        name = args[0] if args else None
+        if not name or not cron or not run:
+            console.print("[red]Usage:[/red] towel schedule add <name> -c '<cron>' -r '<action>'")
+            return
+        s = add_schedule(name, cron, run)
+        console.print(f"[green]Scheduled:[/green] {s.name}  {s.cron}  →  {s.action}")
+
+    elif action == "remove":
+        name = args[0] if args else None
+        if not name:
+            console.print("[red]Usage:[/red] towel schedule remove <name>")
+            return
+        if remove_schedule(name):
+            console.print(f"[green]Removed:[/green] {name}")
+        else:
+            console.print(f"[dim]Not found:[/dim] {name}")
+
+    elif action == "toggle":
+        name = args[0] if args else None
+        if not name:
+            console.print("[red]Usage:[/red] towel schedule toggle <name>")
+            return
+        console.print(toggle_schedule(name))
+
+    else:
+        console.print(f"[red]Unknown action:[/red] {action}")
