@@ -102,9 +102,11 @@ class TestCLICommands:
     """Verify all CLI commands are registered and show help."""
 
     @pytest.mark.parametrize("cmd", [
-        "bench", "commit", "config", "doctor", "gc", "history", "log",
-        "review", "search", "show", "skills", "status", "summarize",
-        "templates", "watch", "webhook",
+        "bench", "commit", "config", "dashboard", "doc", "doctor",
+        "explain", "fix", "gc", "history", "log", "marketplace",
+        "plugins", "refactor", "review", "search", "show", "skills",
+        "status", "summarize", "templates", "test-gen", "version",
+        "watch", "webhook",
     ])
     def test_command_help(self, cmd):
         from click.testing import CliRunner

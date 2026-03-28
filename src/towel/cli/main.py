@@ -2540,3 +2540,80 @@ def test_gen(file: str, framework: str | None, output: str | None, raw: bool) ->
         if not raw:
             console.print(f"[dim]Generating tests for {Path(file).name}...[/dim]")
         _oneshot(config, prompt, raw)
+
+
+@cli.command()
+@click.argument("file", type=click.Path(exists=True))
+@click.option("--focus", "-f", default=None, help="Focus: performance, readability, dry, types, security")
+@click.option("--raw", "-r", is_flag=True, help="Plain text output")
+def refactor(file: str, focus: str | None, raw: bool) -> None:
+    """Refactor a file — suggest improvements and output cleaned code.
+
+    \b
+    Examples:
+        towel refactor src/main.py
+        towel refactor api.py -f performance
+        towel refactor utils.py -f dry
+    """
+    from pathlib import Path
+    content = Path(file).read_text(encoding="utf-8", errors="replace")
+    ext = Path(file).suffix.lstrip(".")
+    focus_inst = f" Focus specifically on {focus}." if focus else ""
+    prompt = (
+        f"Refactor this {ext} code to improve quality.{focus_inst}\n"
+        f"Show the refactored code and explain each change.\n\n"
+        f"```{ext}\n{content[:30000]}\n```"
+    )
+    config = TowelConfig.load()
+    if not raw: console.print(f"[dim]Refactoring {Path(file).name}...[/dim]")
+    _oneshot(config, prompt, raw)
+
+
+@cli.command()
+@click.argument("file", type=click.Path(exists=True))
+@click.option("--style", "-s", default="google", type=click.Choice(["google", "numpy", "sphinx", "jsdoc"]),
+              help="Docstring style")
+@click.option("--output", "-o", default=None, help="Write documented code to file")
+@click.option("--raw", "-r", is_flag=True, help="Plain text output")
+def doc(file: str, style: str, output: str | None, raw: bool) -> None:
+    """Add documentation to a file — docstrings, comments, type hints.
+
+    \b
+    Examples:
+        towel doc src/auth.py
+        towel doc api.py -s numpy
+        towel doc utils.py -o utils_documented.py
+    """
+    from pathlib import Path
+    content = Path(file).read_text(encoding="utf-8", errors="replace")
+    ext = Path(file).suffix.lstrip(".")
+    prompt = (
+        f"Add comprehensive documentation to this {ext} code using {style} style.\n"
+        f"Add docstrings to all functions/classes, type hints where missing, "
+        f"and inline comments for complex logic. Output the full documented file.\n\n"
+        f"```{ext}\n{content[:30000]}\n```"
+    )
+    config = TowelConfig.load()
+
+    if output:
+        from towel.agent.runtime import AgentRuntime
+        from towel.agent.conversation import Conversation, Role
+        from towel.memory.store import MemoryStore
+        memory = MemoryStore()
+        skills_reg = _build_skill_registry(config, memory_store=memory)
+        agent_rt = AgentRuntime(config, skills=skills_reg, memory=memory)
+        conv = Conversation(channel="doc")
+        conv.add(Role.USER, prompt)
+        async def _gen():
+            await agent_rt.load_model()
+            return (await agent_rt.step(conv)).content
+        console.print(f"[dim]Documenting {Path(file).name}...[/dim]")
+        result = asyncio.run(_gen())
+        if result.startswith("```"):
+            lines = result.splitlines()
+            result = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
+        Path(output).write_text(result + "\n", encoding="utf-8")
+        console.print(f"[green]Documented code written to:[/green] {output}")
+    else:
+        if not raw: console.print(f"[dim]Documenting {Path(file).name}...[/dim]")
+        _oneshot(config, prompt, raw)
