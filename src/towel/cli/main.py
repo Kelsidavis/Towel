@@ -2967,3 +2967,32 @@ def repl() -> None:
 
     from towel.cli.repl import run_repl
     run_repl(skills)
+
+
+@cli.command()
+@click.option("--homeserver", "-h", required=True, envvar="MATRIX_HOMESERVER", help="Matrix homeserver URL")
+@click.option("--token", "-t", required=True, envvar="MATRIX_TOKEN", help="Access token")
+def matrix(homeserver: str, token: str) -> None:
+    """Run Towel as a Matrix bot.
+
+    \b
+    Setup:
+      1. Create a Matrix account for the bot
+      2. Get an access token (via Element or API)
+      3. Run: towel matrix -h https://matrix.org -t TOKEN
+    """
+    from towel.channels.matrix import MatrixChannel
+
+    console.print(Panel(
+        f"[bold green]Matrix Bot[/bold green]\n\n"
+        f"  Homeserver: {homeserver}\n"
+        f"[dim]Make sure 'towel serve' is running.[/dim]",
+        border_style="purple",
+        title="Don't Panic.",
+    ))
+
+    channel = MatrixChannel(
+        homeserver=homeserver, access_token=token,
+        gateway_url=f"ws://{TowelConfig.load().gateway.host}:{TowelConfig.load().gateway.port}",
+    )
+    asyncio.run(channel.listen())
