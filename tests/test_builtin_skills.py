@@ -426,3 +426,48 @@ class TestRegisterBuiltins:
         assert "env" in names
         assert "regex" in names
         assert "system" in names
+
+
+class TestDiffSkill:
+    @pytest.fixture
+    def diff_skill(self):
+        from towel.skills.builtin.diff_skill import DiffSkill
+        return DiffSkill()
+
+    def test_tools_defined(self, diff_skill):
+        names = {t.name for t in diff_skill.tools()}
+        assert names == {"diff_files", "diff_text", "diff_stats"}
+
+    @pytest.mark.asyncio
+    async def test_diff_files_identical(self, diff_skill, tmp_path):
+        a = tmp_path / "a.txt"; b = tmp_path / "b.txt"
+        a.write_text("hello\n"); b.write_text("hello\n")
+        result = await diff_skill.execute("diff_files", {"file_a": str(a), "file_b": str(b)})
+        assert "identical" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_diff_files_different(self, diff_skill, tmp_path):
+        a = tmp_path / "a.txt"; b = tmp_path / "b.txt"
+        a.write_text("line1\nline2\n"); b.write_text("line1\nchanged\n")
+        result = await diff_skill.execute("diff_files", {"file_a": str(a), "file_b": str(b)})
+        assert "-line2" in result
+        assert "+changed" in result
+
+    @pytest.mark.asyncio
+    async def test_diff_files_missing(self, diff_skill):
+        result = await diff_skill.execute("diff_files", {"file_a": "/nonexistent", "file_b": "/also-no"})
+        assert "not found" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_diff_text(self, diff_skill):
+        result = await diff_skill.execute("diff_text", {"text_a": "foo\nbar", "text_b": "foo\nbaz"})
+        assert "-bar" in result
+        assert "+baz" in result
+
+    @pytest.mark.asyncio
+    async def test_diff_stats(self, diff_skill, tmp_path):
+        a = tmp_path / "a.txt"; b = tmp_path / "b.txt"
+        a.write_text("a\nb\nc\n"); b.write_text("a\nx\nc\nd\n")
+        result = await diff_skill.execute("diff_stats", {"file_a": str(a), "file_b": str(b)})
+        assert "Similarity" in result
+        assert "Additions" in result
