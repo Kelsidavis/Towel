@@ -74,6 +74,7 @@ HELP_TEXT = """[bold]Chat commands:[/bold]
   [green]/alias[/green] <name> <prompt> Create a prompt shortcut (e.g., /alias review Review this code)
   [green]/aliases[/green]              List all defined aliases
   [green]/unalias[/green] <name>       Remove an alias
+  [green]/loop[/green] <interval> <prompt> Run a prompt on a recurring interval (e.g., /loop 5m check status)
   [green]/system[/green] <prompt>      Override the system prompt
 """
 
@@ -206,6 +207,9 @@ def handle_slash(user_input: str, ctx: SlashContext) -> bool | None:
 
         case "/context":
             _cmd_context(ctx)
+
+        case "/loop":
+            _cmd_loop(ctx, arg)
 
         case "/system":
             _cmd_system(ctx, arg)
@@ -1363,3 +1367,78 @@ def _cmd_system(ctx: SlashContext, arg: str) -> None:
     ctx.agent.config = ctx.config
     console.print(f"[green]System prompt updated.[/green]")
     console.print(f"  [dim]{arg[:100]}{'...' if len(arg) > 100 else ''}[/dim]")
+
+
+# ── /loop — recurring prompt execution ──
+
+_active_loops: dict[str, bool] = {}  # name -> running
+
+
+def _cmd_loop(ctx: SlashContext, arg: str) -> None:
+    """Run a prompt on a recurring interval."""
+    import re
+    import asyncio
+    import threading
+
+    parts = arg.strip().split(None, 1)
+    if len(parts) < 2:
+        console.print("[red]Usage:[/red] /loop <interval> <prompt>")
+        console.print("  /loop 5m check git status")
+        console.print("  /loop 30s monitor this endpoint")
+        console.print("  /loop stop <name>   stop a running loop")
+        console.print("  /loop list          show active loops")
+        return
+
+    # Handle subcommands
+    if parts[0] == "list":
+        if not _active_loops:
+            console.print("[dim]No active loops.[/dim]")
+        else:
+            for name, running in _active_loops.items():
+                status = "[green]running[/green]" if running else "[dim]stopped[/dim]"
+                console.print(f"  {name}: {status}")
+        return
+
+    if parts[0] == "stop":
+        name = parts[1].strip() if len(parts) > 1 else ""
+        if name in _active_loops:
+            _active_loops[name] = False
+            console.print(f"[green]Stopping loop:[/green] {name}")
+        else:
+            console.print(f"[dim]No loop named:[/dim] {name}")
+        return
+
+    # Parse interval
+    interval_str = parts[0]
+    prompt = parts[1]
+
+    m = re.match(r"^(\d+)(s|m|h)$", interval_str)
+    if not m:
+        console.print(f"[red]Invalid interval:[/red] {interval_str} (use 30s, 5m, 1h)")
+        return
+
+    value = int(m.group(1))
+    unit = m.group(2)
+    seconds = value * {"s": 1, "m": 60, "h": 3600}[unit]
+
+    loop_name = f"loop-{len(_active_loops) + 1}"
+    _active_loops[loop_name] = True
+
+    console.print(f"[green]Started loop:[/green] {loop_name}")
+    console.print(f"  Interval: {interval_str} ({seconds}s)")
+    console.print(f"  Prompt: {prompt[:60]}{'...' if len(prompt) > 60 else ''}")
+    console.print(f"[dim]Stop with: /loop stop {loop_name}[/dim]")
+
+    def _run_loop():
+        import time
+        while _active_loops.get(loop_name):
+            time.sleep(seconds)
+            if not _active_loops.get(loop_name):
+                break
+            # Add prompt as user message and signal the chat loop
+            from towel.agent.conversation import Role
+            ctx.conv.add(Role.USER, f"[{loop_name}] {prompt}")
+            console.print(f"\n[yellow][{loop_name}][/yellow] {prompt}")
+
+    thread = threading.Thread(target=_run_loop, daemon=True)
+    thread.start()

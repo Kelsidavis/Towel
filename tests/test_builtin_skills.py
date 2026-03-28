@@ -574,3 +574,41 @@ class TestCronSkill:
     async def test_invalid(self, cron):
         result = await cron.execute("cron_explain", {"expression": "bad"})
         assert "Invalid" in result
+
+
+class TestMarkdownSkill:
+    @pytest.fixture
+    def md(self):
+        from towel.skills.builtin.markdown_skill import MarkdownSkill
+        return MarkdownSkill()
+
+    def test_tools_defined(self, md):
+        names = {t.name for t in md.tools()}
+        assert names == {"md_table", "md_toc", "md_checklist", "json_to_md"}
+
+    @pytest.mark.asyncio
+    async def test_table_from_json(self, md):
+        data = '[{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]'
+        result = await md.execute("md_table", {"data": data})
+        assert "| name | age |" in result
+        assert "Alice" in result
+
+    @pytest.mark.asyncio
+    async def test_table_from_csv(self, md):
+        data = "name,score\nAlice,95\nBob,87"
+        result = await md.execute("md_table", {"data": data})
+        assert "| name | score |" in result
+
+    @pytest.mark.asyncio
+    async def test_toc(self, md):
+        text = "# Intro\n## Setup\n### Config\n## Usage"
+        result = await md.execute("md_toc", {"markdown": text})
+        assert "Table of Contents" in result
+        assert "[Setup]" in result
+
+    @pytest.mark.asyncio
+    async def test_checklist(self, md):
+        result = await md.execute("md_checklist", {"items": ["a", "b", "c"], "checked": [1]})
+        assert "- [ ] a" in result
+        assert "- [x] b" in result
+        assert "- [ ] c" in result
