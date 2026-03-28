@@ -364,6 +364,53 @@ class TestRegexSkill:
         assert "HELLO" in result
 
 
+class TestConvertSkill:
+    @pytest.fixture
+    def conv(self):
+        from towel.skills.builtin.convert_skill import ConvertSkill
+        return ConvertSkill()
+
+    def test_tools_defined(self, conv):
+        names = {t.name for t in conv.tools()}
+        assert names == {"convert_units", "list_units"}
+
+    @pytest.mark.asyncio
+    async def test_km_to_mi(self, conv):
+        result = await conv.execute("convert_units", {"value": 10, "from_unit": "km", "to_unit": "mi"})
+        assert "6.21" in result
+
+    @pytest.mark.asyncio
+    async def test_f_to_c(self, conv):
+        result = await conv.execute("convert_units", {"value": 212, "from_unit": "F", "to_unit": "C"})
+        assert "100" in result
+
+    @pytest.mark.asyncio
+    async def test_gb_to_mb(self, conv):
+        result = await conv.execute("convert_units", {"value": 1, "from_unit": "GB", "to_unit": "MB"})
+        assert "1024" in result
+
+    @pytest.mark.asyncio
+    async def test_lb_to_kg(self, conv):
+        result = await conv.execute("convert_units", {"value": 100, "from_unit": "lb", "to_unit": "kg"})
+        assert "45" in result
+
+    @pytest.mark.asyncio
+    async def test_cross_category_error(self, conv):
+        result = await conv.execute("convert_units", {"value": 1, "from_unit": "km", "to_unit": "kg"})
+        assert "Cannot convert" in result
+
+    @pytest.mark.asyncio
+    async def test_unknown_unit(self, conv):
+        result = await conv.execute("convert_units", {"value": 1, "from_unit": "zorps", "to_unit": "km"})
+        assert "Unknown unit" in result
+
+    @pytest.mark.asyncio
+    async def test_list_units(self, conv):
+        result = await conv.execute("list_units", {})
+        assert "Length" in result
+        assert "Temperature" in result
+
+
 class TestRegisterBuiltins:
     def test_registers_all(self):
         reg = SkillRegistry()
@@ -372,6 +419,7 @@ class TestRegisterBuiltins:
         assert "filesystem" in names
         assert "shell" in names
         assert "web" in names
+        assert "convert" in names
         assert "time" in names
         assert "network" in names
         assert "hash" in names

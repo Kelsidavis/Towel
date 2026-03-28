@@ -14,11 +14,13 @@ from towel.skills.builtin.network import NetworkSkill
 from towel.skills.builtin.hash_skill import HashSkill
 from towel.skills.builtin.env_skill import EnvSkill
 from towel.skills.builtin.regex_skill import RegexSkill
+from towel.skills.builtin.convert_skill import ConvertSkill
 
 __all__ = [
     "FileSystemSkill", "ShellSkill", "WebFetchSkill", "MemorySkill",
     "GitSkill", "SearchSkill", "ClipboardSkill", "DataSkill", "SystemSkill",
     "TimeSkill", "NetworkSkill", "HashSkill", "EnvSkill", "RegexSkill",
+    "ConvertSkill",
 ]
 
 
@@ -43,3 +45,4 @@ def register_builtins(
     registry.register(HashSkill())
     registry.register(EnvSkill())
     registry.register(RegexSkill())
+    registry.register(ConvertSkill())
