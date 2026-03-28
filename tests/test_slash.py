@@ -135,6 +135,36 @@ class TestRetry:
         assert result is True  # no assistant to remove
 
 
+class TestTags:
+    def test_add_tag(self, ctx):
+        handle_slash("/tag project-alpha", ctx)
+        assert "project-alpha" in ctx.conv.tags
+
+    def test_add_duplicate_tag(self, ctx):
+        handle_slash("/tag work", ctx)
+        handle_slash("/tag work", ctx)
+        assert ctx.conv.tags.count("work") == 1
+
+    def test_remove_tag(self, ctx):
+        ctx.conv.tags.append("old")
+        handle_slash("/tag -old", ctx)
+        assert "old" not in ctx.conv.tags
+
+    def test_remove_nonexistent(self, ctx):
+        handle_slash("/tag -nope", ctx)  # should not crash
+
+    def test_show_tags(self, ctx):
+        ctx.conv.tags = ["a", "b"]
+        handle_slash("/tags", ctx)  # should not crash
+
+    def test_show_no_tags(self, ctx):
+        handle_slash("/tags", ctx)  # should not crash
+
+    def test_tags_lowercase(self, ctx):
+        handle_slash("/tag UPPERCASE", ctx)
+        assert "uppercase" in ctx.conv.tags
+
+
 class TestFork:
     def test_fork_creates_branch(self, ctx):
         old_id = ctx.conv.id

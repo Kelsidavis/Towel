@@ -55,6 +55,7 @@ class Conversation:
 
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:16])
     title: str = ""
+    tags: list[str] = field(default_factory=list)
     messages: list[Message] = field(default_factory=list)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     channel: str = "cli"
@@ -101,6 +102,8 @@ class Conversation:
         }
         if self.title:
             d["title"] = self.title
+        if self.tags:
+            d["tags"] = self.tags
         return d
 
     @classmethod
@@ -108,6 +111,7 @@ class Conversation:
         return cls(
             id=data["id"],
             title=data.get("title", ""),
+            tags=data.get("tags", []),
             channel=data.get("channel", "cli"),
             created_at=datetime.fromisoformat(data["created_at"]),
             messages=[Message.from_dict(m) for m in data.get("messages", [])],

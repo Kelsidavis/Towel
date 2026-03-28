@@ -51,6 +51,8 @@ HELP_TEXT = """[bold]Chat commands:[/bold]
   [green]/forget[/green] <key>         Remove a memory
   [green]/t[/green] <template> <input>  Apply a prompt template (e.g., /t review code here)
   [green]/templates[/green]            List available templates
+  [green]/tag[/green] <name>            Add a tag to this conversation (or remove with -name)
+  [green]/tags[/green]                 Show tags on this conversation
   [green]/rename[/green] <title>       Set a title for this conversation
   [green]/export[/green] [file]        Export conversation to markdown (.html for HTML)
   [green]/newagent[/green] <name> <model> <prompt>  Create new agent
@@ -137,6 +139,12 @@ def handle_slash(user_input: str, ctx: SlashContext) -> bool | None:
 
         case "/templates":
             _cmd_templates(ctx)
+
+        case "/tag":
+            _cmd_tag(ctx, arg)
+
+        case "/tags":
+            _cmd_tags(ctx)
 
         case "/rename":
             _cmd_rename(ctx, arg)
@@ -505,6 +513,39 @@ def _cmd_delagent(ctx: SlashContext, arg: str) -> None:
         console.print(f"[green]Deleted agent:[/green] {name}")
     else:
         console.print(f"[red]Agent not found:[/red] {name}")
+
+
+def _cmd_tag(ctx: SlashContext, arg: str) -> None:
+    tag = arg.strip().lower()
+    if not tag:
+        console.print("[red]Usage:[/red] /tag <name>  or  /tag -<name> to remove")
+        return
+
+    if tag.startswith("-"):
+        # Remove tag
+        remove = tag[1:]
+        if remove in ctx.conv.tags:
+            ctx.conv.tags.remove(remove)
+            ctx.store.save(ctx.conv)
+            console.print(f"[green]Removed tag:[/green] {remove}")
+        else:
+            console.print(f"[dim]Tag not found:[/dim] {remove}")
+    else:
+        # Add tag
+        if tag not in ctx.conv.tags:
+            ctx.conv.tags.append(tag)
+            ctx.store.save(ctx.conv)
+            console.print(f"[green]Tagged:[/green] {tag}")
+        else:
+            console.print(f"[dim]Already tagged:[/dim] {tag}")
+
+
+def _cmd_tags(ctx: SlashContext) -> None:
+    if ctx.conv.tags:
+        tag_str = ", ".join(f"[green]{t}[/green]" for t in ctx.conv.tags)
+        console.print(f"  Tags: {tag_str}")
+    else:
+        console.print("[dim]No tags. Add with: /tag <name>[/dim]")
 
 
 def _cmd_rename(ctx: SlashContext, arg: str) -> None:

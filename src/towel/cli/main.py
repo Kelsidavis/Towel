@@ -420,24 +420,61 @@ def skills() -> None:
 
 @cli.command()
 @click.option("--limit", "-n", default=20, help="Number of conversations to show")
-def history(limit: int) -> None:
+@click.option("--tag", "-t", default=None, help="Filter by tag")
+def history(limit: int, tag: str | None) -> None:
     """List saved conversations."""
     from towel.persistence.store import ConversationStore
 
     store = ConversationStore()
-    convos = store.list_conversations(limit=limit)
+    convos = store.list_conversations(limit=limit * 3 if tag else limit)
+
+    if tag:
+        # Filter by tag — need to load full conversations to check tags
+        import json as json_mod
+        from towel.agent.conversation import Conversation
+        filtered = []
+        for c in convos:
+            path = store._path_for(c.id)
+            try:
+                data = json_mod.loads(path.read_text(encoding="utf-8"))
+                tags = data.get("tags", [])
+                if tag.lower() in tags:
+                    filtered.append(c)
+            except (json_mod.JSONDecodeError, OSError):
+                continue
+        convos = filtered[:limit]
 
     if not convos:
-        console.print("[dim]No saved conversations.[/dim]")
-        console.print("Start one with: towel chat")
+        if tag:
+            console.print(f"[dim]No conversations tagged '[green]{tag}[/green]'.[/dim]")
+        else:
+            console.print("[dim]No saved conversations.[/dim]")
+            console.print("Start one with: towel chat")
         return
 
-    console.print(f"[bold]Recent conversations[/bold] ({len(convos)}):\n")
+    header = f"[bold]Recent conversations"
+    if tag:
+        header += f" tagged [green]{tag}[/green]"
+    header += f"[/bold] ({len(convos)}):\n"
+    console.print(header)
+
     for c in convos:
+        # Load tags for display
+        tag_display = ""
+        try:
+            import json as json_mod
+            path = store._path_for(c.id)
+            data = json_mod.loads(path.read_text(encoding="utf-8"))
+            tags = data.get("tags", [])
+            if tags:
+                tag_display = " " + " ".join(f"[yellow]#{t}[/yellow]" for t in tags)
+        except (Exception,):
+            pass
+
         console.print(
             f"  [green]{c.id}[/green]  "
             f"[dim]{c.created_at[:16]}[/dim]  "
-            f"[dim]({c.message_count} msgs, {c.channel})[/dim]"
+            f"[dim]({c.message_count} msgs, {c.channel})[/dim]{tag_display}"
         )
         console.print(f"    {c.summary}")
 

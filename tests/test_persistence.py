@@ -49,6 +49,18 @@ class TestConversationSerialization:
         conv.add(Role.USER, "What is the meaning of life?")
         assert conv.summary == "What is the meaning of life?"
 
+    def test_tags_roundtrip(self):
+        conv = _make_conversation()
+        conv.tags = ["project", "important"]
+        d = conv.to_dict()
+        restored = Conversation.from_dict(d)
+        assert restored.tags == ["project", "important"]
+
+    def test_tags_absent_defaults_empty(self):
+        data = {"id": "x", "channel": "cli", "created_at": datetime.now(timezone.utc).isoformat(), "messages": []}
+        conv = Conversation.from_dict(data)
+        assert conv.tags == []
+
     def test_summary_truncation(self):
         conv = Conversation()
         conv.add(Role.USER, "x" * 200)
