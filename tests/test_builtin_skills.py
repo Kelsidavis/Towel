@@ -307,6 +307,63 @@ class TestEnvSkill:
         assert "super-secret-value" not in result
 
 
+class TestRegexSkill:
+    @pytest.fixture
+    def rx(self):
+        from towel.skills.builtin.regex_skill import RegexSkill
+        return RegexSkill()
+
+    def test_tools_defined(self, rx):
+        names = {t.name for t in rx.tools()}
+        assert names == {"regex_test", "regex_findall", "regex_replace", "regex_split"}
+
+    @pytest.mark.asyncio
+    async def test_match(self, rx):
+        result = await rx.execute("regex_test", {"pattern": r"\d+", "text": "abc 42 def"})
+        assert "42" in result
+        assert "Position" in result
+
+    @pytest.mark.asyncio
+    async def test_no_match(self, rx):
+        result = await rx.execute("regex_test", {"pattern": r"\d+", "text": "no numbers"})
+        assert "No match" in result
+
+    @pytest.mark.asyncio
+    async def test_groups(self, rx):
+        result = await rx.execute("regex_test", {"pattern": r"(\w+)@(\w+)", "text": "user@host"})
+        assert "Group 1" in result
+        assert "user" in result
+
+    @pytest.mark.asyncio
+    async def test_findall(self, rx):
+        result = await rx.execute("regex_findall", {"pattern": r"\b\w{3}\b", "text": "the cat sat"})
+        assert "3 match" in result
+        assert "the" in result
+
+    @pytest.mark.asyncio
+    async def test_replace(self, rx):
+        result = await rx.execute("regex_replace", {
+            "pattern": r"\d+", "replacement": "N", "text": "item 1, item 2, item 3"
+        })
+        assert "item N, item N, item N" in result
+        assert "3 match" in result
+
+    @pytest.mark.asyncio
+    async def test_split(self, rx):
+        result = await rx.execute("regex_split", {"pattern": r"[,;]\s*", "text": "a, b; c, d"})
+        assert "4 part" in result
+
+    @pytest.mark.asyncio
+    async def test_invalid_pattern(self, rx):
+        result = await rx.execute("regex_test", {"pattern": r"[invalid", "text": "test"})
+        assert "Invalid regex" in result
+
+    @pytest.mark.asyncio
+    async def test_case_insensitive(self, rx):
+        result = await rx.execute("regex_test", {"pattern": "hello", "text": "HELLO", "flags": "i"})
+        assert "HELLO" in result
+
+
 class TestRegisterBuiltins:
     def test_registers_all(self):
         reg = SkillRegistry()
@@ -319,4 +376,5 @@ class TestRegisterBuiltins:
         assert "network" in names
         assert "hash" in names
         assert "env" in names
+        assert "regex" in names
         assert "system" in names
