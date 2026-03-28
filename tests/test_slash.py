@@ -135,6 +135,28 @@ class TestRetry:
         assert result is True  # no assistant to remove
 
 
+class TestCopy:
+    def test_copy_no_response(self, ctx):
+        ctx.conv.messages.clear()
+        ctx.conv.add(Role.USER, "hello")
+        handle_slash("/copy", ctx)  # should not crash, no assistant msg
+
+    def test_copy_extracts_code_blocks(self, ctx):
+        """Test code extraction logic without actually touching clipboard."""
+        import re
+        ctx.conv.add(Role.ASSISTANT, "Here:\n```python\nprint('hi')\n```\nand\n```js\nalert(1)\n```")
+        last = ctx.conv.messages[-1]
+        blocks = re.findall(r"```\w*\n(.*?)```", last.content, re.DOTALL)
+        assert len(blocks) == 2
+        assert "print('hi')" in blocks[0]
+        assert "alert(1)" in blocks[1]
+
+    def test_copy_no_code_blocks(self, ctx):
+        ctx.conv.add(Role.ASSISTANT, "Just plain text, no code here.")
+        # /copy code should print "no code blocks" message
+        handle_slash("/copy code", ctx)  # should not crash
+
+
 class TestTags:
     def test_add_tag(self, ctx):
         handle_slash("/tag project-alpha", ctx)

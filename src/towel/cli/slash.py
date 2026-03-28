@@ -51,6 +51,7 @@ HELP_TEXT = """[bold]Chat commands:[/bold]
   [green]/forget[/green] <key>         Remove a memory
   [green]/t[/green] <template> <input>  Apply a prompt template (e.g., /t review code here)
   [green]/templates[/green]            List available templates
+  [green]/copy[/green] [code]           Copy last response to clipboard (or just code blocks)
   [green]/tag[/green] <name>            Add a tag to this conversation (or remove with -name)
   [green]/tags[/green]                 Show tags on this conversation
   [green]/rename[/green] <title>       Set a title for this conversation
@@ -139,6 +140,9 @@ def handle_slash(user_input: str, ctx: SlashContext) -> bool | None:
 
         case "/templates":
             _cmd_templates(ctx)
+
+        case "/copy":
+            _cmd_copy(ctx, arg)
 
         case "/tag":
             _cmd_tag(ctx, arg)
@@ -513,6 +517,59 @@ def _cmd_delagent(ctx: SlashContext, arg: str) -> None:
         console.print(f"[green]Deleted agent:[/green] {name}")
     else:
         console.print(f"[red]Agent not found:[/red] {name}")
+
+
+def _cmd_copy(ctx: SlashContext, arg: str) -> None:
+    """Copy the last assistant response (or just its code blocks) to clipboard."""
+    import platform
+    import re
+    import subprocess
+    from towel.agent.conversation import Role
+
+    # Find last assistant message
+    last_asst = None
+    for msg in reversed(ctx.conv.messages):
+        if msg.role == Role.ASSISTANT:
+            last_asst = msg
+            break
+
+    if not last_asst:
+        console.print("[dim]No assistant response to copy.[/dim]")
+        return
+
+    content = last_asst.content
+    mode = arg.strip().lower()
+
+    if mode == "code":
+        # Extract only code blocks
+        blocks = re.findall(r"```\w*\n(.*?)```", content, re.DOTALL)
+        if not blocks:
+            console.print("[dim]No code blocks found in last response.[/dim]")
+            return
+        content = "\n\n".join(b.strip() for b in blocks)
+        label = f"{len(blocks)} code block(s)"
+    else:
+        label = f"{len(content)} characters"
+
+    # Copy to clipboard
+    if platform.system() == "Darwin":
+        cmd = ["pbcopy"]
+    elif platform.system() == "Linux":
+        cmd = ["xclip", "-selection", "clipboard"]
+    else:
+        console.print("[red]Clipboard not supported on this platform.[/red]")
+        return
+
+    try:
+        proc = subprocess.run(cmd, input=content.encode("utf-8"), timeout=5, capture_output=True)
+        if proc.returncode == 0:
+            console.print(f"[green]Copied:[/green] {label}")
+        else:
+            console.print(f"[red]Clipboard error:[/red] {proc.stderr.decode()}")
+    except FileNotFoundError:
+        console.print(f"[red]Clipboard tool not found:[/red] {cmd[0]}")
+    except Exception as e:
+        console.print(f"[red]Failed to copy:[/red] {e}")
 
 
 def _cmd_tag(ctx: SlashContext, arg: str) -> None:
