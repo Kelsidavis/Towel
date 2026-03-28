@@ -2126,3 +2126,67 @@ def summarize(target: str | None, bullets: bool, length: str, raw: bool) -> None
                     print()
 
     asyncio.run(_run())
+
+
+def _oneshot(config, prompt: str, raw: bool = False) -> None:
+    """Run a one-shot prompt through the agent."""
+    from towel.agent.runtime import AgentRuntime
+    from towel.agent.conversation import Conversation, Role
+    from towel.agent.events import EventType
+    from towel.memory.store import MemoryStore
+
+    memory = MemoryStore()
+    from towel.cli.main import _build_skill_registry
+    skills_reg = _build_skill_registry(config, memory_store=memory)
+    agent_rt = AgentRuntime(config, skills=skills_reg, memory=memory)
+    conv = Conversation(channel="oneshot")
+    conv.add(Role.USER, prompt)
+
+    async def _run():
+        await agent_rt.load_model()
+        if raw:
+            resp = await agent_rt.step(conv)
+            print(resp.content)
+        else:
+            async for event in agent_rt.step_streaming(conv):
+                if event.type == EventType.TOKEN:
+                    print(event.data["content"], end="", flush=True)
+                elif event.type == EventType.RESPONSE_COMPLETE:
+                    print()
+
+    import asyncio as _aio
+    _aio.run(_run())
+
+
+@cli.command()
+@click.argument("target")
+@click.option("--detail", "-d", is_flag=True, help="Line-by-line explanation")
+@click.option("--raw", "-r", is_flag=True, help="Plain text output")
+def explain(target: str, detail: bool, raw: bool) -> None:
+    """Explain what a file does.
+
+    \b
+    Examples:
+        towel explain src/main.py
+        towel explain auth.py --detail
+    """
+    from pathlib import Path
+    from towel.config import TowelConfig
+
+    p = Path(target).expanduser()
+    if not p.is_file():
+        console.print(f"[red]Not found:[/red] {target}")
+        return
+
+    content = p.read_text(encoding="utf-8", errors="replace")[:50000]
+    ext = p.suffix.lstrip(".")
+    mode = "line by line, explaining each section" if detail else "in plain language"
+
+    if not raw:
+        console.print(f"[dim]Explaining {p.name} ({len(content):,} chars)...[/dim]")
+
+    _oneshot(
+        TowelConfig.load(),
+        f"Explain this {ext} code {mode}.\n\n```{ext}\n{content}\n```",
+        raw,
+    )
