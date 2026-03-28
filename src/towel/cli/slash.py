@@ -64,6 +64,9 @@ HELP_TEXT = """[bold]Chat commands:[/bold]
   [green]/newagent[/green] <name> <model> <prompt>  Create new agent
   [green]/delagent[/green] <name>      Delete user agent
   [green]/context[/green]              Show loaded .towel.md project context
+  [green]/snippet[/green] <n> <text>    Save a reusable text snippet
+  [green]/snippets[/green]             List all snippets
+  [green]/s[/green] <name>              Insert a snippet into your message
   [green]/alias[/green] <name> <prompt> Create a prompt shortcut (e.g., /alias review Review this code)
   [green]/aliases[/green]              List all defined aliases
   [green]/unalias[/green] <name>       Remove an alias
@@ -190,6 +193,15 @@ def handle_slash(user_input: str, ctx: SlashContext) -> bool | None:
 
         case "/system":
             _cmd_system(ctx, arg)
+
+        case "/snippet":
+            _cmd_snippet(ctx, arg)
+
+        case "/snippets":
+            _cmd_snippets(ctx)
+
+        case "/s":
+            return _cmd_use_snippet(ctx, arg)
 
         case "/alias":
             _cmd_alias(ctx, arg)
@@ -923,6 +935,88 @@ def _cmd_export(ctx: SlashContext, arg: str) -> None:
         console.print(f"[green]Exported to:[/green] {filename}")
     else:
         print(content)
+
+
+def _cmd_snippet(ctx: SlashContext, arg: str) -> None:
+    from towel.cli.snippets import set_snippet, remove_snippet
+
+    parts = arg.split(None, 1)
+    if len(parts) < 1:
+        console.print("[red]Usage:[/red] /snippet <name> <text>")
+        console.print("  /snippet header # Project Name\\nBy Kelsi Davis")
+        console.print("  /snippet -<name>  to remove")
+        return
+
+    name = parts[0].lower()
+
+    # Remove with -name
+    if name.startswith("-") and len(parts) == 1:
+        if remove_snippet(name[1:]):
+            console.print(f"[green]Removed snippet:[/green] {name[1:]}")
+        else:
+            console.print(f"[dim]Snippet not found:[/dim] {name[1:]}")
+        return
+
+    if len(parts) < 2:
+        console.print("[red]Usage:[/red] /snippet <name> <text>")
+        return
+
+    content = parts[1].replace("\\n", "\n")
+    set_snippet(name, content)
+    lines = content.count("\n") + 1
+    console.print(f"[green]Saved snippet:[/green] {name} ({lines} line(s), {len(content)} chars)")
+
+
+def _cmd_snippets(ctx: SlashContext) -> None:
+    from towel.cli.snippets import list_snippets
+
+    snippets = list_snippets()
+    if not snippets:
+        console.print("[dim]No snippets. Create one: /snippet <name> <text>[/dim]")
+        return
+
+    console.print(f"[bold]Snippets ({len(snippets)}):[/bold]")
+    for name, content in sorted(snippets.items()):
+        preview = content.replace("\n", "\\n")
+        if len(preview) > 60:
+            preview = preview[:57] + "..."
+        console.print(f"  [green]{name}[/green]  {preview}")
+    console.print(f"\n[dim]Use with: /s <name> [extra text][/dim]")
+
+
+def _cmd_use_snippet(ctx: SlashContext, arg: str) -> bool | None:
+    """Insert a snippet into the conversation as a user message."""
+    from towel.cli.snippets import get_snippet
+    from towel.agent.conversation import Role
+    from towel.agent.refs import expand_refs, parse_refs
+
+    parts = arg.split(None, 1)
+    if not parts:
+        console.print("[red]Usage:[/red] /s <snippet_name> [additional text]")
+        return True
+
+    name = parts[0].lower()
+    extra = parts[1] if len(parts) > 1 else ""
+
+    content = get_snippet(name)
+    if content is None:
+        console.print(f"[red]Snippet not found:[/red] {name}")
+        console.print("[dim]List snippets: /snippets[/dim]")
+        return True
+
+    # Combine snippet + extra input
+    full = content
+    if extra:
+        full = f"{content}\n\n{extra}"
+
+    # Expand @file refs
+    refs = parse_refs(full)
+    if refs:
+        full = expand_refs(full)
+
+    console.print(f"[dim]  snippet: {name}[/dim]")
+    ctx.conv.add(Role.USER, full)
+    return False  # signal: run agent step
 
 
 def _cmd_alias(ctx: SlashContext, arg: str) -> None:

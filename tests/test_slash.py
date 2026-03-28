@@ -395,6 +395,51 @@ class TestExportHtml:
         assert "hello" in content
 
 
+class TestSnippets:
+    def test_create_snippet(self, ctx, tmp_path, monkeypatch):
+        monkeypatch.setattr("towel.cli.snippets.SNIPPETS_FILE", tmp_path / "snippets.json")
+        handle_slash("/snippet header # My Project", ctx)
+        from towel.cli.snippets import get_snippet
+        monkeypatch.setattr("towel.cli.snippets.SNIPPETS_FILE", tmp_path / "snippets.json")
+        assert get_snippet("header") == "# My Project"
+
+    def test_snippet_newline_escape(self, ctx, tmp_path, monkeypatch):
+        monkeypatch.setattr("towel.cli.snippets.SNIPPETS_FILE", tmp_path / "snippets.json")
+        handle_slash("/snippet sig Best regards\\nKelsi", ctx)
+        from towel.cli.snippets import get_snippet
+        monkeypatch.setattr("towel.cli.snippets.SNIPPETS_FILE", tmp_path / "snippets.json")
+        assert get_snippet("sig") == "Best regards\nKelsi"
+
+    def test_remove_snippet(self, ctx, tmp_path, monkeypatch):
+        monkeypatch.setattr("towel.cli.snippets.SNIPPETS_FILE", tmp_path / "snippets.json")
+        from towel.cli.snippets import set_snippet
+        set_snippet("temp", "temporary")
+        handle_slash("/snippet -temp", ctx)
+        from towel.cli.snippets import get_snippet
+        monkeypatch.setattr("towel.cli.snippets.SNIPPETS_FILE", tmp_path / "snippets.json")
+        assert get_snippet("temp") is None
+
+    def test_list_snippets(self, ctx, tmp_path, monkeypatch):
+        monkeypatch.setattr("towel.cli.snippets.SNIPPETS_FILE", tmp_path / "snippets.json")
+        handle_slash("/snippet test Hello world", ctx)
+        handle_slash("/snippets", ctx)  # should not crash
+
+    def test_use_snippet(self, ctx, tmp_path, monkeypatch):
+        monkeypatch.setattr("towel.cli.snippets.SNIPPETS_FILE", tmp_path / "snippets.json")
+        from towel.cli.snippets import set_snippet
+        set_snippet("greet", "Hello, please help with")
+        result = handle_slash("/s greet my code", ctx)
+        assert result is False  # signal agent step
+        last_user = [m for m in ctx.conv.messages if m.role == Role.USER][-1]
+        assert "Hello, please help with" in last_user.content
+        assert "my code" in last_user.content
+
+    def test_use_snippet_not_found(self, ctx, tmp_path, monkeypatch):
+        monkeypatch.setattr("towel.cli.snippets.SNIPPETS_FILE", tmp_path / "snippets.json")
+        result = handle_slash("/s nonexistent", ctx)
+        assert result is True  # consumed as error
+
+
 class TestAliases:
     def test_create_alias(self, ctx, tmp_path, monkeypatch):
         monkeypatch.setattr("towel.cli.aliases.ALIASES_FILE", tmp_path / "aliases.json")
