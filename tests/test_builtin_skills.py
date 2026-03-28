@@ -1486,3 +1486,66 @@ class TestStringSkill:
     async def test_truncate(self, ss):
         result = await ss.execute("string_truncate", {"text": "Hello World!", "length": 8})
         assert result == "Hello..."
+
+
+class TestSshSkill:
+    @pytest.fixture
+    def ssh(self):
+        from towel.skills.builtin.ssh_skill import SshSkill
+        return SshSkill()
+
+    def test_tools(self, ssh):
+        assert {t.name for t in ssh.tools()} == {"ssh_keys", "ssh_config", "ssh_known_hosts"}
+
+    @pytest.mark.asyncio
+    async def test_keys(self, ssh):
+        result = await ssh.execute("ssh_keys", {})
+        assert "SSH keys" in result or "not found" in result
+
+
+class TestNpmSkill:
+    @pytest.fixture
+    def npm(self):
+        from towel.skills.builtin.npm_skill import NpmSkill
+        return NpmSkill()
+
+    @pytest.mark.asyncio
+    async def test_info(self, npm, tmp_path):
+        (tmp_path / "package.json").write_text('{"name":"test","version":"1.0.0","dependencies":{"express":"^4.0"},"scripts":{"start":"node ."}}')
+        result = await npm.execute("npm_info", {"path": str(tmp_path)})
+        assert "test" in result
+        assert "1.0.0" in result
+
+    @pytest.mark.asyncio
+    async def test_scripts(self, npm, tmp_path):
+        (tmp_path / "package.json").write_text('{"scripts":{"test":"jest","build":"tsc"}}')
+        result = await npm.execute("npm_scripts", {"path": str(tmp_path)})
+        assert "test" in result
+        assert "build" in result
+
+    @pytest.mark.asyncio
+    async def test_audit(self, npm, tmp_path):
+        (tmp_path / "package.json").write_text('{"dependencies":{"bad":"*","ok":"^1.0.0"}}')
+        result = await npm.execute("npm_audit_check", {"path": str(tmp_path)})
+        assert "unpinned" in result
+
+
+class TestPipSkill:
+    @pytest.fixture
+    def pip(self):
+        from towel.skills.builtin.pip_skill import PipSkill
+        return PipSkill()
+
+    @pytest.mark.asyncio
+    async def test_venv_info(self, pip):
+        result = await pip.execute("pip_venv_info", {})
+        assert "Python" in result
+        assert "Executable" in result
+
+    @pytest.mark.asyncio
+    async def test_requirements(self, pip, tmp_path):
+        (tmp_path / "requirements.txt").write_text("flask==2.3.0\nrequests\nnumpy>=1.24\n")
+        result = await pip.execute("pip_requirements", {"path": str(tmp_path / "requirements.txt")})
+        assert "3 packages" in result
+        assert "Pinned: 1" in result
+        assert "Unpinned: 2" in result
