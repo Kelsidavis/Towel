@@ -394,6 +394,58 @@ class TestFork:
         assert ctx.conv.messages[1].content == "hi there"
 
 
+class TestHistoryAndResume:
+    def test_history_shows_conversations(self, ctx, tmp_path):
+        from towel.persistence.store import ConversationStore
+        from towel.agent.conversation import Conversation
+        store = ConversationStore(store_dir=tmp_path / "convs")
+        ctx.store = store
+
+        c1 = Conversation(id="conv-1", channel="cli")
+        c1.add(Role.USER, "first chat")
+        store.save(c1)
+
+        c2 = Conversation(id="conv-2", channel="cli")
+        c2.add(Role.USER, "second chat")
+        store.save(c2)
+
+        handle_slash("/history", ctx)  # should not crash, shows 2 convs
+
+    def test_history_empty(self, ctx, tmp_path):
+        from towel.persistence.store import ConversationStore
+        ctx.store = ConversationStore(store_dir=tmp_path / "empty")
+        handle_slash("/history", ctx)  # should say "no saved"
+
+    def test_resume_switches_conversation(self, ctx, tmp_path):
+        from towel.persistence.store import ConversationStore
+        from towel.agent.conversation import Conversation
+        store = ConversationStore(store_dir=tmp_path / "convs")
+        ctx.store = store
+
+        other = Conversation(id="target-conv", channel="cli")
+        other.title = "Important Chat"
+        other.add(Role.USER, "saved question")
+        other.add(Role.ASSISTANT, "saved answer")
+        store.save(other)
+
+        old_id = ctx.conv.id
+        handle_slash("/resume target-conv", ctx)
+
+        assert ctx.conv.id == "target-conv"
+        assert ctx.conv.title == "Important Chat"
+        assert len(ctx.conv) == 2
+        # Old conversation should have been saved
+        assert store.exists(old_id)
+
+    def test_resume_not_found(self, ctx, tmp_path):
+        from towel.persistence.store import ConversationStore
+        ctx.store = ConversationStore(store_dir=tmp_path / "empty")
+        handle_slash("/resume nonexistent", ctx)  # should print error
+
+    def test_resume_no_arg(self, ctx):
+        handle_slash("/resume", ctx)  # should print usage
+
+
 class TestExport:
     def test_export_empty(self, ctx):
         ctx.conv.messages.clear()
