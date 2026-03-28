@@ -913,3 +913,94 @@ class TestSecuritySkill:
         (tmp_path / "requirements.txt").write_text("flask\nrequests\nnumpy==1.24.0\n")
         result = await sec.execute("scan_dependencies", {"path": str(tmp_path)})
         assert "unpinned" in result
+
+
+class TestTodoSkill:
+    @pytest.fixture
+    def todo(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("towel.skills.builtin.todo_skill.TODO_FILE", tmp_path / "todos.json")
+        from towel.skills.builtin.todo_skill import TodoSkill
+        return TodoSkill()
+
+    @pytest.mark.asyncio
+    async def test_add_and_list(self, todo):
+        await todo.execute("todo_add", {"task": "Buy milk", "priority": "high"})
+        await todo.execute("todo_add", {"task": "Read docs", "priority": "low"})
+        result = await todo.execute("todo_list", {})
+        assert "Buy milk" in result
+        assert "Read docs" in result
+        assert "2 todo" in result
+
+    @pytest.mark.asyncio
+    async def test_complete(self, todo):
+        await todo.execute("todo_add", {"task": "Finish PR"})
+        result = await todo.execute("todo_done", {"index": 0})
+        assert "Completed" in result
+
+    @pytest.mark.asyncio
+    async def test_remove(self, todo):
+        await todo.execute("todo_add", {"task": "Temp task"})
+        result = await todo.execute("todo_remove", {"index": 0})
+        assert "Removed" in result
+
+
+class TestTemplateGenSkill:
+    @pytest.fixture
+    def scaffold(self):
+        from towel.skills.builtin.template_gen_skill import TemplateGenSkill
+        return TemplateGenSkill()
+
+    @pytest.mark.asyncio
+    async def test_list(self, scaffold):
+        result = await scaffold.execute("scaffold_list", {})
+        assert "python-script" in result
+        assert "dockerfile" in result
+
+    @pytest.mark.asyncio
+    async def test_generate(self, scaffold, tmp_path):
+        result = await scaffold.execute("scaffold_generate", {
+            "template": "readme", "name": "myapp", "description": "A cool app",
+            "output_dir": str(tmp_path),
+        })
+        assert "Created" in result
+        content = (tmp_path / "README.md").read_text()
+        assert "myapp" in content
+        assert "A cool app" in content
+
+    @pytest.mark.asyncio
+    async def test_unknown_template(self, scaffold):
+        result = await scaffold.execute("scaffold_generate", {"template": "nonexistent"})
+        assert "Unknown template" in result
+
+
+class TestMathSkill:
+    @pytest.fixture
+    def m(self):
+        from towel.skills.builtin.math_skill import MathSkill
+        return MathSkill()
+
+    @pytest.mark.asyncio
+    async def test_stats(self, m):
+        result = await m.execute("math_stats", {"numbers": [1, 2, 3, 4, 5]})
+        assert "Mean:" in result
+        assert "3" in result
+
+    @pytest.mark.asyncio
+    async def test_format_bytes(self, m):
+        result = await m.execute("math_format", {"number": 1536, "format": "bytes"})
+        assert "1.5 KB" in result
+
+    @pytest.mark.asyncio
+    async def test_format_roman(self, m):
+        result = await m.execute("math_format", {"number": 42, "format": "roman"})
+        assert result == "XLII"
+
+    @pytest.mark.asyncio
+    async def test_fibonacci(self, m):
+        result = await m.execute("math_sequence", {"type": "fibonacci", "count": 8})
+        assert "0, 1, 1, 2, 3, 5, 8, 13" == result
+
+    @pytest.mark.asyncio
+    async def test_primes(self, m):
+        result = await m.execute("math_sequence", {"type": "primes", "count": 5})
+        assert "2, 3, 5, 7, 11" == result
