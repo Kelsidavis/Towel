@@ -1953,3 +1953,37 @@ class TestTypoSkill:
         assert "pritn" in result
         assert "retrun" in result
         assert "2 typo" in result
+
+
+class TestMakeSkill:
+    @pytest.fixture
+    def mk(self):
+        from towel.skills.builtin.make_skill import MakeSkill
+        return MakeSkill()
+
+    @pytest.mark.asyncio
+    async def test_targets(self, mk, tmp_path):
+        (tmp_path / "Makefile").write_text(".PHONY: test build\n\n# Run tests\ntest:\n\tpytest\n\n# Build project\nbuild:\n\tpython -m build\n\nclean:\n\trm -rf dist\n")
+        result = await mk.execute("make_targets", {"path": str(tmp_path / "Makefile")})
+        assert "test" in result
+        assert "build" in result
+        assert "clean" in result
+        assert "Run tests" in result
+
+    @pytest.mark.asyncio
+    async def test_recipe(self, mk, tmp_path):
+        (tmp_path / "Makefile").write_text("deploy: build test\n\trsync -av dist/ server:/app/\n\techo 'done'\n")
+        result = await mk.execute("make_recipe", {"target": "deploy", "path": str(tmp_path / "Makefile")})
+        assert "rsync" in result
+        assert "depends on: build test" in result
+
+    @pytest.mark.asyncio
+    async def test_recipe_not_found(self, mk, tmp_path):
+        (tmp_path / "Makefile").write_text("test:\n\tpytest\n")
+        result = await mk.execute("make_recipe", {"target": "nonexistent", "path": str(tmp_path / "Makefile")})
+        assert "not found" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_no_makefile(self, mk):
+        result = await mk.execute("make_targets", {"path": "/nonexistent/Makefile"})
+        assert "Not found" in result

@@ -65,12 +65,13 @@ from towel.skills.builtin.bookmark_skill import BookmarkSkill
 from towel.skills.builtin.keychain_skill import KeychainSkill
 from towel.skills.builtin.openapi_skill import OpenApiSkill
 from towel.skills.builtin.typo_skill import TypoSkill
+from towel.skills.builtin.make_skill import MakeSkill
 
 __all__ = [
     "FileSystemSkill", "ShellSkill", "WebFetchSkill", "MemorySkill",
     "GitSkill", "SearchSkill", "ClipboardSkill", "DataSkill", "SystemSkill",
     "TimeSkill", "NetworkSkill", "HashSkill", "EnvSkill", "RegexSkill",
-    "ConvertSkill", "JsonSkill", "DiffSkill", "ArchiveSkill", "CronSkill", "MarkdownSkill", "HttpSkill", "SqlSkill", "ImageSkill", "ProcessSkill", "TextSkill", "KnowledgeSkill", "TranslateSkill", "SecuritySkill", "TodoSkill", "TemplateGenSkill", "MathSkill", "DockerSkill", "CalendarSkill", "QrSkill", "JwtSkill", "ColorSkill", "UuidSkill", "YamlSkill", "SnippetGenSkill", "CsvSkill", "SemverSkill", "IpCalcSkill", "DotenvSkill", "LogAnalyzerSkill", "HttpHeaderSkill", "AsciiSkill", "StringSkill", "SshSkill", "NpmSkill", "PipSkill", "MetricsSkill", "PdfSkill", "PlaceholderSkill", "WebhookTriggerSkill", "GitignoreSkill", "LintSkill", "DiagramSkill", "ChangelogGenSkill", "NoteSkill", "ClipboardHistorySkill", "CrontabSkill", "BookmarkSkill", "KeychainSkill", "OpenApiSkill", "TypoSkill",
+    "ConvertSkill", "JsonSkill", "DiffSkill", "ArchiveSkill", "CronSkill", "MarkdownSkill", "HttpSkill", "SqlSkill", "ImageSkill", "ProcessSkill", "TextSkill", "KnowledgeSkill", "TranslateSkill", "SecuritySkill", "TodoSkill", "TemplateGenSkill", "MathSkill", "DockerSkill", "CalendarSkill", "QrSkill", "JwtSkill", "ColorSkill", "UuidSkill", "YamlSkill", "SnippetGenSkill", "CsvSkill", "SemverSkill", "IpCalcSkill", "DotenvSkill", "LogAnalyzerSkill", "HttpHeaderSkill", "AsciiSkill", "StringSkill", "SshSkill", "NpmSkill", "PipSkill", "MetricsSkill", "PdfSkill", "PlaceholderSkill", "WebhookTriggerSkill", "GitignoreSkill", "LintSkill", "DiagramSkill", "ChangelogGenSkill", "NoteSkill", "ClipboardHistorySkill", "CrontabSkill", "BookmarkSkill", "KeychainSkill", "OpenApiSkill", "TypoSkill", "MakeSkill",
 ]
 
 
@@ -146,3 +147,4 @@ def register_builtins(
     registry.register(KeychainSkill())
     registry.register(OpenApiSkill())
     registry.register(TypoSkill())
+    registry.register(MakeSkill())
