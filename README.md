@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://docs.astral.sh/ruff/)
 [![Tests](https://img.shields.io/badge/tests-690%2B%20passing-brightgreen)]()
-[![Skills](https://img.shields.io/badge/skills-40%20built--in-blue)]()
+[![Skills](https://img.shields.io/badge/skills-50%20built--in-blue)]()
 
 **Don't Panic.**
 
