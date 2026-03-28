@@ -674,3 +674,100 @@ class TestHeartbeat:
         assert hb.status().consecutive_errors == 0
         assert hb.status().total_errors == 2  # total preserved
         hb.stop()
+
+
+class TestSqlSkill:
+    @pytest.fixture
+    def sql(self):
+        from towel.skills.builtin.sql_skill import SqlSkill
+        return SqlSkill()
+
+    @pytest.fixture
+    def db(self, tmp_path):
+        import sqlite3
+        path = tmp_path / "test.db"
+        conn = sqlite3.connect(str(path))
+        conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)")
+        conn.execute("INSERT INTO users VALUES (1, 'Alice', 30)")
+        conn.execute("INSERT INTO users VALUES (2, 'Bob', 25)")
+        conn.execute("INSERT INTO users VALUES (3, 'Charlie', 35)")
+        conn.commit()
+        conn.close()
+        return str(path)
+
+    def test_tools_defined(self, sql):
+        names = {t.name for t in sql.tools()}
+        assert names == {"sql_query", "sql_schema", "sql_explain"}
+
+    @pytest.mark.asyncio
+    async def test_query(self, sql, db):
+        result = await sql.execute("sql_query", {"database": db, "query": "SELECT * FROM users"})
+        assert "Alice" in result
+        assert "Bob" in result
+        assert "3 row" in result
+
+    @pytest.mark.asyncio
+    async def test_query_where(self, sql, db):
+        result = await sql.execute("sql_query", {"database": db, "query": "SELECT name FROM users WHERE age > 28"})
+        assert "Alice" in result
+        assert "Charlie" in result
+        assert "Bob" not in result
+
+    @pytest.mark.asyncio
+    async def test_schema(self, sql, db):
+        result = await sql.execute("sql_schema", {"database": db})
+        assert "users" in result
+        assert "3 cols" in result
+
+    @pytest.mark.asyncio
+    async def test_schema_table(self, sql, db):
+        result = await sql.execute("sql_schema", {"database": db, "table": "users"})
+        assert "name" in result
+        assert "INTEGER" in result
+
+    @pytest.mark.asyncio
+    async def test_explain(self, sql, db):
+        result = await sql.execute("sql_explain", {"database": db, "query": "SELECT * FROM users"})
+        assert "plan" in result.lower() or "SCAN" in result
+
+    @pytest.mark.asyncio
+    async def test_readonly(self, sql, db):
+        result = await sql.execute("sql_query", {"database": db, "query": "DROP TABLE users"})
+        assert "only SELECT" in result.lower() or "Only SELECT" in result
+
+    @pytest.mark.asyncio
+    async def test_not_found(self, sql):
+        result = await sql.execute("sql_query", {"database": "/nonexistent.db", "query": "SELECT 1"})
+        assert "not found" in result.lower()
+
+
+class TestImageSkill:
+    @pytest.fixture
+    def img(self):
+        from towel.skills.builtin.image_skill import ImageSkill
+        return ImageSkill()
+
+    def test_tools_defined(self, img):
+        names = {t.name for t in img.tools()}
+        assert names == {"image_info"}
+
+    @pytest.mark.asyncio
+    async def test_png(self, img, tmp_path):
+        # Minimal valid PNG: 1x1 pixel
+        import struct
+        png = b'\x89PNG\r\n\x1a\n'
+        # IHDR chunk
+        ihdr_data = struct.pack('>IIBBBBB', 100, 200, 8, 2, 0, 0, 0)
+        import zlib
+        crc = struct.pack('>I', zlib.crc32(b'IHDR' + ihdr_data) & 0xffffffff)
+        ihdr = struct.pack('>I', len(ihdr_data)) + b'IHDR' + ihdr_data + crc
+        f = tmp_path / "test.png"
+        f.write_bytes(png + ihdr)
+        result = await img.execute("image_info", {"path": str(f)})
+        assert "100x200" in result
+        assert "PNG" in result
+
+    @pytest.mark.asyncio
+    async def test_not_found(self, img):
+        result = await img.execute("image_info", {"path": "/nonexistent.png"})
+        assert "Not found" in result
