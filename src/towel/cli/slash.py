@@ -56,6 +56,7 @@ HELP_TEXT = """[bold]Chat commands:[/bold]
   [green]/grep[/green] <query>          Search within this conversation
   [green]/pin[/green]                  Pin last response (stays in context even when old msgs drop)
   [green]/pins[/green]                 List pinned messages
+  [green]/report[/green]               Generate a session summary (topics, tools, code, decisions)
   [green]/save[/green] <file> [n]       Save code block from last response to a file (n=block index)
   [green]/copy[/green] [code]           Copy last response to clipboard (or just code blocks)
   [green]/tag[/green] <name>            Add a tag to this conversation (or remove with -name)
@@ -169,6 +170,9 @@ def handle_slash(user_input: str, ctx: SlashContext) -> bool | None:
 
         case "/pins":
             _cmd_pins(ctx)
+
+        case "/report":
+            _cmd_report(ctx)
 
         case "/save":
             _cmd_save(ctx, arg)
@@ -825,6 +829,98 @@ def _cmd_pins(ctx: SlashContext) -> None:
         role_color = "cyan" if msg.role.value == "user" else "green"
         console.print(f"  [{role_color}]{msg.role.value}[/{role_color}] {preview}")
         console.print(f"    [dim]id: {msg.id}[/dim]")
+
+
+def _cmd_report(ctx: SlashContext) -> None:
+    """Generate a structured session summary from the conversation."""
+    import re
+    from collections import Counter
+    from towel.agent.conversation import Role
+
+    msgs = ctx.conv.messages
+    if not msgs:
+        console.print("[dim]No messages to summarize.[/dim]")
+        return
+
+    user_msgs = [m for m in msgs if m.role == Role.USER]
+    asst_msgs = [m for m in msgs if m.role == Role.ASSISTANT]
+    tool_msgs = [m for m in msgs if m.role == Role.TOOL]
+
+    # ── Topics (from user messages) ──
+    topics: list[str] = []
+    for m in user_msgs:
+        first_line = m.content.strip().split("\n")[0]
+        # Strip @file refs and code blocks
+        clean = re.sub(r"@[\w./~*?:-]+", "", first_line)
+        clean = re.sub(r"```.*?```", "", clean, flags=re.DOTALL).strip()
+        if clean and len(clean) > 5:
+            topics.append(clean[:80])
+
+    # ── Tools used ──
+    tool_names: Counter[str] = Counter()
+    for m in tool_msgs:
+        if m.content.startswith("[") and "]" in m.content:
+            name = m.content[1:m.content.index("]")]
+            tool_names[name] += 1
+
+    # ── Code blocks in responses ──
+    code_count = 0
+    languages: Counter[str] = Counter()
+    for m in asst_msgs:
+        blocks = re.findall(r"```(\w*)\n", m.content)
+        code_count += len(blocks)
+        for lang in blocks:
+            if lang:
+                languages[lang] += 1
+
+    # ── Token stats ──
+    total_tokens = sum(m.metadata.get("tokens", 0) for m in asst_msgs)
+    tps_values = [m.metadata.get("tps", 0) for m in asst_msgs if m.metadata.get("tps")]
+    avg_tps = sum(tps_values) / len(tps_values) if tps_values else 0
+
+    # ── Duration ──
+    if len(msgs) >= 2:
+        duration = msgs[-1].timestamp - msgs[0].timestamp
+        mins = duration.total_seconds() / 60
+        dur_str = f"{mins:.0f} min" if mins >= 1 else f"{duration.total_seconds():.0f} sec"
+    else:
+        dur_str = "—"
+
+    # ── Pinned messages ──
+    pinned = [m for m in msgs if m.pinned]
+
+    # ── Render ──
+    console.print(f"\n[bold]Session Report[/bold]")
+    console.print(f"  [green]{ctx.conv.display_title}[/green]")
+    if ctx.conv.tags:
+        console.print(f"  Tags: {' '.join(f'[yellow]#{t}[/yellow]' for t in ctx.conv.tags)}")
+    console.print(f"  Duration: {dur_str} · {len(user_msgs)} questions · {len(asst_msgs)} answers")
+    if total_tokens:
+        console.print(f"  Tokens: {total_tokens:,} generated ({avg_tps:.1f} tok/s avg)")
+
+    if topics:
+        console.print(f"\n[bold]Topics discussed ({len(topics)}):[/bold]")
+        for t in topics[:8]:
+            console.print(f"  [dim]•[/dim] {t}")
+        if len(topics) > 8:
+            console.print(f"  [dim]... and {len(topics) - 8} more[/dim]")
+
+    if tool_names:
+        console.print(f"\n[bold]Tools used ({sum(tool_names.values())} calls):[/bold]")
+        for name, count in tool_names.most_common(8):
+            console.print(f"  [yellow]{name}[/yellow] ×{count}")
+
+    if code_count:
+        lang_str = ", ".join(f"{l} ({c})" for l, c in languages.most_common(5)) if languages else "unspecified"
+        console.print(f"\n[bold]Code:[/bold] {code_count} blocks — {lang_str}")
+
+    if pinned:
+        console.print(f"\n[bold]Pinned ({len(pinned)}):[/bold]")
+        for m in pinned:
+            preview = m.content[:60].replace("\n", " ") + ("..." if len(m.content) > 60 else "")
+            console.print(f"  [dim]•[/dim] {preview}")
+
+    console.print()
 
 
 def _cmd_save(ctx: SlashContext, arg: str) -> None:
