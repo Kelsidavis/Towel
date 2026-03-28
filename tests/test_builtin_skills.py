@@ -1912,3 +1912,44 @@ class TestKeychainSkill:
     def test_tools(self, kc):
         names = {t.name for t in kc.tools()}
         assert names == {"secret_set", "secret_get", "secret_delete", "secret_list"}
+
+
+class TestTypoSkill:
+    @pytest.fixture
+    def typo(self):
+        from towel.skills.builtin.typo_skill import TypoSkill
+        return TypoSkill()
+
+    @pytest.mark.asyncio
+    async def test_check_finds_typo(self, typo):
+        result = await typo.execute("typo_check", {"text": "fucntion add(a, b) { retrun a + b; }"})
+        assert "fucntion" in result
+        assert "function" in result
+        assert "retrun" in result
+
+    @pytest.mark.asyncio
+    async def test_check_clean(self, typo):
+        result = await typo.execute("typo_check", {"text": "function add(a, b) { return a + b; }"})
+        assert "No typos" in result
+
+    @pytest.mark.asyncio
+    async def test_fix(self, typo):
+        result = await typo.execute("typo_fix", {"text": "cosnt x = improt('module')"})
+        assert "const" in result
+        assert "import" in result
+        assert "cosnt" not in result
+        assert "improt" not in result
+
+    @pytest.mark.asyncio
+    async def test_fix_preserves_case(self, typo):
+        result = await typo.execute("typo_fix", {"text": "Retrun value"})
+        assert "Return" in result
+
+    @pytest.mark.asyncio
+    async def test_check_file(self, typo, tmp_path):
+        f = tmp_path / "bad.py"
+        f.write_text("def myfunc():\n    pritn('hello')\n    retrun 42\n")
+        result = await typo.execute("typo_check_file", {"path": str(f)})
+        assert "pritn" in result
+        assert "retrun" in result
+        assert "2 typo" in result
