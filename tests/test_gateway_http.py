@@ -107,6 +107,13 @@ class TestWebUI:
         assert "towel-theme" in resp.text
         assert "theme-btn" in resp.text
 
+    def test_index_has_command_palette(self, client):
+        resp = client.get("/")
+        assert "cmd-palette" in resp.text
+        assert "cmd-input" in resp.text
+        assert "cmd-results" in resp.text
+        assert "openPalette" in resp.text
+
     def test_index_has_toolbar(self, client):
         resp = client.get("/")
         assert "toolbar" in resp.text
