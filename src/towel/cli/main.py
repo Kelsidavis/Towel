@@ -1442,3 +1442,118 @@ def gc(days: int, dry_run: bool, cache: bool) -> None:
                     console.print(f"  {label}: [dim](error reading)[/dim]")
             else:
                 console.print(f"  {label}: [dim](not found)[/dim]")
+
+
+@cli.command()
+@click.option("--limit", "-n", default=30, help="Number of entries to show")
+@click.option("--today", is_flag=True, help="Only show today's activity")
+@click.option("--week", is_flag=True, help="Only show this week's activity")
+def log(limit: int, today: bool, week: bool) -> None:
+    """Show activity timeline across all conversations.
+
+    \b
+    Like git log, but for your AI interactions. Shows a compact
+    timeline of what you've been working on.
+
+    \b
+    Examples:
+        towel log
+        towel log --today
+        towel log --week
+        towel log -n 50
+    """
+    import json as json_mod
+    from datetime import datetime, timezone, timedelta
+    from pathlib import Path
+    from towel.persistence.store import ConversationStore
+    from towel.agent.conversation import Conversation, Role
+
+    store = ConversationStore()
+    if not store.store_dir.exists():
+        console.print("[dim]No conversations yet.[/dim]")
+        return
+
+    # Determine time filter
+    now = datetime.now(timezone.utc)
+    if today:
+        cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif week:
+        cutoff = now - timedelta(days=7)
+    else:
+        cutoff = None
+
+    # Collect all conversations with their messages
+    entries: list[tuple[datetime, str, str, str, list[str]]] = []  # (time, conv_id, title, channel, tags)
+
+    json_files = sorted(store.store_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+    for path in json_files:
+        try:
+            data = json_mod.loads(path.read_text(encoding="utf-8"))
+            conv = Conversation.from_dict(data)
+        except (json_mod.JSONDecodeError, KeyError, ValueError):
+            continue
+
+        if cutoff and conv.created_at < cutoff:
+            # Check if any messages are after cutoff
+            has_recent = any(m.timestamp >= cutoff for m in conv.messages)
+            if not has_recent:
+                continue
+
+        # Get the most recent message timestamp
+        last_active = conv.messages[-1].timestamp if conv.messages else conv.created_at
+
+        if cutoff and last_active < cutoff:
+            continue
+
+        # Count messages by role
+        user_count = sum(1 for m in conv.messages if m.role == Role.USER)
+        asst_count = sum(1 for m in conv.messages if m.role == Role.ASSISTANT)
+        tool_count = sum(1 for m in conv.messages if m.role == Role.TOOL)
+
+        # Get total tokens
+        total_tokens = sum(m.metadata.get("tokens", 0) for m in conv.messages if m.role == Role.ASSISTANT)
+
+        tags = data.get("tags", [])
+        title = conv.display_title
+
+        entries.append((last_active, conv.id, title, conv.channel, tags, user_count, asst_count, tool_count, total_tokens))
+
+    # Sort by most recently active
+    entries.sort(key=lambda e: e[0], reverse=True)
+    entries = entries[:limit]
+
+    if not entries:
+        console.print("[dim]No activity found.[/dim]")
+        return
+
+    # Group by date
+    current_date = None
+    for ts, conv_id, title, channel, tags, u, a, t, tokens in entries:
+        date_str = ts.strftime("%Y-%m-%d")
+        if date_str != current_date:
+            current_date = date_str
+            day_name = ts.strftime("%A")
+            if date_str == now.strftime("%Y-%m-%d"):
+                day_label = "Today"
+            elif date_str == (now - timedelta(days=1)).strftime("%Y-%m-%d"):
+                day_label = "Yesterday"
+            else:
+                day_label = day_name
+            console.print(f"\n[bold]{day_label}, {date_str}[/bold]")
+
+        time_str = ts.strftime("%H:%M")
+        tag_str = " ".join(f"[yellow]#{t}[/yellow]" for t in tags) if tags else ""
+        stats = f"{u}q {a}a"
+        if t:
+            stats += f" {t}t"
+        if tokens:
+            stats += f" {tokens:,}tok"
+
+        console.print(
+            f"  [dim]{time_str}[/dim]  [green]{conv_id[:12]}[/green]  "
+            f"{title[:50]}  [dim]({stats})[/dim] {tag_str}"
+        )
+
+    console.print(f"\n[dim]{len(entries)} conversation(s) shown. "
+                  f"View details: towel show <id>[/dim]")

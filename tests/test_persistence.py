@@ -189,6 +189,55 @@ class TestImportExportRoundtrip:
         assert import_store.count == 3
 
 
+class TestLogTimeline:
+    """Test the data that powers towel log."""
+
+    def test_conversations_sorted_by_recent_activity(self, store):
+        from datetime import timedelta
+
+        old = _make_conversation("old")
+        old.created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        store.save(old)
+
+        new = _make_conversation("new")
+        store.save(new)
+
+        # List should have newest first
+        summaries = store.list_conversations()
+        assert summaries[0].id == "new"
+
+    def test_filter_by_date(self, store):
+        from datetime import timedelta
+
+        old = _make_conversation("ancient")
+        old.created_at = datetime(2020, 6, 15, tzinfo=timezone.utc)
+        store.save(old)
+
+        recent = _make_conversation("fresh")
+        store.save(recent)
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+
+        # Only fresh should pass the filter
+        results = []
+        for path in store.store_dir.glob("*.json"):
+            data = json.loads(path.read_text())
+            conv = Conversation.from_dict(data)
+            if conv.created_at >= cutoff:
+                results.append(conv.id)
+
+        assert "fresh" in results
+        assert "ancient" not in results
+
+    def test_tags_in_log_data(self, store):
+        conv = _make_conversation("tagged")
+        conv.tags = ["work", "project-x"]
+        store.save(conv)
+
+        data = json.loads(store._path_for("tagged").read_text())
+        assert data["tags"] == ["work", "project-x"]
+
+
 class TestGarbageCollection:
     """Test that old conversations can be identified and deleted."""
 
