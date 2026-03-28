@@ -521,3 +521,56 @@ class TestArchiveSkill:
     async def test_list_not_found(self, arc):
         result = await arc.execute("archive_list", {"path": "/nonexistent.zip"})
         assert "Not found" in result
+
+
+class TestCronSkill:
+    @pytest.fixture
+    def cron(self):
+        from towel.skills.builtin.cron_skill import CronSkill
+        return CronSkill()
+
+    def test_tools_defined(self, cron):
+        names = {t.name for t in cron.tools()}
+        assert names == {"cron_explain", "cron_next", "cron_build"}
+
+    @pytest.mark.asyncio
+    async def test_explain_every_5(self, cron):
+        result = await cron.execute("cron_explain", {"expression": "*/5 * * * *"})
+        assert "5 minutes" in result
+
+    @pytest.mark.asyncio
+    async def test_explain_daily(self, cron):
+        result = await cron.execute("cron_explain", {"expression": "0 9 * * *"})
+        assert "9:00" in result
+
+    @pytest.mark.asyncio
+    async def test_explain_weekdays(self, cron):
+        result = await cron.execute("cron_explain", {"expression": "30 8 * * 1-5"})
+        assert "Mon" in result or "1" in result
+
+    @pytest.mark.asyncio
+    async def test_next_runs(self, cron):
+        result = await cron.execute("cron_next", {"expression": "*/5 * * * *", "count": 3})
+        assert "Next runs" in result
+        lines = [l for l in result.splitlines() if l.strip().startswith("20")]
+        assert len(lines) == 3
+
+    @pytest.mark.asyncio
+    async def test_build_every_5(self, cron):
+        result = await cron.execute("cron_build", {"description": "every 5 minutes"})
+        assert "*/5" in result
+
+    @pytest.mark.asyncio
+    async def test_build_daily(self, cron):
+        result = await cron.execute("cron_build", {"description": "daily at 9am"})
+        assert "0 9" in result
+
+    @pytest.mark.asyncio
+    async def test_build_weekdays(self, cron):
+        result = await cron.execute("cron_build", {"description": "weekdays at noon"})
+        assert "1-5" in result
+
+    @pytest.mark.asyncio
+    async def test_invalid(self, cron):
+        result = await cron.execute("cron_explain", {"expression": "bad"})
+        assert "Invalid" in result
