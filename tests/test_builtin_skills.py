@@ -1987,3 +1987,24 @@ class TestMakeSkill:
     async def test_no_makefile(self, mk):
         result = await mk.execute("make_targets", {"path": "/nonexistent/Makefile"})
         assert "Not found" in result
+
+
+class TestManSkill:
+    @pytest.fixture
+    def man(self):
+        from towel.skills.builtin.man_skill import ManSkill
+        return ManSkill()
+
+    def test_tools(self, man):
+        names = {t.name for t in man.tools()}
+        assert names == {"man_page", "man_help", "man_tldr"}
+
+    @pytest.mark.asyncio
+    async def test_help_ls(self, man):
+        result = await man.execute("man_help", {"command": "ls"})
+        assert "ls" in result.lower() or "list" in result.lower() or "usage" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_help_nonexistent(self, man):
+        result = await man.execute("man_help", {"command": "zzz_nonexistent_cmd"})
+        assert "not found" in result.lower() or "error" in result.lower() or "No" in result
