@@ -1337,3 +1337,75 @@ class TestIpCalcSkill:
     async def test_split(self, ip):
         result = await ip.execute("ipcalc_split", {"subnet": "10.0.0.0/24", "new_prefix": 26})
         assert "4 subnets" in result
+
+
+class TestDotenvSkill:
+    @pytest.fixture
+    def de(self):
+        from towel.skills.builtin.dotenv_skill import DotenvSkill
+        return DotenvSkill()
+
+    @pytest.mark.asyncio
+    async def test_read(self, de, tmp_path):
+        (tmp_path / ".env").write_text("DB_HOST=localhost\nDB_PORT=5432\nSECRET_KEY=hunter2\n")
+        result = await de.execute("dotenv_read", {"path": str(tmp_path / ".env")})
+        assert "DB_HOST=localhost" in result
+        assert "****" in result  # SECRET_KEY redacted
+
+    @pytest.mark.asyncio
+    async def test_validate(self, de, tmp_path):
+        (tmp_path / ".env").write_text("DB_HOST=localhost\n")
+        (tmp_path / ".env.example").write_text("DB_HOST=\nDB_PORT=\nSECRET=\n")
+        result = await de.execute("dotenv_validate", {"env_path": str(tmp_path/".env"), "template_path": str(tmp_path/".env.example")})
+        assert "Missing" in result
+        assert "DB_PORT" in result
+
+    @pytest.mark.asyncio
+    async def test_diff(self, de, tmp_path):
+        (tmp_path / "a.env").write_text("X=1\nY=2\n")
+        (tmp_path / "b.env").write_text("X=1\nZ=3\n")
+        result = await de.execute("dotenv_diff", {"path_a": str(tmp_path/"a.env"), "path_b": str(tmp_path/"b.env")})
+        assert "Y" in result
+        assert "Z" in result
+
+
+class TestLogAnalyzerSkill:
+    @pytest.fixture
+    def la(self):
+        from towel.skills.builtin.log_analyzer_skill import LogAnalyzerSkill
+        return LogAnalyzerSkill()
+
+    LOG = """2026-03-28T10:00:00 INFO Starting server
+2026-03-28T10:00:01 INFO Listening on :8080
+2026-03-28T10:01:00 WARN Slow query (2.3s)
+2026-03-28T10:02:00 ERROR Connection refused to db
+2026-03-28T10:02:01 ERROR Connection refused to db
+2026-03-28T10:03:00 INFO Request from 10.0.0.1
+2026-03-28T10:04:00 ERROR Timeout reading response
+"""
+
+    @pytest.mark.asyncio
+    async def test_summary(self, la, tmp_path):
+        (tmp_path / "app.log").write_text(self.LOG)
+        result = await la.execute("log_summary", {"path": str(tmp_path / "app.log")})
+        assert "7 lines" in result
+        assert "ERROR" in result
+
+    @pytest.mark.asyncio
+    async def test_filter_errors(self, la, tmp_path):
+        (tmp_path / "app.log").write_text(self.LOG)
+        result = await la.execute("log_filter", {"path": str(tmp_path / "app.log"), "level": "ERROR"})
+        assert "Connection refused" in result
+        assert "INFO" not in result
+
+    @pytest.mark.asyncio
+    async def test_errors_grouped(self, la, tmp_path):
+        (tmp_path / "app.log").write_text(self.LOG)
+        result = await la.execute("log_errors", {"path": str(tmp_path / "app.log")})
+        assert "[2x] Connection refused" in result
+        assert "[1x] Timeout" in result
+
+    @pytest.mark.asyncio
+    async def test_not_found(self, la):
+        result = await la.execute("log_summary", {"path": "/nonexistent.log"})
+        assert "Not found" in result
