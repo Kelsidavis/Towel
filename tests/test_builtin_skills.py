@@ -471,3 +471,53 @@ class TestDiffSkill:
         result = await diff_skill.execute("diff_stats", {"file_a": str(a), "file_b": str(b)})
         assert "Similarity" in result
         assert "Additions" in result
+
+
+class TestArchiveSkill:
+    @pytest.fixture
+    def arc(self):
+        from towel.skills.builtin.archive_skill import ArchiveSkill
+        return ArchiveSkill()
+
+    def test_tools_defined(self, arc):
+        names = {t.name for t in arc.tools()}
+        assert names == {"archive_list", "archive_create", "archive_extract"}
+
+    @pytest.mark.asyncio
+    async def test_create_and_list(self, arc, tmp_path):
+        (tmp_path / "a.txt").write_text("aaa")
+        (tmp_path / "b.txt").write_text("bbb")
+        out = str(tmp_path / "test.zip")
+        result = await arc.execute("archive_create", {
+            "output": out, "sources": [str(tmp_path / "a.txt"), str(tmp_path / "b.txt")]
+        })
+        assert "Created" in result
+        assert "2 files" in result
+
+        ls = await arc.execute("archive_list", {"path": out})
+        assert "a.txt" in ls
+        assert "b.txt" in ls
+
+    @pytest.mark.asyncio
+    async def test_create_directory(self, arc, tmp_path):
+        d = tmp_path / "mydir"; d.mkdir()
+        (d / "x.txt").write_text("x")
+        (d / "y.txt").write_text("y")
+        out = str(tmp_path / "dir.zip")
+        result = await arc.execute("archive_create", {"output": out, "sources": [str(d)]})
+        assert "2 files" in result
+
+    @pytest.mark.asyncio
+    async def test_extract(self, arc, tmp_path):
+        src = tmp_path / "f.txt"; src.write_text("content")
+        zp = str(tmp_path / "e.zip")
+        await arc.execute("archive_create", {"output": zp, "sources": [str(src)]})
+        dest = tmp_path / "out"
+        result = await arc.execute("archive_extract", {"path": zp, "dest": str(dest)})
+        assert "Extracted" in result
+        assert (dest / "f.txt").read_text() == "content"
+
+    @pytest.mark.asyncio
+    async def test_list_not_found(self, arc):
+        result = await arc.execute("archive_list", {"path": "/nonexistent.zip"})
+        assert "Not found" in result
