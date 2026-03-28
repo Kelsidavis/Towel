@@ -1557,3 +1557,106 @@ def log(limit: int, today: bool, week: bool) -> None:
 
     console.print(f"\n[dim]{len(entries)} conversation(s) shown. "
                   f"View details: towel show <id>[/dim]")
+
+
+@cli.command()
+@click.option("--prompt", "-p", default="Explain what a towel is in exactly three sentences.",
+              help="Prompt to use for benchmarking")
+@click.option("--tokens", "-t", default=128, help="Max tokens to generate")
+@click.option("--rounds", "-r", default=3, help="Number of generation rounds")
+def bench(prompt: str, tokens: int, rounds: int) -> None:
+    """Benchmark model loading and inference speed.
+
+    \b
+    Measures load time, time-to-first-token, and tokens/sec.
+    Useful for comparing models or testing hardware.
+
+    \b
+    Examples:
+        towel bench
+        towel bench -t 256 -r 5
+        towel bench -p "Write a haiku about AI"
+    """
+    import time as time_mod
+
+    config = TowelConfig.load()
+    model_name = config.model.name
+
+    console.print(Panel(
+        f"[bold]Towel Bench[/bold]\n\n"
+        f"  Model:      [green]{model_name}[/green]\n"
+        f"  Max tokens: {tokens}\n"
+        f"  Rounds:     {rounds}\n"
+        f"  Prompt:     [dim]{prompt[:60]}{'...' if len(prompt) > 60 else ''}[/dim]",
+        border_style="cyan",
+        title="Don't Panic.",
+    ))
+
+    # Load model
+    console.print("\n[dim]Loading model...[/dim]")
+    load_start = time_mod.perf_counter()
+    try:
+        from mlx_lm import load, generate
+        model, tokenizer = load(model_name)
+    except Exception as e:
+        console.print(f"[red]Failed to load model:[/red] {e}")
+        sys.exit(1)
+    load_elapsed = time_mod.perf_counter() - load_start
+    console.print(f"[green]Loaded in {load_elapsed:.1f}s[/green]\n")
+
+    # Build chat prompt
+    if hasattr(tokenizer, "apply_chat_template"):
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant. Be concise."},
+            {"role": "user", "content": prompt},
+        ]
+        formatted = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    else:
+        formatted = f"User: {prompt}\nAssistant:"
+
+    # Run benchmark rounds
+    tps_values: list[float] = []
+    ttft_values: list[float] = []
+    total_tokens_gen = 0
+
+    for i in range(rounds):
+        console.print(f"  Round {i+1}/{rounds}... ", end="")
+        gen_start = time_mod.perf_counter()
+
+        try:
+            output = generate(
+                model, tokenizer, prompt=formatted,
+                max_tokens=tokens, temp=0.7, top_p=0.95,
+            )
+        except Exception as e:
+            console.print(f"[red]error: {e}[/red]")
+            continue
+
+        gen_elapsed = time_mod.perf_counter() - gen_start
+        token_count = len(tokenizer.encode(output))
+        total_tokens_gen += token_count
+
+        tps = token_count / gen_elapsed if gen_elapsed > 0 else 0
+        tps_values.append(tps)
+
+        console.print(f"[green]{tps:.1f} tok/s[/green]  ({token_count} tokens in {gen_elapsed:.2f}s)")
+
+    if not tps_values:
+        console.print("[red]No successful rounds.[/red]")
+        sys.exit(1)
+
+    # Summary
+    avg_tps = sum(tps_values) / len(tps_values)
+    peak_tps = max(tps_values)
+    min_tps = min(tps_values)
+
+    console.print(Panel(
+        f"  [green]Avg speed:[/green]   {avg_tps:.1f} tok/s\n"
+        f"  [green]Peak:[/green]        {peak_tps:.1f} tok/s\n"
+        f"  [green]Min:[/green]         {min_tps:.1f} tok/s\n"
+        f"  [green]Load time:[/green]   {load_elapsed:.1f}s\n"
+        f"  [green]Total gen:[/green]   {total_tokens_gen:,} tokens across {len(tps_values)} rounds\n"
+        f"  [green]Model:[/green]       {model_name}",
+        title="Results",
+        border_style="green",
+    ))

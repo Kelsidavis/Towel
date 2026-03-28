@@ -96,3 +96,18 @@ class TestInitCommand:
         assert "Skills" in result.output
         assert "Memory" in result.output
         assert "towel doctor" in result.output
+
+
+class TestCLICommands:
+    """Verify all CLI commands are registered and show help."""
+
+    @pytest.mark.parametrize("cmd", [
+        "bench", "config", "doctor", "gc", "history", "log",
+        "search", "show", "skills", "status", "templates",
+    ])
+    def test_command_help(self, cmd):
+        from click.testing import CliRunner
+        runner = CliRunner()
+        result = runner.invoke(cli, [cmd, "--help"])
+        assert result.exit_code == 0
+        assert cmd in result.output.lower() or "usage" in result.output.lower()
