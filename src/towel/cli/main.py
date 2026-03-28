@@ -2870,3 +2870,74 @@ def tui() -> None:
     config = TowelConfig.load()
     layout = render_tui(config)
     console.print(layout)
+
+
+@cli.command()
+@click.argument("conversation_id", required=False)
+@click.option("--format", "-f", "fmt", default="markdown", type=click.Choice(["markdown", "text", "html"]))
+@click.option("--expire", "-e", default="1w", help="Expiry (1h, 1d, 1w, 1m)")
+def share(conversation_id: str | None, fmt: str, expire: str) -> None:
+    """Share a conversation via a temporary paste link.
+
+    \b
+    Uses dpaste.org (no account needed, auto-expires).
+
+    \b
+    Examples:
+        towel share                    Share current/latest conversation
+        towel share abc123             Share specific conversation
+        towel share abc123 -f html     Share as HTML
+    """
+    import httpx
+    from towel.persistence.store import ConversationStore
+    from towel.persistence.export import export_markdown, export_text, export_html
+
+    store = ConversationStore()
+
+    if not conversation_id:
+        convos = store.list_conversations(limit=1)
+        if not convos:
+            console.print("[dim]No conversations to share.[/dim]")
+            return
+        conversation_id = convos[0].id
+
+    conv = store.load(conversation_id)
+    if not conv:
+        console.print(f"[red]Not found:[/red] {conversation_id}")
+        return
+
+    match fmt:
+        case "html": content = export_html(conv)
+        case "text": content = export_text(conv)
+        case _: content = export_markdown(conv, include_metadata=True)
+
+    expire_map = {"1h": 3600, "1d": 86400, "1w": 604800, "1m": 2592000}
+    expiry_seconds = expire_map.get(expire, 604800)
+
+    console.print(f"[dim]Sharing {conv.display_title} ({len(conv)} messages)...[/dim]")
+
+    try:
+        resp = httpx.post(
+            "https://dpaste.org/api/",
+            data={
+                "content": content[:250000],
+                "syntax": "md" if fmt == "markdown" else "text",
+                "expiry_days": max(1, expiry_seconds // 86400),
+            },
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            url = resp.text.strip().strip('"')
+            console.print(f"\n[bold green]Shared![/bold green]")
+            console.print(f"  [cyan]{url}[/cyan]")
+            console.print(f"  Expires: {expire}")
+
+            # Copy to clipboard
+            import platform, subprocess
+            if platform.system() == "Darwin":
+                subprocess.run(["pbcopy"], input=url.encode(), capture_output=True)
+                console.print(f"  [dim](copied to clipboard)[/dim]")
+        else:
+            console.print(f"[red]Upload failed:[/red] HTTP {resp.status_code}")
+    except Exception as e:
+        console.print(f"[red]Share failed:[/red] {e}")
