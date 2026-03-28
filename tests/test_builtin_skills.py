@@ -1409,3 +1409,80 @@ class TestLogAnalyzerSkill:
     async def test_not_found(self, la):
         result = await la.execute("log_summary", {"path": "/nonexistent.log"})
         assert "Not found" in result
+
+
+class TestHttpHeaderSkill:
+    @pytest.fixture
+    def hh(self):
+        from towel.skills.builtin.http_header_skill import HttpHeaderSkill
+        return HttpHeaderSkill()
+
+    @pytest.mark.asyncio
+    async def test_explain(self, hh):
+        result = await hh.execute("header_explain", {"headers": "content-type, authorization, cache-control"})
+        assert "MIME" in result
+        assert "authentication" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_security(self, hh):
+        headers = "Server: nginx/1.21\nX-Powered-By: Express"
+        result = await hh.execute("header_security", {"headers": headers})
+        assert "reveals" in result.lower()
+        assert "Missing" in result
+
+    @pytest.mark.asyncio
+    async def test_cors(self, hh):
+        result = await hh.execute("header_cors", {"origins": "https://example.com", "credentials": True})
+        assert "Access-Control-Allow-Origin" in result
+        assert "Credentials: true" in result
+
+
+class TestAsciiSkill:
+    @pytest.fixture
+    def asc(self):
+        from towel.skills.builtin.ascii_skill import AsciiSkill
+        return AsciiSkill()
+
+    @pytest.mark.asyncio
+    async def test_banner(self, asc):
+        result = await asc.execute("ascii_banner", {"text": "HI"})
+        assert "█" in result
+
+    @pytest.mark.asyncio
+    async def test_box(self, asc):
+        result = await asc.execute("ascii_box", {"text": "Hello\nWorld", "style": "double"})
+        assert "╔" in result
+        assert "Hello" in result
+
+    @pytest.mark.asyncio
+    async def test_table(self, asc):
+        result = await asc.execute("ascii_table", {"headers": ["Name","Age"], "rows": [["Alice","30"],["Bob","25"]]})
+        assert "+---" in result
+        assert "Alice" in result
+
+
+class TestStringSkill:
+    @pytest.fixture
+    def ss(self):
+        from towel.skills.builtin.string_skill import StringSkill
+        return StringSkill()
+
+    @pytest.mark.asyncio
+    async def test_escape_html(self, ss):
+        result = await ss.execute("string_escape", {"text": "<script>alert(1)</script>", "format": "html"})
+        assert "&lt;script&gt;" in result
+
+    @pytest.mark.asyncio
+    async def test_escape_sql(self, ss):
+        result = await ss.execute("string_escape", {"text": "O'Brien", "format": "sql"})
+        assert "O''Brien" in result
+
+    @pytest.mark.asyncio
+    async def test_pad(self, ss):
+        result = await ss.execute("string_pad", {"text": "42", "length": 6, "char": "0", "side": "left"})
+        assert result == "000042"
+
+    @pytest.mark.asyncio
+    async def test_truncate(self, ss):
+        result = await ss.execute("string_truncate", {"text": "Hello World!", "length": 8})
+        assert result == "Hello..."
