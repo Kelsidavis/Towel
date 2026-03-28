@@ -2855,3 +2855,18 @@ def deploy(target: str, output: str, user: str) -> None:
             console.print("  fly launch && fly deploy")
         case "all":
             console.print("  Choose your platform and follow its docs.")
+
+
+@cli.command()
+def tui() -> None:
+    """Launch the Terminal User Interface — full dashboard in your terminal.
+
+    \b
+    Shows skills, conversations, system status, channels, and
+    key commands in a single rich terminal layout.
+    """
+    from towel.cli.tui import render_tui
+
+    config = TowelConfig.load()
+    layout = render_tui(config)
+    console.print(layout)
