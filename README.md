@@ -5,8 +5,8 @@
 [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-MLX-black?logo=apple)](https://ml-explore.github.io/mlx/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://docs.astral.sh/ruff/)
-[![Tests](https://img.shields.io/badge/tests-801%20passing-brightgreen)]()
-[![Skills](https://img.shields.io/badge/skills-67%20built--in-blue)]()
+[![Tests](https://img.shields.io/badge/tests-837%20passing-brightgreen)]()
+[![Skills](https://img.shields.io/badge/skills-100%20built--in-blue)]()
 
 **Don't Panic.**
 
