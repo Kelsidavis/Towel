@@ -3134,3 +3134,70 @@ def eval_cmd(suite: str, verbose: bool) -> None:
         tools = f" [yellow]expects: {', '.join(c.expected_tools)}[/yellow]" if c.expected_tools else ""
         keywords = f" [cyan]keywords: {', '.join(c.expected_keywords[:3])}[/cyan]" if c.expected_keywords else ""
         console.print(f"  {i+1}. {c.prompt}{tools}{keywords}")
+
+
+@cli.command(name="agent")
+@click.argument("action", default="list")
+@click.argument("name", required=False)
+@click.option("--goal", "-g", default=None, help="Agent goal")
+@click.option("--interval", "-i", default=300, help="Check interval in seconds")
+@click.option("--tools", "-t", default=None, help="Comma-separated tool names")
+def agent_cmd(action: str, name: str | None, goal: str | None, interval: int, tools: str | None) -> None:
+    """Manage autonomous agents.
+
+    \b
+    Examples:
+        towel agent list
+        towel agent create monitor -g "Watch API health" -i 60 -t uptime_check
+        towel agent logs monitor
+        towel agent delete monitor
+    """
+    from towel.agent.agents import create_agent, delete_agent, list_agents, get_agent
+
+    if action == "list":
+        agents = list_agents()
+        if not agents:
+            console.print("[dim]No agents. Create one: towel agent create <name> -g 'goal'[/dim]")
+            return
+        console.print(f"[bold]Agents ({len(agents)}):[/bold]")
+        for a in agents:
+            icon = "[green]●[/green]" if a.enabled else "[dim]○[/dim]"
+            console.print(f"  {icon} [green]{a.name}[/green] — {a.goal[:50]}")
+            console.print(f"      Every {a.check_interval}s · {a.total_runs} runs · Tools: {', '.join(a.tools) or 'any'}")
+
+    elif action == "create":
+        if not name or not goal:
+            console.print("[red]Usage:[/red] towel agent create <name> -g 'goal' [-i interval] [-t tools]")
+            return
+        tool_list = [t.strip() for t in tools.split(",")] if tools else []
+        a = create_agent(name, goal, interval, tool_list)
+        console.print(f"[green]Created agent:[/green] {a.name}")
+        console.print(f"  Goal: {a.goal}")
+        console.print(f"  Interval: {a.check_interval}s")
+
+    elif action == "logs":
+        if not name:
+            console.print("[red]Usage:[/red] towel agent logs <name>")
+            return
+        a = get_agent(name)
+        if not a:
+            console.print(f"[red]Not found:[/red] {name}")
+            return
+        if not a.logs:
+            console.print(f"[dim]No logs for {name}.[/dim]")
+            return
+        console.print(f"[bold]Logs for {name}[/bold] ({len(a.logs)} entries):")
+        for l in a.logs[-10:]:
+            console.print(f"  [{l.timestamp[:19]}] {l.action}: {l.result[:60]}")
+
+    elif action == "delete":
+        if not name:
+            console.print("[red]Usage:[/red] towel agent delete <name>")
+            return
+        if delete_agent(name):
+            console.print(f"[green]Deleted:[/green] {name}")
+        else:
+            console.print(f"[dim]Not found:[/dim] {name}")
+
+    else:
+        console.print(f"[red]Unknown:[/red] {action}")
