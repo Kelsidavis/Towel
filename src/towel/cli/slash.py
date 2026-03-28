@@ -74,6 +74,7 @@ HELP_TEXT = """[bold]Chat commands:[/bold]
   [green]/alias[/green] <name> <prompt> Create a prompt shortcut (e.g., /alias review Review this code)
   [green]/aliases[/green]              List all defined aliases
   [green]/unalias[/green] <name>       Remove an alias
+  [green]/health[/green]              Show agent health and error counts
   [green]/loop[/green] <interval> <prompt> Run a prompt on a recurring interval (e.g., /loop 5m check status)
   [green]/system[/green] <prompt>      Override the system prompt
 """
@@ -207,6 +208,9 @@ def handle_slash(user_input: str, ctx: SlashContext) -> bool | None:
 
         case "/context":
             _cmd_context(ctx)
+
+        case "/health":
+            _cmd_health(ctx)
 
         case "/loop":
             _cmd_loop(ctx, arg)
@@ -1442,3 +1446,24 @@ def _cmd_loop(ctx: SlashContext, arg: str) -> None:
 
     thread = threading.Thread(target=_run_loop, daemon=True)
     thread.start()
+
+
+def _cmd_health(ctx: SlashContext) -> None:
+    """Show agent health status."""
+    from towel.agent.heartbeat import Heartbeat
+
+    # Check if heartbeat is attached to agent
+    hb = getattr(ctx.agent, '_heartbeat', None)
+    if not hb:
+        console.print("[dim]No heartbeat monitor active.[/dim]")
+        console.print("[dim]Heartbeat starts automatically with `towel serve`.[/dim]")
+        return
+
+    status = hb.status()
+    icon = "[green]HEALTHY[/green]" if status.alive else "[red]UNHEALTHY[/red]"
+    console.print(f"  Status: {icon}")
+    console.print(f"  Uptime: {status.uptime_seconds:.0f}s")
+    console.print(f"  Generations: {status.total_generations}")
+    console.print(f"  Errors: {status.total_errors} ({status.consecutive_errors} consecutive)")
+    console.print(f"  Model loaded: {'yes' if status.model_loaded else 'no'}")
+    console.print(f"  Generating: {'yes' if status.is_generating else 'no'}")

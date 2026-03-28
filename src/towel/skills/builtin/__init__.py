@@ -20,12 +20,13 @@ from towel.skills.builtin.diff_skill import DiffSkill
 from towel.skills.builtin.archive_skill import ArchiveSkill
 from towel.skills.builtin.cron_skill import CronSkill
 from towel.skills.builtin.markdown_skill import MarkdownSkill
+from towel.skills.builtin.http_skill import HttpSkill
 
 __all__ = [
     "FileSystemSkill", "ShellSkill", "WebFetchSkill", "MemorySkill",
     "GitSkill", "SearchSkill", "ClipboardSkill", "DataSkill", "SystemSkill",
     "TimeSkill", "NetworkSkill", "HashSkill", "EnvSkill", "RegexSkill",
-    "ConvertSkill", "JsonSkill", "DiffSkill", "ArchiveSkill", "CronSkill", "MarkdownSkill",
+    "ConvertSkill", "JsonSkill", "DiffSkill", "ArchiveSkill", "CronSkill", "MarkdownSkill", "HttpSkill",
 ]
 
 
@@ -56,3 +57,4 @@ def register_builtins(
     registry.register(ArchiveSkill())
     registry.register(CronSkill())
     registry.register(MarkdownSkill())
+    registry.register(HttpSkill())

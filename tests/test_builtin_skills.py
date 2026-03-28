@@ -612,3 +612,65 @@ class TestMarkdownSkill:
         assert "- [ ] a" in result
         assert "- [x] b" in result
         assert "- [ ] c" in result
+
+
+class TestHttpSkill:
+    @pytest.fixture
+    def http(self):
+        from towel.skills.builtin.http_skill import HttpSkill
+        return HttpSkill()
+
+    def test_tools_defined(self, http):
+        names = {t.name for t in http.tools()}
+        assert names == {"http_request", "http_head"}
+
+    @pytest.mark.asyncio
+    async def test_get(self, http):
+        result = await http.execute("http_request", {"url": "https://httpbin.org/get", "timeout": 5})
+        assert "200" in result or "TIMEOUT" in result or "Error" in result
+
+    @pytest.mark.asyncio
+    async def test_head(self, http):
+        result = await http.execute("http_head", {"url": "https://httpbin.org/get"})
+        assert "200" in result or "Error" in result
+
+
+class TestHeartbeat:
+    def test_heartbeat_lifecycle(self):
+        from towel.agent.heartbeat import Heartbeat
+        hb = Heartbeat(interval=0.1)
+        hb.start()
+        hb.on_model_loaded()
+        hb.on_generation_start()
+        hb.on_generation_complete()
+        status = hb.status()
+        assert status.alive
+        assert status.model_loaded
+        assert status.total_generations == 1
+        hb.stop()
+
+    def test_heartbeat_errors(self):
+        from towel.agent.heartbeat import Heartbeat
+        triggered = []
+        hb = Heartbeat(interval=60, max_consecutive_errors=3,
+                       on_unhealthy=lambda s: triggered.append(True))
+        hb.start()
+        for _ in range(3):
+            hb.on_error(RuntimeError("test"))
+        status = hb.status()
+        assert not status.alive
+        assert status.consecutive_errors == 3
+        assert len(triggered) == 1
+        hb.stop()
+
+    def test_heartbeat_error_reset(self):
+        from towel.agent.heartbeat import Heartbeat
+        hb = Heartbeat(interval=60, max_consecutive_errors=5)
+        hb.start()
+        hb.on_error(RuntimeError("e1"))
+        hb.on_error(RuntimeError("e2"))
+        assert hb.status().consecutive_errors == 2
+        hb.on_generation_complete()  # resets consecutive
+        assert hb.status().consecutive_errors == 0
+        assert hb.status().total_errors == 2  # total preserved
+        hb.stop()
