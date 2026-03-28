@@ -391,6 +391,9 @@ class GatewayServer:
         from towel.gateway.openai_compat import build_openai_routes
         openai_routes = build_openai_routes(self.agent, self.config)
 
+        from towel.agent.streaming_protocol import build_sse_routes
+        sse_routes = build_sse_routes(self.agent, self.config)
+
         routes: list[Route | Mount] = [
             Route("/health", health),
             Route("/sessions", sessions_list),
@@ -403,6 +406,7 @@ class GatewayServer:
             Route("/api/ask", simple_ask, methods=["POST"]),
             Route("/api/sessions", api_sessions, methods=["GET"]),
             *openai_routes,
+            *sse_routes,
             Route("/", webchat),
         ]
 
