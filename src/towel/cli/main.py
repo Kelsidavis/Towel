@@ -1772,3 +1772,118 @@ def watch(files: tuple[str, ...], prompt: str | None, interval: float, once: boo
 
     except KeyboardInterrupt:
         console.print("\n[dim]Stopped watching.[/dim]")
+
+
+@cli.command()
+@click.option("--staged", "-s", is_flag=True, help="Review only staged changes (default: all uncommitted)")
+@click.option("--commit", "-c", default=None, help="Review a specific commit (hash or HEAD~N)")
+@click.option("--focus", "-f", default=None, help="Focus area: bugs, security, performance, style")
+@click.option("--raw", "-r", is_flag=True, help="Output plain text (no Rich formatting)")
+def review(staged: bool, commit: str | None, focus: str | None, raw: bool) -> None:
+    """AI code review of git changes.
+
+    \b
+    Run before committing to catch bugs, security issues, or style problems.
+
+    \b
+    Examples:
+        towel review              Review all uncommitted changes
+        towel review --staged     Review only staged changes
+        towel review -c HEAD~1    Review the last commit
+        towel review -f security  Focus on security issues
+    """
+    import subprocess
+
+    # Get the diff
+    if commit:
+        cmd = ["git", "diff", f"{commit}~1", commit]
+        label = f"commit {commit}"
+    elif staged:
+        cmd = ["git", "diff", "--cached"]
+        label = "staged changes"
+    else:
+        cmd = ["git", "diff", "HEAD"]
+        label = "uncommitted changes"
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        diff = result.stdout
+    except FileNotFoundError:
+        console.print("[red]git not found.[/red]")
+        sys.exit(1)
+    except subprocess.TimeoutExpired:
+        console.print("[red]git diff timed out.[/red]")
+        sys.exit(1)
+
+    if not diff.strip():
+        console.print(f"[dim]No {label} to review.[/dim]")
+        return
+
+    # Count changed files and lines
+    files_changed = len([l for l in diff.splitlines() if l.startswith("diff --git")])
+    additions = len([l for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++")])
+    deletions = len([l for l in diff.splitlines() if l.startswith("-") and not l.startswith("---")])
+
+    if not raw:
+        console.print(Panel(
+            f"[bold]Reviewing {label}[/bold]\n"
+            f"  Files: {files_changed}  +{additions} -{deletions} lines",
+            border_style="cyan",
+            title="towel review",
+        ))
+
+    # Build the review prompt
+    focus_instruction = ""
+    if focus:
+        focus_map = {
+            "bugs": "Focus primarily on bugs, logic errors, off-by-one errors, null/undefined access, and incorrect behavior.",
+            "security": "Focus primarily on security vulnerabilities: injection, XSS, CSRF, hardcoded secrets, insecure defaults, auth issues.",
+            "performance": "Focus primarily on performance: N+1 queries, unnecessary allocations, missing caches, O(n²) algorithms.",
+            "style": "Focus primarily on code style: naming, structure, readability, DRY violations, dead code.",
+        }
+        focus_instruction = focus_map.get(focus, f"Focus on: {focus}")
+
+    prompt = (
+        f"Review the following git diff ({label}). "
+        "For each issue found, cite the file and line. "
+        "Rate overall quality 1-10. Be specific and constructive. "
+        f"{focus_instruction}\n\n"
+        f"```diff\n{diff[:50000]}\n```"
+    )
+    if len(diff) > 50000:
+        prompt += "\n\n(diff truncated at 50KB)"
+
+    # Run through the agent
+    config = TowelConfig.load()
+    from towel.agent.runtime import AgentRuntime
+    from towel.agent.conversation import Conversation, Role
+    from towel.memory.store import MemoryStore
+
+    memory = MemoryStore()
+    skills = _build_skill_registry(config, memory_store=memory)
+    agent_rt = AgentRuntime(config, skills=skills, memory=memory)
+    conv = Conversation(channel="review")
+    conv.add(Role.USER, prompt)
+
+    async def _run() -> None:
+        if not raw:
+            console.print("[dim]Loading model...[/dim]")
+        await agent_rt.load_model()
+
+        if raw:
+            response = await agent_rt.step(conv)
+            print(response.content)
+        else:
+            from towel.agent.events import EventType
+            console.print("[bold green]towel>[/bold green] ", end="")
+            async for event in agent_rt.step_streaming(conv):
+                match event.type:
+                    case EventType.TOKEN:
+                        print(event.data["content"], end="", flush=True)
+                    case EventType.RESPONSE_COMPLETE:
+                        print()
+                        meta = event.data.get("metadata", {})
+                        if meta.get("tps"):
+                            console.print(f"[dim]({meta['tps']:.1f} tok/s, {meta.get('tokens', 0)} tokens)[/dim]")
+
+    asyncio.run(_run())
