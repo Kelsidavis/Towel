@@ -2743,3 +2743,33 @@ def discord(token: str, prefix: str) -> None:
         gateway_url=f"ws://{TowelConfig.load().gateway.host}:{TowelConfig.load().gateway.port}",
     )
     asyncio.run(channel.listen())
+
+
+@cli.command()
+@click.option("--token", "-t", required=True, envvar="TELEGRAM_TOKEN", help="Telegram bot token (or set TELEGRAM_TOKEN)")
+def telegram(token: str) -> None:
+    """Run Towel as a Telegram bot.
+
+    \b
+    Setup:
+      1. Message @BotFather on Telegram
+      2. Create a bot and get the token
+      3. Run: towel telegram -t YOUR_TOKEN
+
+    \b
+    The bot responds to all messages in DMs and group chats.
+    """
+    from towel.channels.telegram import TelegramChannel
+
+    console.print(Panel(
+        f"[bold green]Telegram Bot[/bold green]\n\n"
+        f"[dim]Make sure 'towel serve' is running in another terminal.[/dim]",
+        border_style="blue",
+        title="Don't Panic.",
+    ))
+
+    channel = TelegramChannel(
+        token=token,
+        gateway_url=f"ws://{TowelConfig.load().gateway.host}:{TowelConfig.load().gateway.port}",
+    )
+    asyncio.run(channel.listen())
