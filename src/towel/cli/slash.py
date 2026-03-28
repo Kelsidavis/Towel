@@ -51,6 +51,7 @@ HELP_TEXT = """[bold]Chat commands:[/bold]
   [green]/forget[/green] <key>         Remove a memory
   [green]/t[/green] <template> <input>  Apply a prompt template (e.g., /t review code here)
   [green]/templates[/green]            List available templates
+  [green]/grep[/green] <query>          Search within this conversation
   [green]/pin[/green]                  Pin last response (stays in context even when old msgs drop)
   [green]/pins[/green]                 List pinned messages
   [green]/copy[/green] [code]           Copy last response to clipboard (or just code blocks)
@@ -145,6 +146,9 @@ def handle_slash(user_input: str, ctx: SlashContext) -> bool | None:
 
         case "/templates":
             _cmd_templates(ctx)
+
+        case "/grep":
+            _cmd_grep(ctx, arg)
 
         case "/pin":
             _cmd_pin(ctx, arg)
@@ -541,6 +545,54 @@ def _cmd_delagent(ctx: SlashContext, arg: str) -> None:
         console.print(f"[green]Deleted agent:[/green] {name}")
     else:
         console.print(f"[red]Agent not found:[/red] {name}")
+
+
+def _cmd_grep(ctx: SlashContext, arg: str) -> None:
+    """Search within the current conversation for a query string."""
+    import re
+
+    query = arg.strip()
+    if not query:
+        console.print("[red]Usage:[/red] /grep <query>")
+        return
+
+    if not ctx.conv.messages:
+        console.print("[dim]No messages to search.[/dim]")
+        return
+
+    try:
+        pattern = re.compile(re.escape(query), re.IGNORECASE)
+    except re.error:
+        console.print("[red]Invalid search pattern.[/red]")
+        return
+
+    matches = 0
+    for i, msg in enumerate(ctx.conv.messages):
+        if pattern.search(msg.content):
+            matches += 1
+            role = msg.role.value
+            role_color = {"user": "cyan", "assistant": "green", "tool": "yellow", "system": "dim"}.get(role, "white")
+
+            # Extract snippet around match
+            m = pattern.search(msg.content)
+            start = max(0, m.start() - 40)
+            end = min(len(msg.content), m.end() + 40)
+            snippet = msg.content[start:end].replace("\n", " ")
+            if start > 0:
+                snippet = "..." + snippet
+            if end < len(msg.content):
+                snippet = snippet + "..."
+
+            # Highlight match
+            snippet = pattern.sub(lambda x: f"[bold yellow]{x.group()}[/bold yellow]", snippet)
+
+            pin_mark = " [magenta]pinned[/magenta]" if msg.pinned else ""
+            console.print(f"  [dim]#{i+1}[/dim] [{role_color}]{role}[/{role_color}]{pin_mark}  {snippet}")
+
+    if matches == 0:
+        console.print(f"[dim]No matches for:[/dim] {query}")
+    else:
+        console.print(f"\n[dim]{matches} match(es) found.[/dim]")
 
 
 def _cmd_pin(ctx: SlashContext, arg: str) -> None:

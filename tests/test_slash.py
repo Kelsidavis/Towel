@@ -135,6 +135,28 @@ class TestRetry:
         assert result is True  # no assistant to remove
 
 
+class TestGrep:
+    def test_grep_finds_match(self, ctx):
+        ctx.conv.add(Role.ASSISTANT, "The answer is 42, obviously.")
+        result = handle_slash("/grep 42", ctx)
+        assert result is True  # consumed
+
+    def test_grep_no_match(self, ctx):
+        handle_slash("/grep xyznonexistent", ctx)  # should print "no matches"
+
+    def test_grep_empty_query(self, ctx):
+        handle_slash("/grep", ctx)  # should print usage
+
+    def test_grep_empty_conversation(self, ctx):
+        ctx.conv.messages.clear()
+        handle_slash("/grep hello", ctx)  # should print "no messages"
+
+    def test_grep_case_insensitive(self, ctx):
+        ctx.conv.add(Role.ASSISTANT, "Python is great")
+        # Should match regardless of case
+        handle_slash("/grep PYTHON", ctx)  # should not crash, finds match
+
+
 class TestPin:
     def test_pin_last_assistant(self, ctx):
         handle_slash("/pin", ctx)
