@@ -135,6 +135,49 @@ class TestRetry:
         assert result is True  # no assistant to remove
 
 
+class TestPin:
+    def test_pin_last_assistant(self, ctx):
+        handle_slash("/pin", ctx)
+        # Last assistant message should be pinned
+        asst_msgs = [m for m in ctx.conv.messages if m.role == Role.ASSISTANT]
+        assert asst_msgs[-1].pinned is True
+
+    def test_pin_toggle(self, ctx):
+        handle_slash("/pin", ctx)
+        handle_slash("/pin", ctx)
+        asst_msgs = [m for m in ctx.conv.messages if m.role == Role.ASSISTANT]
+        assert asst_msgs[-1].pinned is False  # toggled off
+
+    def test_pin_by_id(self, ctx):
+        msg_id = ctx.conv.messages[0].id  # user message
+        handle_slash(f"/pin {msg_id}", ctx)
+        assert ctx.conv.messages[0].pinned is True
+
+    def test_pin_unknown_id(self, ctx):
+        handle_slash("/pin nonexistent123", ctx)  # should not crash
+
+    def test_pins_empty(self, ctx):
+        handle_slash("/pins", ctx)  # should not crash
+
+    def test_pins_shows_pinned(self, ctx):
+        ctx.conv.messages[1].pinned = True
+        handle_slash("/pins", ctx)  # should show the pinned message
+
+    def test_pinned_serialization(self):
+        from towel.agent.conversation import Message, Role
+        msg = Message(role=Role.ASSISTANT, content="important", pinned=True)
+        d = msg.to_dict()
+        assert d["pinned"] is True
+        restored = Message.from_dict(d)
+        assert restored.pinned is True
+
+    def test_unpinned_not_in_dict(self):
+        from towel.agent.conversation import Message, Role
+        msg = Message(role=Role.ASSISTANT, content="normal")
+        d = msg.to_dict()
+        assert "pinned" not in d  # only serialized when True
+
+
 class TestCopy:
     def test_copy_no_response(self, ctx):
         ctx.conv.messages.clear()

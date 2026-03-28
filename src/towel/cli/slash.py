@@ -51,6 +51,8 @@ HELP_TEXT = """[bold]Chat commands:[/bold]
   [green]/forget[/green] <key>         Remove a memory
   [green]/t[/green] <template> <input>  Apply a prompt template (e.g., /t review code here)
   [green]/templates[/green]            List available templates
+  [green]/pin[/green]                  Pin last response (stays in context even when old msgs drop)
+  [green]/pins[/green]                 List pinned messages
   [green]/copy[/green] [code]           Copy last response to clipboard (or just code blocks)
   [green]/tag[/green] <name>            Add a tag to this conversation (or remove with -name)
   [green]/tags[/green]                 Show tags on this conversation
@@ -140,6 +142,12 @@ def handle_slash(user_input: str, ctx: SlashContext) -> bool | None:
 
         case "/templates":
             _cmd_templates(ctx)
+
+        case "/pin":
+            _cmd_pin(ctx, arg)
+
+        case "/pins":
+            _cmd_pins(ctx)
 
         case "/copy":
             _cmd_copy(ctx, arg)
@@ -517,6 +525,61 @@ def _cmd_delagent(ctx: SlashContext, arg: str) -> None:
         console.print(f"[green]Deleted agent:[/green] {name}")
     else:
         console.print(f"[red]Agent not found:[/red] {name}")
+
+
+def _cmd_pin(ctx: SlashContext, arg: str) -> None:
+    """Pin or unpin a message. Default: toggle pin on last assistant response."""
+    from towel.agent.conversation import Role
+
+    if not ctx.conv.messages:
+        console.print("[dim]No messages to pin.[/dim]")
+        return
+
+    # Find target message
+    target = None
+    if arg.strip():
+        # Pin by message ID
+        msg_id = arg.strip()
+        for msg in ctx.conv.messages:
+            if msg.id == msg_id:
+                target = msg
+                break
+        if not target:
+            console.print(f"[red]Message not found:[/red] {msg_id}")
+            return
+    else:
+        # Default: last assistant message
+        for msg in reversed(ctx.conv.messages):
+            if msg.role == Role.ASSISTANT:
+                target = msg
+                break
+        if not target:
+            console.print("[dim]No assistant response to pin.[/dim]")
+            return
+
+    target.pinned = not target.pinned
+    action = "Pinned" if target.pinned else "Unpinned"
+    preview = target.content[:60] + "..." if len(target.content) > 60 else target.content
+    preview = preview.replace("\n", " ")
+    console.print(f"[green]{action}:[/green] {preview}")
+    console.print(f"[dim]Pinned messages stay in context even when older messages are dropped.[/dim]")
+
+
+def _cmd_pins(ctx: SlashContext) -> None:
+    """Show all pinned messages in the conversation."""
+    pinned = [m for m in ctx.conv.messages if m.pinned]
+    if not pinned:
+        console.print("[dim]No pinned messages. Pin with: /pin[/dim]")
+        return
+
+    console.print(f"[bold]Pinned messages ({len(pinned)}):[/bold]")
+    for msg in pinned:
+        preview = msg.content[:80].replace("\n", " ")
+        if len(msg.content) > 80:
+            preview += "..."
+        role_color = "cyan" if msg.role.value == "user" else "green"
+        console.print(f"  [{role_color}]{msg.role.value}[/{role_color}] {preview}")
+        console.print(f"    [dim]id: {msg.id}[/dim]")
 
 
 def _cmd_copy(ctx: SlashContext, arg: str) -> None:

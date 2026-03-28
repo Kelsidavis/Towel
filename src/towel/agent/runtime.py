@@ -341,12 +341,18 @@ class AgentRuntime:
         system_content = self._build_system_content()
         all_messages = conversation.to_chat_messages()
 
+        # Collect indices of pinned messages so they survive context eviction
+        pinned_indices = {
+            i for i, msg in enumerate(conversation.messages) if msg.pinned
+        }
+
         fitted_messages, budget = fit_messages(
             system_content=system_content,
             messages=all_messages,
             context_window=self.config.model.context_window,
             max_output_tokens=self.config.model.max_tokens,
             token_counter=self._token_count,
+            pinned_indices=pinned_indices if pinned_indices else None,
         )
 
         if self._tokenizer and hasattr(self._tokenizer, "apply_chat_template"):

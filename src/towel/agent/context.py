@@ -51,6 +51,7 @@ def fit_messages(
     context_window: int,
     max_output_tokens: int,
     token_counter: Callable[[str], int] | None = None,
+    pinned_indices: set[int] | None = None,
 ) -> tuple[list[dict[str, str]], ContextBudget]:
     """Select messages that fit within the token budget.
 
@@ -61,11 +62,14 @@ def fit_messages(
         max_output_tokens: Tokens reserved for generation output.
         token_counter: Function that counts tokens in a string.
             Falls back to char-based estimate if None.
+        pinned_indices: Set of message indices that must always be included
+            (even when older messages are dropped for space).
 
     Returns:
         (fitted_messages, budget) — the messages that fit, plus budget stats.
     """
     count = token_counter or count_tokens_fallback
+    pinned = pinned_indices or set()
     budget = ContextBudget(
         context_window=context_window,
         max_output_tokens=max_output_tokens,
@@ -89,27 +93,40 @@ def fit_messages(
         tokens = count(msg["content"]) + template_overhead_per_msg
         msg_tokens.append(tokens)
 
-    # Always include the last message (current user turn)
-    # Then fill backwards with as many recent messages as fit
+    # Reserve space for pinned messages first
     selected_indices: list[int] = []
     tokens_used = 0
 
+    pinned_cost = 0
+    for i in sorted(pinned):
+        if 0 <= i < len(messages):
+            pinned_cost += msg_tokens[i]
+
+    # Fill backwards with recent messages, skipping pinned (added separately)
     for i in range(len(messages) - 1, -1, -1):
+        if i in pinned:
+            continue  # pinned messages are added regardless
         cost = msg_tokens[i]
 
-        if tokens_used + cost > budget.remaining:
+        if tokens_used + cost + pinned_cost > budget.remaining:
             # If this is the very last message (current turn), truncate to fit
             if i == len(messages) - 1 and not selected_indices:
                 selected_indices.append(i)
-                tokens_used += min(cost, budget.remaining)
+                tokens_used += min(cost, budget.remaining - pinned_cost)
                 log.debug(f"Truncating current message to fit ({cost} -> {budget.remaining} tokens)")
             break
 
         selected_indices.append(i)
         tokens_used += cost
 
-    # Reverse to get chronological order
-    selected_indices.reverse()
+    # Add pinned messages
+    for i in sorted(pinned):
+        if 0 <= i < len(messages) and i not in selected_indices:
+            selected_indices.append(i)
+            tokens_used += msg_tokens[i]
+
+    # Sort to get chronological order
+    selected_indices.sort()
 
     available_before = budget.remaining
     budget.message_tokens = tokens_used

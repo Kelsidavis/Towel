@@ -25,18 +25,22 @@ class Message:
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: dict[str, Any] = field(default_factory=dict)
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    pinned: bool = False
 
     def to_chat_dict(self) -> dict[str, str]:
         return {"role": self.role.value, "content": self.content}
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "id": self.id,
             "role": self.role.value,
             "content": self.content,
             "timestamp": self.timestamp.isoformat(),
             "metadata": self.metadata,
         }
+        if self.pinned:
+            d["pinned"] = True
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Message:
@@ -46,6 +50,7 @@ class Message:
             content=data["content"],
             timestamp=datetime.fromisoformat(data["timestamp"]),
             metadata=data.get("metadata", {}),
+            pinned=data.get("pinned", False),
         )
 
 
