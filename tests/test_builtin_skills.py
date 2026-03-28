@@ -112,6 +112,55 @@ class TestSystemSkill:
         assert "Filesystem" in result or "filesystem" in result.lower() or "/" in result
 
 
+class TestTimeSkill:
+    @pytest.fixture
+    def time_skill(self):
+        from towel.skills.builtin.time_skill import TimeSkill
+        return TimeSkill()
+
+    def test_tools_defined(self, time_skill):
+        tools = time_skill.tools()
+        names = {t.name for t in tools}
+        assert names == {"current_time", "time_between", "unix_timestamp"}
+
+    @pytest.mark.asyncio
+    async def test_current_time_local(self, time_skill):
+        result = await time_skill.execute("current_time", {})
+        assert "Date:" in result
+        assert "Time:" in result
+        assert "local" in result
+
+    @pytest.mark.asyncio
+    async def test_current_time_utc(self, time_skill):
+        result = await time_skill.execute("current_time", {"timezone": "UTC"})
+        assert "UTC" in result
+
+    @pytest.mark.asyncio
+    async def test_current_time_unknown_tz(self, time_skill):
+        result = await time_skill.execute("current_time", {"timezone": "FAKE"})
+        assert "Unknown timezone" in result
+
+    @pytest.mark.asyncio
+    async def test_time_between(self, time_skill):
+        result = await time_skill.execute("time_between", {"start": "2026-01-01", "end": "2026-03-27"})
+        assert "85 days" in result
+
+    @pytest.mark.asyncio
+    async def test_time_between_invalid(self, time_skill):
+        result = await time_skill.execute("time_between", {"start": "nope", "end": "2026-01-01"})
+        assert "Invalid date" in result
+
+    @pytest.mark.asyncio
+    async def test_unix_timestamp_current(self, time_skill):
+        result = await time_skill.execute("unix_timestamp", {})
+        assert "Current Unix timestamp" in result
+
+    @pytest.mark.asyncio
+    async def test_unix_timestamp_convert(self, time_skill):
+        result = await time_skill.execute("unix_timestamp", {"timestamp": 0})
+        assert "1970" in result
+
+
 class TestRegisterBuiltins:
     def test_registers_all(self):
         reg = SkillRegistry()
@@ -120,4 +169,5 @@ class TestRegisterBuiltins:
         assert "filesystem" in names
         assert "shell" in names
         assert "web" in names
+        assert "time" in names
         assert "system" in names
