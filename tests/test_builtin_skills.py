@@ -771,3 +771,75 @@ class TestImageSkill:
     async def test_not_found(self, img):
         result = await img.execute("image_info", {"path": "/nonexistent.png"})
         assert "Not found" in result
+
+
+class TestProcessSkill:
+    @pytest.fixture
+    def proc(self):
+        from towel.skills.builtin.process_skill import ProcessSkill
+        return ProcessSkill()
+
+    def test_tools_defined(self, proc):
+        names = {t.name for t in proc.tools()}
+        assert names == {"process_find", "process_info", "process_tree", "process_ports"}
+
+    @pytest.mark.asyncio
+    async def test_find(self, proc):
+        import os
+        result = await proc.execute("process_find", {"name": "python"})
+        assert "python" in result.lower() or "No processes" in result
+
+    @pytest.mark.asyncio
+    async def test_info_self(self, proc):
+        import os
+        result = await proc.execute("process_info", {"pid": os.getpid()})
+        assert "python" in result.lower() or str(os.getpid()) in result
+
+
+class TestTextSkill:
+    @pytest.fixture
+    def txt(self):
+        from towel.skills.builtin.text_skill import TextSkill
+        return TextSkill()
+
+    def test_tools_defined(self, txt):
+        names = {t.name for t in txt.tools()}
+        assert names == {"text_stats", "text_transform", "text_frequency"}
+
+    @pytest.mark.asyncio
+    async def test_stats(self, txt):
+        result = await txt.execute("text_stats", {"text": "Hello world. This is a test."})
+        assert "Words: 6" in result
+        assert "Sentences: 2" in result
+
+    @pytest.mark.asyncio
+    async def test_transform_upper(self, txt):
+        result = await txt.execute("text_transform", {"text": "hello", "transform": "upper"})
+        assert result == "HELLO"
+
+    @pytest.mark.asyncio
+    async def test_transform_snake(self, txt):
+        result = await txt.execute("text_transform", {"text": "helloWorld", "transform": "snake"})
+        assert result == "hello_world"
+
+    @pytest.mark.asyncio
+    async def test_transform_camel(self, txt):
+        result = await txt.execute("text_transform", {"text": "hello_world", "transform": "camel"})
+        assert result == "helloWorld"
+
+    @pytest.mark.asyncio
+    async def test_transform_number_lines(self, txt):
+        result = await txt.execute("text_transform", {"text": "a\nb\nc", "transform": "number_lines"})
+        assert "   1  a" in result
+        assert "   3  c" in result
+
+    @pytest.mark.asyncio
+    async def test_frequency(self, txt):
+        result = await txt.execute("text_frequency", {"text": "the cat sat on the mat the cat"})
+        assert "the" in result
+        assert "cat" in result
+
+    @pytest.mark.asyncio
+    async def test_unique_lines(self, txt):
+        result = await txt.execute("text_transform", {"text": "a\nb\na\nc\nb", "transform": "unique_lines"})
+        assert result == "a\nb\nc"

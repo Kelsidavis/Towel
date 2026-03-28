@@ -23,12 +23,14 @@ from towel.skills.builtin.markdown_skill import MarkdownSkill
 from towel.skills.builtin.http_skill import HttpSkill
 from towel.skills.builtin.sql_skill import SqlSkill
 from towel.skills.builtin.image_skill import ImageSkill
+from towel.skills.builtin.process_skill import ProcessSkill
+from towel.skills.builtin.text_skill import TextSkill
 
 __all__ = [
     "FileSystemSkill", "ShellSkill", "WebFetchSkill", "MemorySkill",
     "GitSkill", "SearchSkill", "ClipboardSkill", "DataSkill", "SystemSkill",
     "TimeSkill", "NetworkSkill", "HashSkill", "EnvSkill", "RegexSkill",
-    "ConvertSkill", "JsonSkill", "DiffSkill", "ArchiveSkill", "CronSkill", "MarkdownSkill", "HttpSkill", "SqlSkill", "ImageSkill",
+    "ConvertSkill", "JsonSkill", "DiffSkill", "ArchiveSkill", "CronSkill", "MarkdownSkill", "HttpSkill", "SqlSkill", "ImageSkill", "ProcessSkill", "TextSkill",
 ]
 
 
@@ -62,3 +64,5 @@ def register_builtins(
     registry.register(HttpSkill())
     registry.register(SqlSkill())
     registry.register(ImageSkill())
+    registry.register(ProcessSkill())
+    registry.register(TextSkill())
