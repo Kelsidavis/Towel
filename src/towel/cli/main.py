@@ -2028,3 +2028,101 @@ def webhook(port: int, host: str, token: str | None) -> None:
         port=port, host=host, token=token,
     )
     asyncio.run(channel.listen())
+
+
+@cli.command()
+@click.argument("target", required=False)
+@click.option("--bullets", "-b", is_flag=True, help="Output as bullet points")
+@click.option("--length", "-l", default="medium", type=click.Choice(["short", "medium", "long"]),
+              help="Summary length (default: medium)")
+@click.option("--raw", "-r", is_flag=True, help="Plain text output (no Rich)")
+def summarize(target: str | None, bullets: bool, length: str, raw: bool) -> None:
+    """Summarize a file, URL, or piped input.
+
+    \b
+    Examples:
+        towel summarize README.md
+        towel summarize https://example.com/article
+        cat long_log.txt | towel summarize
+        towel summarize notes.md -b -l short
+    """
+    from pathlib import Path
+
+    # Gather content from target or stdin
+    content = ""
+    source = ""
+
+    if target:
+        if target.startswith(("http://", "https://")):
+            # Fetch URL
+            try:
+                import httpx
+                resp = httpx.get(target, timeout=10, follow_redirects=True)
+                content = resp.text[:50000]
+                source = target
+            except Exception as e:
+                console.print(f"[red]Failed to fetch URL:[/red] {e}")
+                return
+        else:
+            # Read file
+            p = Path(target).expanduser()
+            if not p.is_file():
+                console.print(f"[red]File not found:[/red] {target}")
+                return
+            content = p.read_text(encoding="utf-8", errors="replace")[:50000]
+            source = p.name
+    else:
+        # Read stdin
+        if sys.stdin.isatty():
+            console.print("[red]No input.[/red] Provide a file, URL, or pipe content.")
+            console.print("  towel summarize file.txt")
+            console.print("  cat log.txt | towel summarize")
+            return
+        content = sys.stdin.read()[:50000]
+        source = "stdin"
+
+    if not content.strip():
+        console.print("[dim]Empty input — nothing to summarize.[/dim]")
+        return
+
+    # Build prompt
+    length_map = {
+        "short": "2-3 sentences",
+        "medium": "a concise paragraph (4-6 sentences)",
+        "long": "a detailed summary (2-3 paragraphs)",
+    }
+    fmt = "bullet points" if bullets else length_map[length]
+    prompt = (
+        f"Summarize the following content as {fmt}. "
+        "Be accurate and concise. Capture the key points.\n\n"
+        f"{content}"
+    )
+
+    config = TowelConfig.load()
+    from towel.agent.runtime import AgentRuntime
+    from towel.agent.conversation import Conversation, Role
+    from towel.memory.store import MemoryStore
+
+    memory = MemoryStore()
+    skills_reg = _build_skill_registry(config, memory_store=memory)
+    agent_rt = AgentRuntime(config, skills=skills_reg, memory=memory)
+    conv = Conversation(channel="summarize")
+    conv.add(Role.USER, prompt)
+
+    async def _run() -> None:
+        if not raw:
+            console.print(f"[dim]Summarizing {source} ({len(content):,} chars)...[/dim]\n")
+        await agent_rt.load_model()
+
+        if raw:
+            resp = await agent_rt.step(conv)
+            print(resp.content)
+        else:
+            from towel.agent.events import EventType
+            async for event in agent_rt.step_streaming(conv):
+                if event.type == EventType.TOKEN:
+                    print(event.data["content"], end="", flush=True)
+                elif event.type == EventType.RESPONSE_COMPLETE:
+                    print()
+
+    asyncio.run(_run())
