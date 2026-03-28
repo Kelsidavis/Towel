@@ -1986,3 +1986,45 @@ def commit_cmd(stage_all: bool, edit: bool, dry_run: bool) -> None:
             console.print(f"  [dim]{log.stdout.strip()}[/dim]")
     else:
         console.print(f"[red]Commit failed:[/red] {cresult.stderr.strip()}")
+
+
+@cli.command()
+@click.option("--port", "-p", default=18750, help="Port to listen on")
+@click.option("--host", default="127.0.0.1", help="Host to bind to")
+@click.option("--token", "-t", default=None, help="Require Bearer token for auth")
+def webhook(port: int, host: str, token: str | None) -> None:
+    """Start a webhook channel — receive messages via HTTP POST.
+
+    \b
+    The simplest way to integrate Towel with external services.
+    Accepts POST /message with {"text": "..."} and returns AI responses.
+
+    \b
+    Examples:
+        towel webhook                    Start on port 18750
+        towel webhook -p 9000            Custom port
+        towel webhook -t mysecret        Require auth token
+
+    \b
+    Test with curl:
+        curl -X POST http://127.0.0.1:18750/message \\
+          -H "Content-Type: application/json" \\
+          -d '{"text": "hello"}'
+    """
+    from towel.channels.webhook import WebhookChannel
+
+    console.print(Panel(
+        f"[bold]Webhook Channel[/bold]\n\n"
+        f"  Endpoint: [green]http://{host}:{port}/message[/green]\n"
+        f"  Health:   http://{host}:{port}/health\n"
+        f"  Auth:     {'Bearer token required' if token else 'none (open)'}\n\n"
+        f"[dim]POST {{\"text\": \"your message\"}} to get AI responses.[/dim]",
+        border_style="cyan",
+        title="Don't Panic.",
+    ))
+
+    channel = WebhookChannel(
+        gateway_url=f"ws://{TowelConfig.load().gateway.host}:{TowelConfig.load().gateway.port}",
+        port=port, host=host, token=token,
+    )
+    asyncio.run(channel.listen())

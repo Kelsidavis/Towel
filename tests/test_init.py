@@ -104,6 +104,7 @@ class TestCLICommands:
     @pytest.mark.parametrize("cmd", [
         "bench", "commit", "config", "doctor", "gc", "history", "log",
         "review", "search", "show", "skills", "status", "templates", "watch",
+        "webhook",
     ])
     def test_command_help(self, cmd):
         from click.testing import CliRunner
