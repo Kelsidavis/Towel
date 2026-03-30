@@ -97,16 +97,20 @@ class AgentRuntime:
     def _generate_sync(self, conversation: Conversation) -> GenerationResult:
         """Synchronous generation via mlx_lm."""
         from mlx_lm import generate
+        from mlx_lm.sample_utils import make_sampler
 
         prompt = self._build_prompt(conversation)
+        sampler = make_sampler(
+            temp=self.config.model.temperature,
+            top_p=self.config.model.top_p,
+        )
         start = time.perf_counter()
         response = generate(
             self._model,
             self._tokenizer,
             prompt=prompt,
             max_tokens=self.config.model.max_tokens,
-            temp=self.config.model.temperature,
-            top_p=self.config.model.top_p,
+            sampler=sampler,
         )
         elapsed = time.perf_counter() - start
 
@@ -131,15 +135,19 @@ class AgentRuntime:
 
         def _stream_sync() -> None:
             from mlx_lm import stream_generate
+            from mlx_lm.sample_utils import make_sampler
 
             prompt = self._build_prompt(conversation)
+            sampler = make_sampler(
+                temp=self.config.model.temperature,
+                top_p=self.config.model.top_p,
+            )
             for chunk in stream_generate(
                 self._model,
                 self._tokenizer,
                 prompt=prompt,
                 max_tokens=self.config.model.max_tokens,
-                temp=self.config.model.temperature,
-                top_p=self.config.model.top_p,
+                sampler=sampler,
             ):
                 if cancel_flag.is_set():
                     break

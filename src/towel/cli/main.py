@@ -1597,6 +1597,7 @@ def bench(prompt: str, tokens: int, rounds: int) -> None:
     load_start = time_mod.perf_counter()
     try:
         from mlx_lm import load, generate
+        from mlx_lm.sample_utils import make_sampler
         model, tokenizer = load(model_name)
     except Exception as e:
         console.print(f"[red]Failed to load model:[/red] {e}")
@@ -1626,7 +1627,7 @@ def bench(prompt: str, tokens: int, rounds: int) -> None:
         try:
             output = generate(
                 model, tokenizer, prompt=formatted,
-                max_tokens=tokens, temp=0.7, top_p=0.95,
+                max_tokens=tokens, sampler=make_sampler(temp=0.7, top_p=0.95),
             )
         except Exception as e:
             console.print(f"[red]error: {e}[/red]")
