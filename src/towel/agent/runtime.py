@@ -95,7 +95,7 @@ class AgentRuntime:
 
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
-            None, self._generate_sync, conversation
+            self._mlx_executor, self._generate_sync, conversation
         )
         return result
 

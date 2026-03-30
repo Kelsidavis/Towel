@@ -22,7 +22,7 @@ from pathlib import Path
 import httpx
 
 BASE_URL = "http://127.0.0.1:18743"
-TIMEOUT = 120  # seconds — model inference can be slow
+TIMEOUT = 300  # seconds — model inference can be slow, tool loops need multiple rounds
 SESSION = "test-harness"
 
 # Results log
