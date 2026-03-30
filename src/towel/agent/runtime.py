@@ -321,6 +321,9 @@ class AgentRuntime:
                     },
                 }))
 
+            tool_names = [t["name"] for t in tools]
+            tool_name_list = ", ".join(tool_names)
+
             system += (
                 "\n\n# Tools\n\n"
                 "You may call one or more functions to assist with the user query.\n\n"
@@ -331,9 +334,12 @@ class AgentRuntime:
                 "<tool_call>\n"
                 '{"name": <function-name>, "arguments": <args-json-object>}\n'
                 "</tool_call>\n\n"
-                "IMPORTANT: Only call functions listed above in <tools>. "
-                "Do NOT invent function names or call tools that are not listed. "
-                "If no tool is needed, respond directly without tool calls."
+                f"The ONLY supported tool names are: {tool_name_list}\n\n"
+                "IMPORTANT:\n"
+                "- Only call functions from the list above. Do NOT invent or guess "
+                "function names. If a tool you want is not listed, it does not exist.\n"
+                "- Always use the exact <tool_call> format shown above.\n"
+                "- If no tool is needed, respond directly without tool calls."
             )
         return system
 

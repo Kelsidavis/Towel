@@ -5,6 +5,8 @@ Supports multiple formats that LLMs commonly emit:
   2. XML-style:   <tool_call>{"name": "...", "arguments": {...}}</tool_call>
   3. Function-style: <|tool_call|>name(arg1="val1", arg2="val2")<|/tool_call|>
   4. Bare JSON object with "tool"/"name" + "arguments"/"parameters" keys
+  5. Qwen Hermes-style: ✿FUNCTION✿name\n✿ARGS✿{...}\n✿RESULT✿ (or end of text)
+  6. Qwen ChatML tool_calls array inside structured output
 
 The parser is intentionally lenient — models are messy.
 """
@@ -59,6 +61,18 @@ _FUNC_CALL_PATTERN = re.compile(
     re.DOTALL,
 )
 
+# Qwen Hermes-style: ✿FUNCTION✿name\n✿ARGS✿{...} (terminated by ✿RESULT✿ or end)
+_QWEN_HERMES_PATTERN = re.compile(
+    r"✿FUNCTION✿\s*(\w+)\s*\n✿ARGS✿\s*(\{.*?\})\s*(?:✿RESULT✿|✿|$)",
+    re.DOTALL,
+)
+
+# Qwen ChatML tool_calls array: "tool_calls": [{"function": {"name": ..., "arguments": ...}}]
+_QWEN_CHATML_TOOL_CALLS = re.compile(
+    r'"tool_calls"\s*:\s*(\[.*?\])',
+    re.DOTALL,
+)
+
 
 def parse_tool_calls(text: str) -> tuple[list[ToolCall], str]:
     """Parse tool calls from model output text.
@@ -70,7 +84,43 @@ def parse_tool_calls(text: str) -> tuple[list[ToolCall], str]:
     calls: list[ToolCall] = []
     remaining = text
 
-    # Try function-call style first
+    # Try Qwen Hermes-style first (✿FUNCTION✿ / ✿ARGS✿)
+    for match in _QWEN_HERMES_PATTERN.finditer(text):
+        func_name = match.group(1)
+        raw_json = match.group(2)
+        try:
+            args = json.loads(raw_json)
+            if not isinstance(args, dict):
+                args = {}
+            calls.append(ToolCall(name=func_name, arguments=args, raw=match.group(0)))
+            remaining = remaining.replace(match.group(0), "")
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    if calls:
+        return calls, remaining.strip()
+
+    # Try Qwen ChatML tool_calls array style
+    chatml_match = _QWEN_CHATML_TOOL_CALLS.search(text)
+    if chatml_match:
+        try:
+            tool_calls_arr = json.loads(chatml_match.group(1))
+            if isinstance(tool_calls_arr, list):
+                for tc in tool_calls_arr:
+                    parsed = _normalize_chatml_tool_call(tc)
+                    if parsed:
+                        calls.append(ToolCall(
+                            name=parsed["name"],
+                            arguments=parsed["arguments"],
+                            raw=chatml_match.group(0),
+                        ))
+                if calls:
+                    remaining = remaining.replace(chatml_match.group(0), "")
+                    return calls, remaining.strip()
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # Try function-call style
     for match in _FUNC_CALL_PATTERN.finditer(text):
         func_name = match.group(1)
         args_str = match.group(2).strip()
@@ -118,6 +168,35 @@ def _normalize_tool_json(obj: dict[str, Any]) -> dict[str, Any] | None:
         or obj.get("args")
         or {}
     )
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            arguments = {"input": arguments}
+
+    return {"name": name, "arguments": arguments if isinstance(arguments, dict) else {}}
+
+
+def _normalize_chatml_tool_call(tc: Any) -> dict[str, Any] | None:
+    """Normalize a Qwen ChatML tool_calls array entry.
+
+    Handles both:
+      {"function": {"name": "...", "arguments": "..."}}
+      {"name": "...", "arguments": {...}}
+    """
+    if not isinstance(tc, dict):
+        return None
+
+    # Qwen ChatML nests under "function" key
+    func = tc.get("function", tc)
+    if not isinstance(func, dict):
+        return None
+
+    name = func.get("name")
+    if not name or not isinstance(name, str):
+        return None
+
+    arguments = func.get("arguments", {})
     if isinstance(arguments, str):
         try:
             arguments = json.loads(arguments)

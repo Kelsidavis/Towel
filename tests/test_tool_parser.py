@@ -69,6 +69,62 @@ def test_parameters_alias():
     assert calls[0].arguments["command"] == "echo hi"
 
 
+def test_qwen_hermes_single():
+    text = "I'll read that file.\n✿FUNCTION✿read_file\n✿ARGS✿{\"path\": \"/tmp/test.txt\"}\n✿RESULT✿"
+    calls, remaining = parse_tool_calls(text)
+    assert len(calls) == 1
+    assert calls[0].name == "read_file"
+    assert calls[0].arguments == {"path": "/tmp/test.txt"}
+    assert "I'll read that file." in remaining
+    assert "✿FUNCTION✿" not in remaining
+
+
+def test_qwen_hermes_multiple():
+    text = (
+        "Let me check both.\n"
+        "✿FUNCTION✿read_file\n✿ARGS✿{\"path\": \"a.txt\"}\n✿RESULT✿\n"
+        "✿FUNCTION✿read_file\n✿ARGS✿{\"path\": \"b.txt\"}\n✿RESULT✿"
+    )
+    calls, remaining = parse_tool_calls(text)
+    assert len(calls) == 2
+    assert calls[0].arguments["path"] == "a.txt"
+    assert calls[1].arguments["path"] == "b.txt"
+
+
+def test_qwen_hermes_no_result_terminator():
+    """Qwen sometimes omits ✿RESULT✿ at end of output."""
+    text = "✿FUNCTION✿run_command\n✿ARGS✿{\"command\": \"ls\"}"
+    calls, remaining = parse_tool_calls(text)
+    assert len(calls) == 1
+    assert calls[0].name == "run_command"
+    assert calls[0].arguments["command"] == "ls"
+
+
+def test_qwen_chatml_tool_calls_array():
+    text = '{"tool_calls": [{"function": {"name": "read_file", "arguments": "{\\\"path\\\": \\\"/tmp/test.txt\\\"}"}}]}'
+    calls, remaining = parse_tool_calls(text)
+    assert len(calls) == 1
+    assert calls[0].name == "read_file"
+    assert calls[0].arguments == {"path": "/tmp/test.txt"}
+
+
+def test_qwen_chatml_multiple_tool_calls():
+    text = '{"tool_calls": [{"function": {"name": "read_file", "arguments": "{\\\"path\\\": \\\"a.txt\\\"}"}}, {"function": {"name": "run_command", "arguments": "{\\\"command\\\": \\\"ls\\\"}"}}]}'
+    calls, remaining = parse_tool_calls(text)
+    assert len(calls) == 2
+    assert calls[0].name == "read_file"
+    assert calls[1].name == "run_command"
+
+
+def test_qwen_chatml_dict_arguments():
+    """Arguments as dict instead of JSON string."""
+    text = '{"tool_calls": [{"function": {"name": "search", "arguments": {"query": "hello"}}}]}'
+    calls, remaining = parse_tool_calls(text)
+    assert len(calls) == 1
+    assert calls[0].name == "search"
+    assert calls[0].arguments == {"query": "hello"}
+
+
 def test_tool_call_to_dict():
     tc = ToolCall(name="test", arguments={"a": 1}, raw="raw")
     assert tc.to_dict() == {"name": "test", "arguments": {"a": 1}}
