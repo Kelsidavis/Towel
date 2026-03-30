@@ -16,7 +16,7 @@ TOWEL_HOME = Path(os.environ.get("TOWEL_HOME", Path.home() / ".towel"))
 class ModelConfig(BaseModel):
     """MLX model configuration."""
 
-    name: str = "mlx-community/Llama-3.3-70B-Instruct-4bit"
+    name: str = "Eldadalbajob/Huihui-Qwen3-Next-80B-A3B-Instruct-abliterated-mlx-3Bit"
     max_tokens: int = 4096
     context_window: int = 8192
     temperature: float = 0.7

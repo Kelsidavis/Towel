@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -309,20 +310,30 @@ class AgentRuntime:
                 system += memory_block
         tools = self.skills.tool_definitions()
         if tools:
-            tool_lines = []
+            tool_defs = []
             for t in tools:
-                params = t.get("parameters", {})
-                param_desc = ", ".join(
-                    f'{k}: {v.get("type", "any")}'
-                    for k, v in params.get("properties", {}).items()
-                ) if params else ""
-                tool_lines.append(f"- {t['name']}({param_desc}): {t['description']}")
+                tool_defs.append(json.dumps({
+                    "type": "function",
+                    "function": {
+                        "name": t["name"],
+                        "description": t["description"],
+                        "parameters": t.get("parameters", {}),
+                    },
+                }))
 
             system += (
-                "\n\nYou have access to the following tools. To use a tool, "
-                "emit a JSON block like this:\n"
-                '```json\n{"tool": "tool_name", "arguments": {"arg": "value"}}\n```\n\n'
-                "Available tools:\n" + "\n".join(tool_lines)
+                "\n\n# Tools\n\n"
+                "You may call one or more functions to assist with the user query.\n\n"
+                "You are provided with function signatures within <tools></tools> XML tags:\n"
+                "<tools>\n" + "\n".join(tool_defs) + "\n</tools>\n\n"
+                "For each function call, return a json object with function name and "
+                "arguments within <tool_call></tool_call> XML tags:\n"
+                "<tool_call>\n"
+                '{"name": <function-name>, "arguments": <args-json-object>}\n'
+                "</tool_call>\n\n"
+                "IMPORTANT: Only call functions listed above in <tools>. "
+                "Do NOT invent function names or call tools that are not listed. "
+                "If no tool is needed, respond directly without tool calls."
             )
         return system
 
@@ -357,10 +368,44 @@ class AgentRuntime:
 
         if self._tokenizer and hasattr(self._tokenizer, "apply_chat_template"):
             messages = [{"role": "system", "content": system_content}]
-            messages.extend(fitted_messages)
-            return self._tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
-            )
+            # Convert tool messages to the format the chat template expects.
+            # Qwen3 expects tool role messages with content in the standard
+            # chat template — the tokenizer handles wrapping them.
+            for msg in fitted_messages:
+                if msg["role"] == "tool":
+                    # Strip the [tool_name] prefix and pass as tool role
+                    content = msg["content"]
+                    # Extract tool name from "[tool_name] result" format
+                    if content.startswith("[") and "] " in content:
+                        _name, _, result = content.partition("] ")
+                        tool_name = _name.lstrip("[")
+                        messages.append({
+                            "role": "tool",
+                            "content": result,
+                            "name": tool_name,
+                        })
+                    else:
+                        messages.append(msg)
+                else:
+                    messages.append(msg)
+            try:
+                return self._tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
+                )
+            except Exception:
+                # Fallback if template doesn't support tool role
+                fallback_messages = [{"role": "system", "content": system_content}]
+                for msg in fitted_messages:
+                    if msg["role"] == "tool":
+                        fallback_messages.append({
+                            "role": "user",
+                            "content": f"<tool_response>\n{msg['content']}\n</tool_response>",
+                        })
+                    else:
+                        fallback_messages.append(msg)
+                return self._tokenizer.apply_chat_template(
+                    fallback_messages, tokenize=False, add_generation_prompt=True
+                )
 
         # Fallback: simple concatenation
         parts = [f"System: {system_content}\n"]

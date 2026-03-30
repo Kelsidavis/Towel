@@ -17,6 +17,13 @@ console = Console()
 # Well-known MLX models with metadata for recommendations
 RECOMMENDED_MODELS = [
     {
+        "name": "Eldadalbajob/Huihui-Qwen3-Next-80B-A3B-Instruct-abliterated-mlx-3Bit",
+        "params": "80B (3B active)",
+        "quant": "3-bit",
+        "ram": "~35 GB",
+        "use": "Default, general purpose (MoE)",
+    },
+    {
         "name": "mlx-community/Llama-3.3-70B-Instruct-4bit",
         "params": "70B",
         "quant": "4-bit",
