@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
@@ -55,6 +56,10 @@ class AgentRuntime:
         self._tokenizer: Any = None
         self._loaded = False
         self._cancel: asyncio.Event = asyncio.Event()
+        # Single-thread executor to serialize all MLX Metal operations.
+        # Metal command buffers are not thread-safe — concurrent access
+        # from the default thread pool crashes the GPU driver.
+        self._mlx_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mlx")
 
     def cancel(self) -> None:
         """Signal the current generation to stop."""
@@ -72,7 +77,7 @@ class AgentRuntime:
         # Run in executor to avoid blocking the event loop
         loop = asyncio.get_event_loop()
         self._model, self._tokenizer = await loop.run_in_executor(
-            None, self._load_model_sync
+            self._mlx_executor, self._load_model_sync
         )
         self._loaded = True
 
@@ -154,7 +159,7 @@ class AgentRuntime:
                 loop.call_soon_threadsafe(queue.put_nowait, chunk)
             loop.call_soon_threadsafe(queue.put_nowait, None)
 
-        asyncio.get_event_loop().run_in_executor(None, _stream_sync)
+        asyncio.get_event_loop().run_in_executor(self._mlx_executor, _stream_sync)
 
         while True:
             if cancel_flag.is_set():
