@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-# launch.sh — Start Towel and open the web UI. Don't Panic.
+# launch.command — Start Towel and open the web UI. Don't Panic.
 
 set -euo pipefail
+
+# cd to the script's directory so double-click works from Finder
+cd "$(dirname "$0")"
+
+# Activate the venv so `towel` is available
+source .venv/bin/activate
 
 PORT="${TOWEL_PORT:-18743}"
 HOST="${TOWEL_HOST:-127.0.0.1}"
