@@ -308,7 +308,11 @@ class AgentRuntime:
 
     def _build_system_content(self) -> str:
         """Build the system prompt including project context, memory, and tool definitions."""
-        system = self.config.identity
+        system = self.config.identity + (
+            "\n\nAfter using a tool, always answer the user's original question "
+            "based on the tool result. Do not just acknowledge the tool output — "
+            "use it to provide a direct, helpful answer."
+        )
 
         # Inject project context from .towel.md files
         from towel.agent.project import load_project_context
@@ -323,16 +327,17 @@ class AgentRuntime:
                 system += memory_block
         tools = self.skills.tool_definitions()
         if tools:
-            tool_defs = []
+            # Compact format: name + description only. Full parameter schemas
+            # bloat the prompt (~330 tools) and slow inference significantly.
+            tool_lines = []
             for t in tools:
-                tool_defs.append(json.dumps({
-                    "type": "function",
-                    "function": {
-                        "name": t["name"],
-                        "description": t["description"],
-                        "parameters": t.get("parameters", {}),
-                    },
-                }))
+                params = t.get("parameters", {})
+                props = params.get("properties", {})
+                if props:
+                    param_names = ", ".join(props.keys())
+                    tool_lines.append(f"- {t['name']}({param_names}): {t['description']}")
+                else:
+                    tool_lines.append(f"- {t['name']}(): {t['description']}")
 
             tool_names = [t["name"] for t in tools]
             tool_name_list = ", ".join(tool_names)
@@ -340,8 +345,7 @@ class AgentRuntime:
             system += (
                 "\n\n# Tools\n\n"
                 "You may call one or more functions to assist with the user query.\n\n"
-                "You are provided with function signatures within <tools></tools> XML tags:\n"
-                "<tools>\n" + "\n".join(tool_defs) + "\n</tools>\n\n"
+                "Available tools:\n" + "\n".join(tool_lines) + "\n\n"
                 "For each function call, return a json object with function name and "
                 "arguments within <tool_call></tool_call> XML tags:\n"
                 "<tool_call>\n"
