@@ -80,10 +80,17 @@ class JsonSkill(Skill):
             case _:
                 return f"Unknown tool: {tool_name}"
 
+    @staticmethod
+    def _parse_json_input(data: str | dict | list) -> Any:
+        """Parse JSON input — accept both strings and already-parsed objects."""
+        if isinstance(data, (dict, list, int, float, bool)):
+            return data
+        return json.loads(data)
+
     def _diff(self, a_str: str, b_str: str) -> str:
         try:
-            a = json.loads(a_str)
-            b = json.loads(b_str)
+            a = self._parse_json_input(a_str)
+            b = self._parse_json_input(b_str)
         except json.JSONDecodeError as e:
             return f"Invalid JSON: {e}"
 
@@ -119,9 +126,9 @@ class JsonSkill(Skill):
         elif a != b:
             changes.append(f"  ~ {path}: {json.dumps(a)[:40]} -> {json.dumps(b)[:40]}")
 
-    def _flatten(self, data_str: str, sep: str) -> str:
+    def _flatten(self, data_str: str | dict | list, sep: str) -> str:
         try:
-            obj = json.loads(data_str)
+            obj = self._parse_json_input(data_str)
         except json.JSONDecodeError as e:
             return f"Invalid JSON: {e}"
 
@@ -141,9 +148,9 @@ class JsonSkill(Skill):
         else:
             out[prefix] = obj
 
-    def _schema(self, data_str: str) -> str:
+    def _schema(self, data_str: str | dict | list) -> str:
         try:
-            obj = json.loads(data_str)
+            obj = self._parse_json_input(data_str)
         except json.JSONDecodeError as e:
             return f"Invalid JSON: {e}"
 
@@ -174,9 +181,9 @@ class JsonSkill(Skill):
             }
         return {}
 
-    def _validate(self, data_str: str) -> str:
+    def _validate(self, data_str: str | dict | list) -> str:
         try:
-            obj = json.loads(data_str)
+            obj = self._parse_json_input(data_str)
             kind = type(obj).__name__
             if isinstance(obj, dict):
                 return f"Valid JSON object with {len(obj)} key(s)."
