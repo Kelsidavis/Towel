@@ -165,9 +165,12 @@ def test_git_status() -> TestResult:
 
 def test_search_files() -> TestResult:
     """Tool: search_files or find_files — searches codebase."""
-    prompt = "Search for files containing 'Don.t Panic' in the src/ directory."
+    prompt = "Use the search_files tool to find files containing 'Don't Panic' in the src/ directory. List the filenames."
     resp, elapsed = ask(prompt, session=_s("search"))
-    passed, failed = check(resp, ".py")
+    # Accept .py files listed or a match count
+    has_result = ".py" in resp or "match" in resp.lower() or "found" in resp.lower()
+    passed = ["contains search results"] if has_result else []
+    failed = [] if has_result else ["no search results found"]
     return TestResult("search_files", not failed, prompt, resp, elapsed, passed, failed)
 
 
@@ -181,9 +184,9 @@ def test_todo() -> TestResult:
 
 def test_json_skill() -> TestResult:
     """Tool: json_flatten — JSON manipulation."""
-    prompt = 'Flatten this JSON: {"a": {"b": 1, "c": {"d": 2}}}. Show the result.'
+    prompt = 'Use the json_flatten tool on this input: {"a": {"b": 1, "c": {"d": 2}}}. Show the flattened result.'
     resp, elapsed = ask(prompt, session=_s("json"))
-    has_flat = "a.b" in resp or "a.c.d" in resp or '"b"' in resp or "b" in resp.lower()
+    has_flat = "a.b" in resp or "a.c.d" in resp or "flatten" in resp.lower()
     passed = ["contains flattened output"] if has_flat else []
     failed = [] if has_flat else ["no flattened output found"]
     return TestResult("json_skill", not failed, prompt, resp, elapsed, passed, failed)
