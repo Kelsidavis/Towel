@@ -183,13 +183,14 @@ def test_todo() -> TestResult:
 
 
 def test_json_skill() -> TestResult:
-    """Tool: json_validate — JSON validation."""
-    prompt = 'Use the json_validate tool to check if this is valid JSON: {"name": "Towel", "version": 42}'
-    resp, elapsed = ask(prompt, session=_s("json"))
-    has_result = "valid" in resp.lower() or "object" in resp.lower() or "json" in resp.lower()
-    passed = ["contains validation result"] if has_result else []
-    failed = [] if has_result else ["no validation result found"]
-    return TestResult("json_skill", not failed, prompt, resp, elapsed, passed, failed)
+    """Tool: generate_uuid — UUID generation."""
+    prompt = "Generate a UUID for me using the generate_uuid tool."
+    resp, elapsed = ask(prompt, session=_s("uuid"))
+    import re
+    has_uuid = bool(re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", resp.lower()))
+    passed = ["contains UUID"] if has_uuid else []
+    failed = [] if has_uuid else ["no UUID found in response"]
+    return TestResult("generate_uuid", not failed, prompt, resp, elapsed, passed, failed)
 
 
 def test_hash_text() -> TestResult:
