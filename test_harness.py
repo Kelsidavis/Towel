@@ -183,12 +183,12 @@ def test_todo() -> TestResult:
 
 
 def test_json_skill() -> TestResult:
-    """Tool: json_flatten — JSON manipulation."""
-    prompt = 'Use the json_flatten tool on this input: {"a": {"b": 1, "c": {"d": 2}}}. Show the flattened result.'
+    """Tool: json_validate — JSON validation."""
+    prompt = 'Use the json_validate tool to check if this is valid JSON: {"name": "Towel", "version": 42}'
     resp, elapsed = ask(prompt, session=_s("json"))
-    has_flat = "a.b" in resp or "a.c.d" in resp or "flatten" in resp.lower()
-    passed = ["contains flattened output"] if has_flat else []
-    failed = [] if has_flat else ["no flattened output found"]
+    has_result = "valid" in resp.lower() or "object" in resp.lower() or "json" in resp.lower()
+    passed = ["contains validation result"] if has_result else []
+    failed = [] if has_result else ["no validation result found"]
     return TestResult("json_skill", not failed, prompt, resp, elapsed, passed, failed)
 
 
