@@ -137,6 +137,7 @@ class WorkerRegistry:
         req = requirements or {}
         caps = worker.capabilities
 
+        # Hard filter: exact backend match required (homogeneous fleet)
         required_backend = req.get("backend")
         if required_backend:
             if caps.get("backend") == required_backend:
@@ -144,6 +145,7 @@ class WorkerRegistry:
             else:
                 score -= 100
 
+        # Hard filter: exact mode match required (homogeneous fleet)
         required_mode = req.get("mode")
         if required_mode:
             supported_modes = caps.get("modes") or []
@@ -151,6 +153,18 @@ class WorkerRegistry:
                 score += 30
             else:
                 score -= 100
+
+        # Soft hint: preferred backend/mode (heterogeneous fleet, no penalty for mismatch)
+        preferred_backend = req.get("preferred_backend")
+        if preferred_backend:
+            if caps.get("backend") == preferred_backend:
+                score += 40
+
+        preferred_mode = req.get("preferred_mode")
+        if preferred_mode:
+            supported_modes = caps.get("modes") or []
+            if preferred_mode in supported_modes:
+                score += 30
 
         required_model = req.get("model")
         if required_model:
