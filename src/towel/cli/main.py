@@ -83,11 +83,28 @@ def cli() -> None:
     pass
 
 
+def _build_runtime(config: TowelConfig, skills: Any, memory: Any, backend: str | None, claude_model: str | None):
+    """Build the appropriate runtime based on --backend flag."""
+    if backend == "claude":
+        from towel.agent.claude_runtime import ClaudeCodeRuntime
+
+        return ClaudeCodeRuntime(
+            config, skills=skills, memory=memory,
+            model=claude_model or "sonnet",
+        )
+    else:
+        from towel.agent.runtime import AgentRuntime
+
+        return AgentRuntime(config, skills=skills, memory=memory)
+
+
 @cli.command()
 @click.option("--agent", "-a", default=None, help="Agent profile to use (e.g., coder, researcher, writer)")
 @click.option("--turboquant/--no-turboquant", default=None, help="Enable TurboQuant KV cache compression")
 @click.option("--tq-bits", default=None, type=int, help="TurboQuant quantization bits (3 or 4)")
-def serve(agent: str | None, turboquant: bool | None, tq_bits: int | None) -> None:
+@click.option("--backend", "-b", default=None, type=click.Choice(["mlx", "claude"]), help="Runtime backend (mlx=local model, claude=Claude Code CLI)")
+@click.option("--claude-model", default=None, help="Claude model when using --backend claude (e.g., sonnet, opus, haiku)")
+def serve(agent: str | None, turboquant: bool | None, tq_bits: int | None, backend: str | None, claude_model: str | None) -> None:
     """Start the Towel gateway and agent runtime."""
     console.print(Panel(Text(BANNER, style="bold green"), border_style="green"))
 
@@ -97,32 +114,34 @@ def serve(agent: str | None, turboquant: bool | None, tq_bits: int | None) -> No
     config.identity = identity
     _apply_turboquant_overrides(config, turboquant, tq_bits)
 
-    console.print(f"[dim]Model:[/dim] {config.model.name}")
+    if backend == "claude":
+        console.print(f"[dim]Backend:[/dim] Claude Code CLI ({claude_model or 'sonnet'})")
+    else:
+        console.print(f"[dim]Model:[/dim] {config.model.name}")
+        if config.model.turboquant:
+            console.print(f"[dim]KV cache:[/dim] TurboQuant {config.model.turboquant_bits}-bit (QJL ratio {config.model.turboquant_qjl_ratio})")
     if agent:
         console.print(f"[dim]Agent:[/dim] {agent}")
-    if config.model.turboquant:
-        console.print(f"[dim]KV cache:[/dim] TurboQuant {config.model.turboquant_bits}-bit (QJL ratio {config.model.turboquant_qjl_ratio})")
     console.print(f"[dim]Gateway:[/dim] ws://{config.gateway.host}:{config.gateway.port}")
     console.print(f"[dim]Web UI:[/dim] http://{config.gateway.host}:{config.gateway.port + 1}/")
     console.print(f"[dim]API:[/dim] http://{config.gateway.host}:{config.gateway.port + 1}/v1/chat/completions")
     console.print()
 
-    from towel.agent.runtime import AgentRuntime
     from towel.gateway.server import GatewayServer
     from towel.memory.store import MemoryStore
 
     memory = MemoryStore()
     skills = _build_skill_registry(config, memory_store=memory)
-    agent_rt = AgentRuntime(config, skills=skills, memory=memory)
+    agent_rt = _build_runtime(config, skills, memory, backend, claude_model)
     gateway = GatewayServer(config=config, agent=agent_rt)
 
-    console.print("[green]Loading model...[/green]")
+    console.print("[green]Connecting...[/green]")
     asyncio.run(_start(agent_rt, gateway))
 
 
-async def _start(agent: AgentRuntime, gateway: GatewayServer) -> None:
+async def _start(agent: Any, gateway: Any) -> None:
     await agent.load_model()
-    console.print("[green]Model loaded. Gateway starting...[/green]")
+    console.print("[green]Ready. Gateway starting...[/green]")
     await gateway.start()
 
 
@@ -131,7 +150,9 @@ async def _start(agent: AgentRuntime, gateway: GatewayServer) -> None:
 @click.option("--agent", "-a", default=None, help="Agent profile (e.g., coder, researcher, writer)")
 @click.option("--turboquant/--no-turboquant", default=None, help="Enable TurboQuant KV cache compression")
 @click.option("--tq-bits", default=None, type=int, help="TurboQuant quantization bits (3 or 4)")
-def chat(session: str, agent: str | None, turboquant: bool | None, tq_bits: int | None) -> None:
+@click.option("--backend", "-b", default=None, type=click.Choice(["mlx", "claude"]), help="Runtime backend (mlx=local model, claude=Claude Code CLI)")
+@click.option("--claude-model", default=None, help="Claude model when using --backend claude (e.g., sonnet, opus, haiku)")
+def chat(session: str, agent: str | None, turboquant: bool | None, tq_bits: int | None, backend: str | None, claude_model: str | None) -> None:
     """Interactive chat with Towel."""
     console.print(Panel(
         "[bold green]Towel[/bold green] — Don't Panic.\n"
@@ -145,19 +166,20 @@ def chat(session: str, agent: str | None, turboquant: bool | None, tq_bits: int 
     config.identity = identity
     _apply_turboquant_overrides(config, turboquant, tq_bits)
 
+    if backend == "claude":
+        console.print(f"[dim]Backend: Claude Code CLI ({claude_model or 'sonnet'})[/dim]")
     if agent:
         console.print(f"[dim]Agent: {agent}[/dim]")
 
     from towel.agent.conversation import Conversation, Role
     from towel.agent.events import EventType
-    from towel.agent.runtime import AgentRuntime
     from towel.cli.slash import SlashContext, handle_slash
     from towel.memory.store import MemoryStore
     from towel.persistence.store import ConversationStore
 
     memory = MemoryStore()
     skills = _build_skill_registry(config, memory_store=memory)
-    agent_rt = AgentRuntime(config, skills=skills, memory=memory)
+    agent_rt = _build_runtime(config, skills, memory, backend, claude_model)
     store = ConversationStore()
 
     # Resume existing conversation or start fresh
@@ -174,7 +196,7 @@ def chat(session: str, agent: str | None, turboquant: bool | None, tq_bits: int 
     slash_ctx.current_agent_name = agent
 
     async def _chat_loop() -> None:
-        console.print("[dim]Loading model...[/dim]")
+        console.print("[dim]Connecting...[/dim]")
         await agent_rt.load_model()
         console.print("[green]Ready.[/green]\n")
 
