@@ -219,12 +219,13 @@ class GatewayServer:
                     worker = self._select_worker(session_id)
                     pinned_to_worker = session_id in self._session_pins
                     if worker and not pinned_to_worker:
-                        # Smart routing: classify task complexity and decide whether
-                        # the large worker or the fast local coordinator is better.
+                        # Smart routing: fast model classifies chit-chat vs instruction.
+                        # Instructions → coordinator (fast coder model).
+                        # Chit-chat → worker (large general model).
                         last_msg = session.conversation.messages[-1].content if session.conversation.messages else ""
-                        route_to_worker = self._should_route_to_worker(last_msg, worker, session_id)
+                        route_to_worker = await self._classify_and_route(last_msg, worker, session_id)
                         if not route_to_worker:
-                            worker = None  # coordinator handles this request
+                            worker = None  # coordinator handles this instruction
                     if stream:
                         # Run streaming in a task so cancel messages can be received
                         if worker:
@@ -344,74 +345,68 @@ class GatewayServer:
             self._session_workers[session_id] = worker.id
         return worker
 
-    def _should_route_to_worker(
+    async def _classify_and_route(
         self, message: str, worker: WorkerInfo, session_id: str
     ) -> bool:
-        """Decide if the worker or the coordinator should handle this request.
+        """Classify the message using the fast local model, then decide routing.
 
-        Routes to the large worker for accuracy-heavy tasks; keeps fast/simple
-        requests on the coordinator's local model to reduce latency.
+        The coordinator (fast coder model) handles instructions/tasks.
+        The worker (large general model) handles chit-chat and casual conversation.
 
-        Returns True → send to worker, False → handle locally on coordinator.
+        Returns True → send to worker (chit-chat), False → coordinator (instruction).
         """
-        # Always use worker if it already holds session context (locality)
+        # Hard overrides — no classification needed
         node = self._node_tracker.get(worker.id)
         if node is not None and node.get_context_slot(session_id) is not None:
-            return True
+            return True  # worker already has session context, keep it there
 
-        # If coordinator is already busy, spill over to worker
         if self._active_tasks:
+            return True  # coordinator busy, spill to worker
+
+        # For very short messages that are obviously greetings, skip the LLM call
+        stripped = message.strip().lower()
+        if len(stripped) < 20 and any(
+            stripped.startswith(g) for g in ("hi", "hello", "hey", "thanks", "ok", "lol", "haha", "cool", "nice")
+        ):
+            log.debug("Routing: trivial greeting → worker (chit-chat)")
             return True
 
-        text = message.lower()
-        worker_score = 0
+        # Use the fast local model to classify in a single short generation
+        classification = await self._fast_classify(message)
+        is_chit_chat = classification == "chat"
 
-        # Accuracy-heavy signals → prefer large worker
-        HARD_KEYWORDS = (
-            "write", "implement", "code", "debug", "fix", "refactor",
-            "explain", "analyze", "compare", "design", "architect",
-            "proof", "derive", "calculate", "solve", "optimize",
-            "translate", "summarize", "research", "essay", "report",
-            "step by step", "how does", "why does", "difference between",
+        log.debug("Routing: classification=%r message=%r → %s", classification, message[:60], "worker" if is_chit_chat else "coordinator")
+        return is_chit_chat  # True = worker, False = coordinator
+
+    async def _fast_classify(self, message: str) -> str:
+        """Run a fast single-token classification using the coordinator's model.
+
+        Returns 'task' or 'chat'.
+        Falls back to 'task' on any error (coordinator handles it).
+        """
+        classify_prompt = (
+            "Classify the following user message as either 'task' (an instruction, question, "
+            "coding request, analysis, creative writing, or anything requiring a substantive "
+            "response) or 'chat' (casual conversation, greetings, acknowledgements, small talk).\n\n"
+            f"Message: {message[:400]}\n\n"
+            "Reply with exactly one word — either 'task' or 'chat':"
         )
-        CREATIVE_KEYWORDS = (
-            "story", "poem", "write a", "creative", "fiction", "script",
-            "screenplay", "lyrics", "novel", "character",
-        )
-        FAST_KEYWORDS = (
-            "what is", "who is", "when", "where", "define",
-            "hello", "hi", "thanks", "yes", "no", "ok",
-            "list", "name", "tell me",
-        )
-
-        for kw in HARD_KEYWORDS:
-            if kw in text:
-                worker_score += 2
-        for kw in CREATIVE_KEYWORDS:
-            if kw in text:
-                worker_score += 2
-        for kw in FAST_KEYWORDS:
-            if kw in text:
-                worker_score -= 1
-
-        # Long messages suggest complex task → worker
-        if len(message) > 300:
-            worker_score += 3
-        elif len(message) < 60:
-            worker_score -= 1
-
-        # Worker's larger context window is an advantage for long conversations
-        worker_ctx = worker.capabilities.get("context_window", 0)
-        coord_ctx = getattr(self.config.model, "context_window", 0)
-        if worker_ctx > coord_ctx:
-            worker_score += 1
-
-        log.debug(
-            "Task routing: score=%d → %s",
-            worker_score,
-            "worker" if worker_score > 0 else "coordinator",
-        )
-        return worker_score > 0
+        try:
+            from towel.agent.conversation import Conversation, Message, Role
+            conv = Conversation(messages=[Message(role=Role.USER, content=classify_prompt)])
+            request = self.agent.build_inference_request(conv)
+            request["max_tokens"] = 4  # only need one word
+            result = await asyncio.wait_for(
+                self.agent.generate_from_request(request),
+                timeout=3.0,
+            )
+            text = (result.text if hasattr(result, "text") else str(result)).strip().lower()
+            if "chat" in text:
+                return "chat"
+            return "task"
+        except Exception as exc:
+            log.debug("Classification failed (%s), defaulting to task → coordinator", exc)
+            return "task"
 
     def pin_session_worker(self, session_id: str, worker_id: str) -> bool:
         """Pin a session to a specific worker if that worker exists."""
