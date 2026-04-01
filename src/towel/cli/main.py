@@ -91,7 +91,12 @@ def cli() -> None:
 
 
 def _build_runtime(
-    config: TowelConfig, skills: Any, memory: Any, backend: str | None, claude_model: str | None
+    config: TowelConfig,
+    skills: Any,
+    memory: Any,
+    backend: str | None,
+    claude_model: str | None,
+    ollama_url: str | None = None,
 ):
     """Build the appropriate runtime based on --backend flag."""
     if backend == "claude":
@@ -102,6 +107,15 @@ def _build_runtime(
             skills=skills,
             memory=memory,
             model=claude_model or "sonnet",
+        )
+    elif backend == "ollama":
+        from towel.agent.ollama_runtime import OllamaRuntime
+
+        return OllamaRuntime(
+            config,
+            skills=skills,
+            memory=memory,
+            ollama_url=ollama_url or "http://localhost:11434",
         )
     else:
         from towel.agent.runtime import AgentRuntime
@@ -121,13 +135,18 @@ def _build_runtime(
     "--backend",
     "-b",
     default=None,
-    type=click.Choice(["mlx", "claude"]),
-    help="Runtime backend (mlx=local model, claude=Claude Code CLI)",
+    type=click.Choice(["mlx", "claude", "ollama"]),
+    help="Runtime backend (mlx=local model, claude=Claude Code CLI, ollama=Ollama daemon)",
 )
 @click.option(
     "--claude-model",
     default=None,
     help="Claude model when using --backend claude (e.g., sonnet, opus, haiku)",
+)
+@click.option(
+    "--ollama-url",
+    default=None,
+    help="Ollama server URL when using --backend ollama (default: http://localhost:11434)",
 )
 def serve(
     agent: str | None,
@@ -135,6 +154,7 @@ def serve(
     tq_bits: int | None,
     backend: str | None,
     claude_model: str | None,
+    ollama_url: str | None,
 ) -> None:
     """Start the Towel gateway and agent runtime."""
     console.print(Panel(Text(BANNER, style="bold green"), border_style="green"))
@@ -147,6 +167,9 @@ def serve(
 
     if backend == "claude":
         console.print(f"[dim]Backend:[/dim] Claude Code CLI ({claude_model or 'sonnet'})")
+    elif backend == "ollama":
+        console.print(f"[dim]Backend:[/dim] Ollama ({ollama_url or 'http://localhost:11434'})")
+        console.print(f"[dim]Model:[/dim] {config.model.name}")
     else:
         console.print(f"[dim]Model:[/dim] {config.model.name}")
         if config.model.turboquant:
@@ -171,7 +194,7 @@ def serve(
 
     memory = MemoryStore()
     skills = _build_skill_registry(config, memory_store=memory)
-    agent_rt = _build_runtime(config, skills, memory, backend, claude_model)
+    agent_rt = _build_runtime(config, skills, memory, backend, claude_model, ollama_url)
     gateway = GatewayServer(config=config, agent=agent_rt)
 
     console.print("[green]Connecting...[/green]")
@@ -198,13 +221,18 @@ async def _start(agent: Any, gateway: Any) -> None:
     "--backend",
     "-b",
     default=None,
-    type=click.Choice(["mlx", "claude"]),
-    help="Runtime backend (mlx=local model, claude=Claude Code CLI)",
+    type=click.Choice(["mlx", "claude", "ollama"]),
+    help="Runtime backend (mlx=local model, claude=Claude Code CLI, ollama=Ollama daemon)",
 )
 @click.option(
     "--claude-model",
     default=None,
     help="Claude model when using --backend claude (e.g., sonnet, opus, haiku)",
+)
+@click.option(
+    "--ollama-url",
+    default=None,
+    help="Ollama server URL when using --backend ollama (default: http://localhost:11434)",
 )
 @click.option(
     "--allow-tools/--no-allow-tools",
@@ -219,6 +247,7 @@ def worker(
     tq_bits: int | None,
     backend: str | None,
     claude_model: str | None,
+    ollama_url: str | None,
     allow_tools: bool,
 ) -> None:
     """Start a remote worker that executes jobs for a controller."""
@@ -232,6 +261,9 @@ def worker(
 
     if backend == "claude":
         console.print(f"[dim]Backend:[/dim] Claude Code CLI ({claude_model or 'sonnet'})")
+    elif backend == "ollama":
+        console.print(f"[dim]Backend:[/dim] Ollama ({ollama_url or 'http://localhost:11434'})")
+        console.print(f"[dim]Model:[/dim] {config.model.name}")
     else:
         console.print(f"[dim]Model:[/dim] {config.model.name}")
     console.print(f"[dim]Controller:[/dim] {master}")
@@ -244,7 +276,7 @@ def worker(
 
     memory = MemoryStore()
     skills = _build_skill_registry(config, memory_store=memory) if allow_tools else SkillRegistry()
-    agent_rt = _build_runtime(config, skills, memory, backend, claude_model)
+    agent_rt = _build_runtime(config, skills, memory, backend, claude_model, ollama_url)
     effective_backend = backend or "mlx"
     capabilities = default_worker_capabilities(config, effective_backend, allow_tools)
     client = RemoteWorkerClient(
@@ -274,13 +306,18 @@ async def _start_worker(agent: Any, client: Any) -> None:
     "--backend",
     "-b",
     default=None,
-    type=click.Choice(["mlx", "claude"]),
-    help="Runtime backend (mlx=local model, claude=Claude Code CLI)",
+    type=click.Choice(["mlx", "claude", "ollama"]),
+    help="Runtime backend (mlx=local model, claude=Claude Code CLI, ollama=Ollama daemon)",
 )
 @click.option(
     "--claude-model",
     default=None,
     help="Claude model when using --backend claude (e.g., sonnet, opus, haiku)",
+)
+@click.option(
+    "--ollama-url",
+    default=None,
+    help="Ollama server URL when using --backend ollama (default: http://localhost:11434)",
 )
 def chat(
     session: str,
@@ -289,6 +326,7 @@ def chat(
     tq_bits: int | None,
     backend: str | None,
     claude_model: str | None,
+    ollama_url: str | None,
 ) -> None:
     """Interactive chat with Towel."""
     console.print(
@@ -307,6 +345,8 @@ def chat(
 
     if backend == "claude":
         console.print(f"[dim]Backend: Claude Code CLI ({claude_model or 'sonnet'})[/dim]")
+    elif backend == "ollama":
+        console.print(f"[dim]Backend: Ollama ({ollama_url or 'http://localhost:11434'})[/dim]")
     if agent:
         console.print(f"[dim]Agent: {agent}[/dim]")
 
@@ -318,7 +358,7 @@ def chat(
 
     memory = MemoryStore()
     skills = _build_skill_registry(config, memory_store=memory)
-    agent_rt = _build_runtime(config, skills, memory, backend, claude_model)
+    agent_rt = _build_runtime(config, skills, memory, backend, claude_model, ollama_url)
     store = ConversationStore()
 
     # Resume existing conversation or start fresh

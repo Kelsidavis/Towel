@@ -235,7 +235,12 @@ class RemoteWorkerClient:
 
 def default_worker_capabilities(config: Any, backend: str, allow_tools: bool) -> dict[str, Any]:
     """Describe this worker's runtime so the controller can schedule it."""
-    mode = "anthropic_messages" if backend == "claude" else "mlx_prompt"
+    if backend == "claude":
+        mode = "anthropic_messages"
+    elif backend == "ollama":
+        mode = "ollama_chat"
+    else:
+        mode = "mlx_prompt"
     return {
         "hostname": socket.gethostname(),
         "backend": backend,

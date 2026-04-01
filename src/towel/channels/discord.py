@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import platform
 from typing import Any
 
 from towel.channels.base import Channel
@@ -75,7 +76,7 @@ class DiscordChannel(Channel):
                             # GUILDS + GUILD_MESSAGES + DIRECT_MESSAGES + MESSAGE_CONTENT
                             "intents": 33281,
                             "properties": {
-                                "os": "macos",
+                                "os": platform.system().lower(),
                                 "browser": "towel",
                                 "device": "towel",
                             },

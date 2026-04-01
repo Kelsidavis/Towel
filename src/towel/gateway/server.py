@@ -386,8 +386,16 @@ class GatewayServer:
 
     def _desired_worker_capabilities(self) -> dict[str, Any]:
         """Describe the worker shape that best matches this controller runtime."""
-        backend = "claude" if self.agent.__class__.__name__ == "ClaudeCodeRuntime" else "mlx"
-        mode = "anthropic_messages" if backend == "claude" else "mlx_prompt"
+        cls = self.agent.__class__.__name__
+        if cls == "ClaudeCodeRuntime":
+            backend = "claude"
+            mode = "anthropic_messages"
+        elif cls == "OllamaRuntime":
+            backend = "ollama"
+            mode = "ollama_chat"
+        else:
+            backend = "mlx"
+            mode = "mlx_prompt"
         return {
             "backend": backend,
             "model": getattr(self.config.model, "name", ""),
