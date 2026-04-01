@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator
+from typing import Any
 
-from towel.config import TowelConfig
-from towel.agent.context import fit_messages, ContextBudget
+from towel.agent.context import fit_messages
 from towel.agent.conversation import Conversation, Message, Role
 from towel.agent.events import AgentEvent
 from towel.agent.tool_parser import parse_tool_calls
+from towel.config import TowelConfig
 from towel.skills.registry import SkillRegistry
 
 log = logging.getLogger("towel.agent")
@@ -99,6 +99,18 @@ class AgentRuntime:
         )
         return result
 
+    def _make_turboquant_cache(self) -> list | None:
+        """Build a TurboQuant prompt cache if enabled, else None."""
+        if not self.config.model.turboquant:
+            return None
+        from towel.agent.turboquant import make_turboquant_cache
+
+        return make_turboquant_cache(
+            self._model,
+            kv_bits=self.config.model.turboquant_bits,
+            qjl_ratio=self.config.model.turboquant_qjl_ratio,
+        )
+
     def _generate_sync(self, conversation: Conversation) -> GenerationResult:
         """Synchronous generation via mlx_lm."""
         from mlx_lm import generate
@@ -109,6 +121,11 @@ class AgentRuntime:
             temp=self.config.model.temperature,
             top_p=self.config.model.top_p,
         )
+        extra_kwargs: dict[str, Any] = {}
+        tq_cache = self._make_turboquant_cache()
+        if tq_cache is not None:
+            extra_kwargs["prompt_cache"] = tq_cache
+
         start = time.perf_counter()
         response = generate(
             self._model,
@@ -116,6 +133,7 @@ class AgentRuntime:
             prompt=prompt,
             max_tokens=self.config.model.max_tokens,
             sampler=sampler,
+            **extra_kwargs,
         )
         elapsed = time.perf_counter() - start
 
@@ -147,16 +165,22 @@ class AgentRuntime:
                 temp=self.config.model.temperature,
                 top_p=self.config.model.top_p,
             )
+            extra_kwargs: dict[str, Any] = {}
+            tq_cache = self._make_turboquant_cache()
+            if tq_cache is not None:
+                extra_kwargs["prompt_cache"] = tq_cache
+
             for chunk in stream_generate(
                 self._model,
                 self._tokenizer,
                 prompt=prompt,
                 max_tokens=self.config.model.max_tokens,
                 sampler=sampler,
+                **extra_kwargs,
             ):
                 if cancel_flag.is_set():
                     break
-                loop.call_soon_threadsafe(queue.put_nowait, chunk)
+                loop.call_soon_threadsafe(queue.put_nowait, chunk.text)
             loop.call_soon_threadsafe(queue.put_nowait, None)
 
         asyncio.get_event_loop().run_in_executor(self._mlx_executor, _stream_sync)
