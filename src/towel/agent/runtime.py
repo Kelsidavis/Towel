@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
@@ -20,6 +21,47 @@ from towel.skills.registry import SkillRegistry
 log = logging.getLogger("towel.agent")
 
 MAX_TOOL_ITERATIONS = 10
+
+
+def mlx_tokenizer_config() -> dict[str, Any]:
+    """Return tokenizer config overrides for MLX loads.
+
+    `fix_mistral_regex=True` suppresses the known incorrect-regex warning for
+    affected converted tokenizers and applies the corrected tokenizer behavior.
+    Transformers ignores this for unaffected tokenizers.
+    """
+    return {"fix_mistral_regex": True}
+
+
+_TOOL_ERROR_PATTERNS = (
+    re.compile(r"^Error executing\b", re.IGNORECASE),
+    re.compile(r"^Unknown tool:\b", re.IGNORECASE),
+    re.compile(r"^File not found:\b", re.IGNORECASE),
+    re.compile(r"^Not a directory:\b", re.IGNORECASE),
+    re.compile(r"^Invalid index:\b", re.IGNORECASE),
+    re.compile(r"^File too large\b", re.IGNORECASE),
+)
+
+
+def tool_result_is_error(result: str) -> bool:
+    """Heuristic for whether a tool result represents failure."""
+    return any(pattern.search(result) for pattern in _TOOL_ERROR_PATTERNS)
+
+
+def format_tool_feedback(tool_name: str, result: str, is_error: bool) -> str:
+    """Format tool feedback so the next model step can recover reliably."""
+    status = "error" if is_error else "ok"
+    next_step = (
+        "Retry with one corrected valid tool call, or answer directly with the limitation."
+        if is_error
+        else "Use this result to answer the user concretely. Do not stop at saying you will check."
+    )
+    return (
+        f"[{tool_name}]\n"
+        f"status: {status}\n"
+        f"result:\n{result}\n\n"
+        f"next:\n{next_step}"
+    )
 
 
 @dataclass
@@ -85,7 +127,10 @@ class AgentRuntime:
         """Synchronous model loading via mlx_lm."""
         from mlx_lm import load
 
-        model, tokenizer = load(self.config.model.name)
+        model, tokenizer = load(
+            self.config.model.name,
+            tokenizer_config=mlx_tokenizer_config(),
+        )
         return model, tokenizer
 
     async def generate(self, conversation: Conversation) -> GenerationResult:
@@ -230,14 +275,17 @@ class AgentRuntime:
                     result_str = (
                         str(tool_result) if not isinstance(tool_result, str) else tool_result
                     )
+                    is_error = tool_result_is_error(result_str)
                 except Exception as e:
                     result_str = f"Error executing {tc.name}: {e}"
+                    is_error = True
                     log.error(result_str)
 
                 conversation.add(
                     Role.TOOL,
-                    f"[{tc.name}] {result_str}",
+                    format_tool_feedback(tc.name, result_str, is_error),
                     tool_name=tc.name,
+                    status="error" if is_error else "ok",
                 )
 
         # Hit max iterations — return what we have
@@ -318,12 +366,19 @@ class AgentRuntime:
                     result_str = (
                         str(tool_result) if not isinstance(tool_result, str) else tool_result
                     )
+                    is_error = tool_result_is_error(result_str)
                 except Exception as e:
                     result_str = f"Error executing {tc.name}: {e}"
+                    is_error = True
                     log.error(result_str)
 
                 yield AgentEvent.tool_result(tc.name, result_str)
-                conversation.add(Role.TOOL, f"[{tc.name}] {result_str}", tool_name=tc.name)
+                conversation.add(
+                    Role.TOOL,
+                    format_tool_feedback(tc.name, result_str, is_error),
+                    tool_name=tc.name,
+                    status="error" if is_error else "ok",
+                )
 
         # Hit max iterations
         log.warning(f"Hit max tool iterations ({MAX_TOOL_ITERATIONS})")
@@ -337,7 +392,8 @@ class AgentRuntime:
         system = self.config.identity + (
             "\n\nAfter using a tool, always answer the user's original question "
             "based on the tool result. Do not just acknowledge the tool output — "
-            "use it to provide a direct, helpful answer."
+            "use it to provide a direct, helpful answer. If you changed something "
+            "or verified something, explicitly report that back to the user."
         )
 
         # Inject project context from .towel.md files
@@ -383,6 +439,10 @@ class AgentRuntime:
                 "- Only call functions from the list above. Do NOT invent or guess "
                 "function names. If a tool you want is not listed, it does not exist.\n"
                 "- Always use the exact <tool_call> format shown above.\n"
+                "- When using a tool, prefer emitting just the tool call instead of "
+                "narrating that you are about to check something.\n"
+                "- After tool results arrive, either give the concrete answer or make "
+                "one corrected retry. Do not repeat vague status updates.\n"
                 "- If no tool is needed, respond directly without tool calls."
             )
         return system
@@ -423,14 +483,14 @@ class AgentRuntime:
                 if msg["role"] == "tool":
                     # Strip the [tool_name] prefix and pass as tool role
                     content = msg["content"]
-                    # Extract tool name from "[tool_name] result" format
-                    if content.startswith("[") and "] " in content:
-                        _name, _, result = content.partition("] ")
+                    # Extract tool name from "[tool_name] ..." format
+                    if content.startswith("[") and "]" in content:
+                        _name, _, result = content.partition("]")
                         tool_name = _name.lstrip("[")
                         messages.append(
                             {
                                 "role": "tool",
-                                "content": result,
+                                "content": result.lstrip(),
                                 "name": tool_name,
                             }
                         )

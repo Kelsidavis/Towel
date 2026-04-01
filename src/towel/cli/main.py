@@ -1831,7 +1831,10 @@ def bench(prompt: str, tokens: int, rounds: int) -> None:
         from mlx_lm import generate, load
         from mlx_lm.sample_utils import make_sampler
 
-        model, tokenizer = load(model_name)
+        model, tokenizer = load(
+            model_name,
+            tokenizer_config={"fix_mistral_regex": True},
+        )
     except Exception as e:
         console.print(f"[red]Failed to load model:[/red] {e}")
         sys.exit(1)

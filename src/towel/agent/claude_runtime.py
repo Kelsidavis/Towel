@@ -18,6 +18,7 @@ from typing import Any
 from towel.agent.conversation import Conversation, Message, Role
 from towel.agent.events import AgentEvent
 from towel.agent.tool_parser import parse_tool_calls
+from towel.agent.runtime import format_tool_feedback, tool_result_is_error
 from towel.config import TowelConfig
 from towel.skills.registry import SkillRegistry
 
@@ -169,7 +170,8 @@ class ClaudeCodeRuntime:
         system += self.config.identity + (
             "\n\nAfter using a tool, always answer the user's original question "
             "based on the tool result. Do not just acknowledge the tool output — "
-            "use it to provide a direct, helpful answer."
+            "use it to provide a direct, helpful answer. If you changed something "
+            "or verified something, explicitly report that back to the user."
         )
 
         # Inject project context
@@ -215,6 +217,10 @@ class ClaudeCodeRuntime:
                 "- Only call functions from the list above. Do NOT invent or guess "
                 "function names. If a tool you want is not listed, it does not exist.\n"
                 "- Always use the exact <tool_call> format shown above.\n"
+                "- When using a tool, prefer emitting just the tool call instead of "
+                "narrating that you are about to check something.\n"
+                "- After tool results arrive, either give the concrete answer or make "
+                "one corrected retry. Do not repeat vague status updates.\n"
                 "- If no tool is needed, respond directly without tool calls."
             )
         return system
@@ -296,11 +302,18 @@ class ClaudeCodeRuntime:
                     result_str = (
                         str(tool_result) if not isinstance(tool_result, str) else tool_result
                     )
+                    is_error = tool_result_is_error(result_str)
                 except Exception as e:
                     result_str = f"Error executing {tc.name}: {e}"
+                    is_error = True
                     log.error(result_str)
 
-                conversation.add(Role.TOOL, f"[{tc.name}] {result_str}", tool_name=tc.name)
+                conversation.add(
+                    Role.TOOL,
+                    format_tool_feedback(tc.name, result_str, is_error),
+                    tool_name=tc.name,
+                    status="error" if is_error else "ok",
+                )
 
         log.warning(f"Hit max tool iterations ({MAX_TOOL_ITERATIONS})")
         return Message(
@@ -360,12 +373,19 @@ class ClaudeCodeRuntime:
                     result_str = (
                         str(tool_result) if not isinstance(tool_result, str) else tool_result
                     )
+                    is_error = tool_result_is_error(result_str)
                 except Exception as e:
                     result_str = f"Error executing {tc.name}: {e}"
+                    is_error = True
                     log.error(result_str)
 
                 yield AgentEvent.tool_result(tc.name, result_str)
-                conversation.add(Role.TOOL, f"[{tc.name}] {result_str}", tool_name=tc.name)
+                conversation.add(
+                    Role.TOOL,
+                    format_tool_feedback(tc.name, result_str, is_error),
+                    tool_name=tc.name,
+                    status="error" if is_error else "ok",
+                )
 
         log.warning(f"Hit max tool iterations ({MAX_TOOL_ITERATIONS})")
         yield AgentEvent.complete(
