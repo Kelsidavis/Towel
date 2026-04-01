@@ -147,7 +147,7 @@ class TemplateEngine:
 
         # Strip description line
         lines = raw.splitlines()
-        content_lines = [l for l in lines if not l.startswith("#")]
+        content_lines = [line for line in lines if not line.startswith("#")]
         content = "\n".join(content_lines).strip()
 
         # Replace {{input}}

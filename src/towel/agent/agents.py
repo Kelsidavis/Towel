@@ -36,6 +36,7 @@ class AgentLog:
 @dataclass
 class AutonomousAgent:
     """A persistent autonomous agent with a goal."""
+
     name: str
     goal: str
     check_interval: int = 300  # seconds
@@ -47,29 +48,38 @@ class AutonomousAgent:
 
     def to_dict(self) -> dict:
         return {
-            "name": self.name, "goal": self.goal,
+            "name": self.name,
+            "goal": self.goal,
             "check_interval": self.check_interval,
-            "tools": self.tools, "enabled": self.enabled,
-            "created_at": self.created_at, "total_runs": self.total_runs,
-            "logs": [l.to_dict() for l in self.logs[-20:]],
+            "tools": self.tools,
+            "enabled": self.enabled,
+            "created_at": self.created_at,
+            "total_runs": self.total_runs,
+            "logs": [entry.to_dict() for entry in self.logs[-20:]],
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> AutonomousAgent:
-        logs = [AgentLog(**l) for l in d.get("logs", [])]
+        logs = [AgentLog(**entry) for entry in d.get("logs", [])]
         return cls(
-            name=d["name"], goal=d["goal"],
+            name=d["name"],
+            goal=d["goal"],
             check_interval=d.get("check_interval", 300),
-            tools=d.get("tools", []), enabled=d.get("enabled", True),
-            created_at=d.get("created_at", ""), total_runs=d.get("total_runs", 0),
+            tools=d.get("tools", []),
+            enabled=d.get("enabled", True),
+            created_at=d.get("created_at", ""),
+            total_runs=d.get("total_runs", 0),
             logs=logs,
         )
 
 
 def _load_agents() -> list[AutonomousAgent]:
-    if not AGENTS_FILE.exists(): return []
-    try: return [AutonomousAgent.from_dict(a) for a in json.loads(AGENTS_FILE.read_text())]
-    except: return []
+    if not AGENTS_FILE.exists():
+        return []
+    try:
+        return [AutonomousAgent.from_dict(a) for a in json.loads(AGENTS_FILE.read_text())]
+    except Exception:
+        return []
 
 
 def _save_agents(agents: list[AutonomousAgent]) -> None:
@@ -77,7 +87,9 @@ def _save_agents(agents: list[AutonomousAgent]) -> None:
     AGENTS_FILE.write_text(json.dumps([a.to_dict() for a in agents], indent=2))
 
 
-def create_agent(name: str, goal: str, interval: int = 300, tools: list[str] | None = None) -> AutonomousAgent:
+def create_agent(
+    name: str, goal: str, interval: int = 300, tools: list[str] | None = None
+) -> AutonomousAgent:
     agents = _load_agents()
     agent = AutonomousAgent(name=name, goal=goal, check_interval=interval, tools=tools or [])
     agents = [a for a in agents if a.name != name]
@@ -108,11 +120,15 @@ def log_agent_action(name: str, action: str, result: str) -> None:
     agents = _load_agents()
     for a in agents:
         if a.name == name:
-            a.logs.append(AgentLog(
-                timestamp=datetime.now(UTC).isoformat(),
-                action=action, result=result,
-            ))
+            a.logs.append(
+                AgentLog(
+                    timestamp=datetime.now(UTC).isoformat(),
+                    action=action,
+                    result=result,
+                )
+            )
             a.total_runs += 1
-            if len(a.logs) > 50: a.logs = a.logs[-50:]
+            if len(a.logs) > 50:
+                a.logs = a.logs[-50:]
             break
     _save_agents(agents)

@@ -30,6 +30,7 @@ log = logging.getLogger("towel.agent.orchestrator")
 @dataclass
 class AgentTask:
     """A subtask to be executed by a specialist agent."""
+
     role: str  # e.g., "coder", "researcher", "reviewer", "writer"
     prompt: str
     depends_on: list[int] = field(default_factory=list)  # indices of tasks this depends on
@@ -51,6 +52,7 @@ class AgentTask:
 @dataclass
 class OrchestratorResult:
     """Result of a multi-agent orchestration run."""
+
     tasks: list[AgentTask]
     synthesis: str = ""
     total_elapsed: float = 0.0
@@ -62,8 +64,12 @@ class OrchestratorResult:
     def summary(self) -> str:
         lines = [f"Orchestration: {len(self.tasks)} tasks, {self.total_elapsed:.1f}s total"]
         for i, t in enumerate(self.tasks):
-            icon = {"completed": "+", "failed": "!", "running": "~", "pending": " "}.get(t.status, "?")
-            lines.append(f"  [{icon}] {i}. {t.role}: {t.status} ({t.elapsed:.1f}s, {len(t.result)} chars)")
+            icon = {"completed": "+", "failed": "!", "running": "~", "pending": " "}.get(
+                t.status, "?"
+            )
+            lines.append(
+                f"  [{icon}] {i}. {t.role}: {t.status} ({t.elapsed:.1f}s, {len(t.result)} chars)"
+            )
         return "\n".join(lines)
 
 
@@ -100,9 +106,7 @@ ROLE_PROMPTS: dict[str, str] = {
         "You are a debugging expert. Analyze errors systematically — identify root causes, "
         "explain why the bug occurs, and provide verified fixes."
     ),
-    "default": (
-        "You are a helpful AI assistant. Be concise and accurate."
-    ),
+    "default": ("You are a helpful AI assistant. Be concise and accurate."),
 }
 
 
@@ -201,6 +205,7 @@ class Orchestrator:
         import copy
 
         from towel.agent.runtime import AgentRuntime
+
         agent_config = copy.deepcopy(self.config)
         agent_config.identity = ROLE_PROMPTS.get(role, ROLE_PROMPTS["default"])
 

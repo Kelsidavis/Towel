@@ -66,18 +66,23 @@ class DiscordChannel(Channel):
             asyncio.create_task(self._heartbeat(ws))
 
             # Identify
-            await ws.send(json.dumps({
-                "op": 2,
-                "d": {
-                    "token": self.token,
-                    "intents": 33281,  # GUILDS + GUILD_MESSAGES + DIRECT_MESSAGES + MESSAGE_CONTENT
-                    "properties": {
-                        "os": "macos",
-                        "browser": "towel",
-                        "device": "towel",
-                    },
-                },
-            }))
+            await ws.send(
+                json.dumps(
+                    {
+                        "op": 2,
+                        "d": {
+                            "token": self.token,
+                            # GUILDS + GUILD_MESSAGES + DIRECT_MESSAGES + MESSAGE_CONTENT
+                            "intents": 33281,
+                            "properties": {
+                                "os": "macos",
+                                "browser": "towel",
+                                "device": "towel",
+                            },
+                        },
+                    }
+                )
+            )
 
             log.info("Connected to Discord. Listening for messages...")
 
@@ -127,7 +132,7 @@ class DiscordChannel(Channel):
 
         # Strip prefix/mention
         if content.startswith(self.prefix):
-            content = content[len(self.prefix):].strip()
+            content = content[len(self.prefix) :].strip()
         if mentioned:
             content = content.replace(f"<@{self._bot_id}>", "").strip()
 
@@ -153,14 +158,17 @@ class DiscordChannel(Channel):
         import httpx
 
         # Discord message limit is 2000 chars
-        chunks = [content[i:i+1990] for i in range(0, len(content), 1990)]
+        chunks = [content[i : i + 1990] for i in range(0, len(content), 1990)]
 
         async with httpx.AsyncClient() as client:
             for chunk in chunks:
                 try:
                     await client.post(
                         f"{DISCORD_API}/channels/{channel_id}/messages",
-                        headers={"Authorization": f"Bot {self.token}", "Content-Type": "application/json"},
+                        headers={
+                            "Authorization": f"Bot {self.token}",
+                            "Content-Type": "application/json",
+                        },
                         json={"content": chunk},
                     )
                 except Exception as e:

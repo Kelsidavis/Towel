@@ -94,9 +94,7 @@ class AgentRuntime:
             await self.load_model()
 
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            self._mlx_executor, self._generate_sync, conversation
-        )
+        result = await loop.run_in_executor(self._mlx_executor, self._generate_sync, conversation)
         return result
 
     def _make_turboquant_cache(self) -> list | None:
@@ -229,7 +227,9 @@ class AgentRuntime:
                 log.info(f"Tool call: {tc.name}({tc.arguments})")
                 try:
                     tool_result = await self.skills.execute_tool(tc.name, tc.arguments)
-                    result_str = str(tool_result) if not isinstance(tool_result, str) else tool_result
+                    result_str = (
+                        str(tool_result) if not isinstance(tool_result, str) else tool_result
+                    )
                 except Exception as e:
                     result_str = f"Error executing {tc.name}: {e}"
                     log.error(result_str)
@@ -315,7 +315,9 @@ class AgentRuntime:
 
                 try:
                     tool_result = await self.skills.execute_tool(tc.name, tc.arguments)
-                    result_str = str(tool_result) if not isinstance(tool_result, str) else tool_result
+                    result_str = (
+                        str(tool_result) if not isinstance(tool_result, str) else tool_result
+                    )
                 except Exception as e:
                     result_str = f"Error executing {tc.name}: {e}"
                     log.error(result_str)
@@ -340,6 +342,7 @@ class AgentRuntime:
 
         # Inject project context from .towel.md files
         from towel.agent.project import load_project_context
+
         project_block = load_project_context()
         if project_block:
             system += project_block
@@ -400,9 +403,7 @@ class AgentRuntime:
         all_messages = conversation.to_chat_messages()
 
         # Collect indices of pinned messages so they survive context eviction
-        pinned_indices = {
-            i for i, msg in enumerate(conversation.messages) if msg.pinned
-        }
+        pinned_indices = {i for i, msg in enumerate(conversation.messages) if msg.pinned}
 
         fitted_messages, budget = fit_messages(
             system_content=system_content,
@@ -426,11 +427,13 @@ class AgentRuntime:
                     if content.startswith("[") and "] " in content:
                         _name, _, result = content.partition("] ")
                         tool_name = _name.lstrip("[")
-                        messages.append({
-                            "role": "tool",
-                            "content": result,
-                            "name": tool_name,
-                        })
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "content": result,
+                                "name": tool_name,
+                            }
+                        )
                     else:
                         messages.append(msg)
                 else:
@@ -444,10 +447,12 @@ class AgentRuntime:
                 fallback_messages = [{"role": "system", "content": system_content}]
                 for msg in fitted_messages:
                     if msg["role"] == "tool":
-                        fallback_messages.append({
-                            "role": "user",
-                            "content": f"<tool_response>\n{msg['content']}\n</tool_response>",
-                        })
+                        fallback_messages.append(
+                            {
+                                "role": "user",
+                                "content": f"<tool_response>\n{msg['content']}\n</tool_response>",
+                            }
+                        )
                     else:
                         fallback_messages.append(msg)
                 return self._tokenizer.apply_chat_template(

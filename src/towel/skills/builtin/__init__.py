@@ -1,5 +1,13 @@
 """Built-in skills that ship with Towel."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from towel.memory.store import MemoryStore
+    from towel.skills.registry import SkillRegistry
+
 from towel.skills.builtin.archive_skill import ArchiveSkill
 from towel.skills.builtin.ascii_skill import AsciiSkill
 from towel.skills.builtin.base_convert_skill import BaseConvertSkill
@@ -8,6 +16,7 @@ from towel.skills.builtin.calendar_skill import CalendarSkill
 from towel.skills.builtin.cert_skill import CertSkill
 from towel.skills.builtin.changelog_gen_skill import ChangelogGenSkill
 from towel.skills.builtin.cheat_skill import CheatSkill
+from towel.skills.builtin.claude_skill import ClaudeSkill
 from towel.skills.builtin.clipboard import ClipboardSkill
 from towel.skills.builtin.clipboard_history_skill import ClipboardHistorySkill
 from towel.skills.builtin.color_skill import ColorSkill
@@ -102,19 +111,115 @@ from towel.skills.builtin.xml_skill import XmlSkill
 from towel.skills.builtin.yaml_skill import YamlSkill
 
 __all__ = [
-    "FileSystemSkill", "ShellSkill", "WebFetchSkill", "MemorySkill",
-    "GitSkill", "SearchSkill", "ClipboardSkill", "DataSkill", "SystemSkill",
-    "TimeSkill", "NetworkSkill", "HashSkill", "EnvSkill", "RegexSkill",
-    "ConvertSkill", "JsonSkill", "DiffSkill", "ArchiveSkill", "CronSkill", "MarkdownSkill", "HttpSkill", "SqlSkill", "ImageSkill", "ProcessSkill", "TextSkill", "KnowledgeSkill", "TranslateSkill", "SecuritySkill", "TodoSkill", "TemplateGenSkill", "MathSkill", "DockerSkill", "CalendarSkill", "QrSkill", "JwtSkill", "ColorSkill", "UuidSkill", "YamlSkill", "SnippetGenSkill", "CsvSkill", "SemverSkill", "IpCalcSkill", "DotenvSkill", "LogAnalyzerSkill", "HttpHeaderSkill", "AsciiSkill", "StringSkill", "SshSkill", "NpmSkill", "PipSkill", "MetricsSkill", "PdfSkill", "PlaceholderSkill", "WebhookTriggerSkill", "GitignoreSkill", "LintSkill", "DiagramSkill", "ChangelogGenSkill", "NoteSkill", "ClipboardHistorySkill", "CrontabSkill", "BookmarkSkill", "KeychainSkill", "OpenApiSkill", "TypoSkill", "MakeSkill", "ManSkill", "GithubSkill", "PypiSkill", "CertSkill", "RandomSkill", "CountrySkill", "JwtGenSkill", "CheatSkill", "MimeSkill", "QuoteSkill", "NpmRegistrySkill", "CveSkill", "XmlSkill", "BaseConvertSkill", "PortScannerSkill", "TimezoneSkill", "RssSkill", "OpenRouterSkill", "SystemdSkill", "DateFormatSkill", "GithubActionsSkill", "EmojiSkill", "UrlSkill", "FigletSkill", "PomodoroSkill", "UptimeSkill", "WhoisSkill", "DnsSkill", "StackOverflowSkill", "RedditSkill", "CurrencySkill", "HackerNewsSkill", "WikipediaSkill", "WeatherSkill",
+    "FileSystemSkill",
+    "ShellSkill",
+    "WebFetchSkill",
+    "MemorySkill",
+    "GitSkill",
+    "SearchSkill",
+    "ClipboardSkill",
+    "DataSkill",
+    "SystemSkill",
+    "TimeSkill",
+    "NetworkSkill",
+    "HashSkill",
+    "EnvSkill",
+    "RegexSkill",
+    "ConvertSkill",
+    "JsonSkill",
+    "DiffSkill",
+    "ArchiveSkill",
+    "CronSkill",
+    "MarkdownSkill",
+    "HttpSkill",
+    "SqlSkill",
+    "ImageSkill",
+    "ProcessSkill",
+    "TextSkill",
+    "KnowledgeSkill",
+    "TranslateSkill",
+    "SecuritySkill",
+    "TodoSkill",
+    "TemplateGenSkill",
+    "MathSkill",
+    "DockerSkill",
+    "CalendarSkill",
+    "QrSkill",
+    "JwtSkill",
+    "ColorSkill",
+    "UuidSkill",
+    "YamlSkill",
+    "SnippetGenSkill",
+    "CsvSkill",
+    "SemverSkill",
+    "IpCalcSkill",
+    "DotenvSkill",
+    "LogAnalyzerSkill",
+    "HttpHeaderSkill",
+    "AsciiSkill",
+    "StringSkill",
+    "SshSkill",
+    "NpmSkill",
+    "PipSkill",
+    "MetricsSkill",
+    "PdfSkill",
+    "PlaceholderSkill",
+    "WebhookTriggerSkill",
+    "GitignoreSkill",
+    "LintSkill",
+    "DiagramSkill",
+    "ChangelogGenSkill",
+    "NoteSkill",
+    "ClipboardHistorySkill",
+    "CrontabSkill",
+    "BookmarkSkill",
+    "KeychainSkill",
+    "OpenApiSkill",
+    "TypoSkill",
+    "MakeSkill",
+    "ManSkill",
+    "GithubSkill",
+    "PypiSkill",
+    "CertSkill",
+    "RandomSkill",
+    "CountrySkill",
+    "JwtGenSkill",
+    "CheatSkill",
+    "MimeSkill",
+    "QuoteSkill",
+    "NpmRegistrySkill",
+    "CveSkill",
+    "XmlSkill",
+    "BaseConvertSkill",
+    "PortScannerSkill",
+    "TimezoneSkill",
+    "RssSkill",
+    "OpenRouterSkill",
+    "SystemdSkill",
+    "DateFormatSkill",
+    "GithubActionsSkill",
+    "EmojiSkill",
+    "UrlSkill",
+    "FigletSkill",
+    "PomodoroSkill",
+    "UptimeSkill",
+    "WhoisSkill",
+    "DnsSkill",
+    "StackOverflowSkill",
+    "RedditSkill",
+    "CurrencySkill",
+    "HackerNewsSkill",
+    "WikipediaSkill",
+    "WeatherSkill",
+    "ClaudeSkill",
 ]
 
 
 def register_builtins(
-    registry: "towel.skills.registry.SkillRegistry",
-    memory_store: "towel.memory.store.MemoryStore | None" = None,
+    registry: SkillRegistry,
+    memory_store: MemoryStore | None = None,
 ) -> None:
     """Register all built-in skills."""
-    from towel.skills.registry import SkillRegistry
 
     registry.register(FileSystemSkill())
     registry.register(ShellSkill())
@@ -216,3 +321,4 @@ def register_builtins(
     registry.register(HackerNewsSkill())
     registry.register(WikipediaSkill())
     registry.register(WeatherSkill())
+    registry.register(ClaudeSkill())

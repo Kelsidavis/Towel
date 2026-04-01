@@ -1,10 +1,6 @@
 """Tests for @file reference expansion."""
 
-from pathlib import Path
-
-import pytest
-
-from towel.agent.refs import parse_refs, expand_refs, FileRef, _ext_to_lang
+from towel.agent.refs import _ext_to_lang, expand_refs, parse_refs
 
 
 class TestParseRefs:
@@ -131,12 +127,14 @@ class TestExpandRefs:
 class TestUrlRefs:
     def test_url_pattern_parsed(self):
         from towel.agent.refs import _URL_PATTERN
+
         m = _URL_PATTERN.findall("check @https://example.com/api.json please")
         assert len(m) == 1
         assert m[0] == "https://example.com/api.json"
 
     def test_http_pattern(self):
         from towel.agent.refs import _URL_PATTERN
+
         m = _URL_PATTERN.findall("see @http://localhost:8080/health")
         assert len(m) == 1
 
@@ -149,7 +147,7 @@ class TestUrlRefs:
 
     def test_expand_url_fetch(self):
         """Test URL expansion with a mocked httpx response."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         mock_resp = MagicMock()
         mock_resp.text = '{"status": "ok"}'
@@ -167,7 +165,7 @@ class TestUrlRefs:
 
     def test_expand_url_failure(self):
         """Failed URL fetch should show error inline."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         mock_client = MagicMock()
         mock_client.__enter__ = MagicMock(return_value=mock_client)

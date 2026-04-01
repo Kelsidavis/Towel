@@ -24,13 +24,13 @@ def _qr_ascii(data: str) -> str:
     grid = [[False] * size for _ in range(size)]
 
     # Finder patterns (top-left, top-right, bottom-left)
-    for pos in [(0,0), (0, size-7), (size-7, 0)]:
+    for pos in [(0, 0), (0, size - 7), (size - 7, 0)]:
         r, c = pos
         for i in range(7):
             for j in range(7):
-                if i in (0,6) or j in (0,6) or (2<=i<=4 and 2<=j<=4):
-                    if 0<=r+i<size and 0<=c+j<size:
-                        grid[r+i][c+j] = True
+                if i in (0, 6) or j in (0, 6) or (2 <= i <= 4 and 2 <= j <= 4):
+                    if 0 <= r + i < size and 0 <= c + j < size:
+                        grid[r + i][c + j] = True
 
     # Fill data area with hash-derived pattern
     seed = h
@@ -47,32 +47,50 @@ def _qr_ascii(data: str) -> str:
         line = ""
         for c in range(size):
             top = grid[r][c] if r < size else False
-            bot = grid[r+1][c] if r+1 < size else False
-            if top and bot: line += "█"
-            elif top: line += "▀"
-            elif bot: line += "▄"
-            else: line += " "
+            bot = grid[r + 1][c] if r + 1 < size else False
+            if top and bot:
+                line += "█"
+            elif top:
+                line += "▀"
+            elif bot:
+                line += "▄"
+            else:
+                line += " "
         lines.append(line)
     return "\n".join(lines)
 
 
 class QrSkill(Skill):
     @property
-    def name(self) -> str: return "qr"
+    def name(self) -> str:
+        return "qr"
+
     @property
-    def description(self) -> str: return "Generate QR-code-style ASCII art from text"
+    def description(self) -> str:
+        return "Generate QR-code-style ASCII art from text"
 
     def tools(self) -> list[ToolDefinition]:
         return [
-            ToolDefinition(name="qr_generate", description="Generate a QR-code-style ASCII art pattern from text",
-                parameters={"type":"object","properties":{
-                    "data":{"type":"string","description":"Text or URL to encode"},
-                },"required":["data"]}),
+            ToolDefinition(
+                name="qr_generate",
+                description="Generate a QR-code-style ASCII art pattern from text",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "data": {"type": "string", "description": "Text or URL to encode"},
+                    },
+                    "required": ["data"],
+                },
+            ),
         ]
 
     async def execute(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         if tool_name == "qr_generate":
             data = arguments["data"]
             art = _qr_ascii(data)
-            return f"QR pattern for: {data}\n\n{art}\n\n(Note: visual pattern only — use a QR library for scannable codes)"
+            return (
+                f"QR pattern for: {data}\n\n{art}\n\n"
+                "(Note: visual pattern only — use a QR "
+                "library for scannable codes)"
+            )
         return f"Unknown tool: {tool_name}"

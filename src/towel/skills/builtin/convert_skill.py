@@ -8,31 +8,68 @@ from towel.skills.base import Skill, ToolDefinition
 
 # Conversion factors to base units
 _LENGTH = {
-    "mm": 0.001, "cm": 0.01, "m": 1.0, "km": 1000.0,
-    "in": 0.0254, "ft": 0.3048, "yd": 0.9144, "mi": 1609.344,
+    "mm": 0.001,
+    "cm": 0.01,
+    "m": 1.0,
+    "km": 1000.0,
+    "in": 0.0254,
+    "ft": 0.3048,
+    "yd": 0.9144,
+    "mi": 1609.344,
     "nm": 1852.0,
 }
 _WEIGHT = {
-    "mg": 0.001, "g": 1.0, "kg": 1000.0, "t": 1_000_000.0,
-    "oz": 28.3495, "lb": 453.592, "st": 6350.29,
+    "mg": 0.001,
+    "g": 1.0,
+    "kg": 1000.0,
+    "t": 1_000_000.0,
+    "oz": 28.3495,
+    "lb": 453.592,
+    "st": 6350.29,
 }
 _VOLUME = {
-    "ml": 1.0, "l": 1000.0, "gal": 3785.41, "qt": 946.353,
-    "pt": 473.176, "cup": 236.588, "floz": 29.5735, "tbsp": 14.7868, "tsp": 4.92892,
+    "ml": 1.0,
+    "l": 1000.0,
+    "gal": 3785.41,
+    "qt": 946.353,
+    "pt": 473.176,
+    "cup": 236.588,
+    "floz": 29.5735,
+    "tbsp": 14.7868,
+    "tsp": 4.92892,
 }
 _SPEED = {
-    "m/s": 1.0, "km/h": 0.277778, "mph": 0.44704, "kn": 0.514444, "ft/s": 0.3048,
+    "m/s": 1.0,
+    "km/h": 0.277778,
+    "mph": 0.44704,
+    "kn": 0.514444,
+    "ft/s": 0.3048,
 }
 _DATA = {
-    "b": 1, "kb": 1024, "mb": 1024**2, "gb": 1024**3, "tb": 1024**4, "pb": 1024**5,
+    "b": 1,
+    "kb": 1024,
+    "mb": 1024**2,
+    "gb": 1024**3,
+    "tb": 1024**4,
+    "pb": 1024**5,
 }
 _TIME = {
-    "ms": 0.001, "s": 1.0, "min": 60.0, "h": 3600.0, "d": 86400.0, "wk": 604800.0, "yr": 31557600.0,
+    "ms": 0.001,
+    "s": 1.0,
+    "min": 60.0,
+    "h": 3600.0,
+    "d": 86400.0,
+    "wk": 604800.0,
+    "yr": 31557600.0,
 }
 
 _CATEGORIES: dict[str, dict[str, float]] = {
-    "length": _LENGTH, "weight": _WEIGHT, "volume": _VOLUME,
-    "speed": _SPEED, "data": _DATA, "time": _TIME,
+    "length": _LENGTH,
+    "weight": _WEIGHT,
+    "volume": _VOLUME,
+    "speed": _SPEED,
+    "data": _DATA,
+    "time": _TIME,
 }
 
 _UNIT_TO_CATEGORY: dict[str, str] = {}
@@ -102,13 +139,23 @@ class ConvertSkill(Skill):
         return [
             ToolDefinition(
                 name="convert_units",
-                description="Convert a value from one unit to another. Supports length, weight, volume, temperature, speed, data size, and time.",
+                description=(
+                    "Convert a value from one unit to another. "
+                    "Supports length, weight, volume, temperature, "
+                    "speed, data size, and time."
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "value": {"type": "number", "description": "The numeric value to convert"},
-                        "from_unit": {"type": "string", "description": "Source unit (e.g., km, lb, F, GB, min)"},
-                        "to_unit": {"type": "string", "description": "Target unit (e.g., mi, kg, C, MB, h)"},
+                        "from_unit": {
+                            "type": "string",
+                            "description": "Source unit (e.g., km, lb, F, GB, min)",
+                        },
+                        "to_unit": {
+                            "type": "string",
+                            "description": "Target unit (e.g., mi, kg, C, MB, h)",
+                        },
                     },
                     "required": ["value", "from_unit", "to_unit"],
                 },
@@ -119,7 +166,13 @@ class ConvertSkill(Skill):
                 parameters={
                     "type": "object",
                     "properties": {
-                        "category": {"type": "string", "description": "Filter: length, weight, volume, temperature, speed, data, time"},
+                        "category": {
+                            "type": "string",
+                            "description": (
+                                "Filter: length, weight, volume, "
+                                "temperature, speed, data, time"
+                            ),
+                        },
                     },
                 },
             ),
@@ -128,7 +181,9 @@ class ConvertSkill(Skill):
     async def execute(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         match tool_name:
             case "convert_units":
-                return self._convert(arguments["value"], arguments["from_unit"], arguments["to_unit"])
+                return self._convert(
+                    arguments["value"], arguments["from_unit"], arguments["to_unit"]
+                )
             case "list_units":
                 return self._list_units(arguments.get("category"))
             case _:
@@ -148,7 +203,11 @@ class ConvertSkill(Skill):
 
     def _list_units(self, category: str | None) -> str:
         lines = []
-        cats = {category: _CATEGORIES[category]} if category and category in _CATEGORIES else _CATEGORIES
+        cats = (
+            {category: _CATEGORIES[category]}
+            if category and category in _CATEGORIES
+            else _CATEGORIES
+        )
         if category == "temperature":
             cats = {"temperature": {}}
 

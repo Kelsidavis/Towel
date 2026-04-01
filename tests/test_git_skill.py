@@ -1,6 +1,5 @@
 """Tests for the git skill."""
 
-import asyncio
 import os
 from pathlib import Path
 
@@ -118,7 +117,9 @@ class TestGitCommit:
         skill, path = git
         (Path(path) / "a.txt").write_text("a")
         (Path(path) / "b.txt").write_text("b")
-        result = await skill.execute("git_commit", {"path": path, "message": "add a", "files": "a.txt"})
+        result = await skill.execute(
+            "git_commit", {"path": path, "message": "add a", "files": "a.txt"}
+        )
         assert "add a" in result or "1 file" in result
 
 

@@ -115,7 +115,7 @@ class TelegramChannel(Channel):
         import httpx
 
         # Telegram message limit is 4096 chars
-        chunks = [text[i:i+4090] for i in range(0, len(text), 4090)]
+        chunks = [text[i : i + 4090] for i in range(0, len(text), 4090)]
 
         async with httpx.AsyncClient() as client:
             for chunk in chunks:

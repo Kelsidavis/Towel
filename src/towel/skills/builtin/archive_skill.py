@@ -40,7 +40,10 @@ class ArchiveSkill(Skill):
                 parameters={
                     "type": "object",
                     "properties": {
-                        "output": {"type": "string", "description": "Output archive path (e.g., backup.zip)"},
+                        "output": {
+                            "type": "string",
+                            "description": "Output archive path (e.g., backup.zip)",
+                        },
                         "sources": {
                             "type": "array",
                             "items": {"type": "string"},
@@ -57,7 +60,10 @@ class ArchiveSkill(Skill):
                     "type": "object",
                     "properties": {
                         "path": {"type": "string", "description": "Path to archive"},
-                        "dest": {"type": "string", "description": "Destination directory (default: current dir)"},
+                        "dest": {
+                            "type": "string",
+                            "description": "Destination directory (default: current dir)",
+                        },
                     },
                     "required": ["path"],
                 },

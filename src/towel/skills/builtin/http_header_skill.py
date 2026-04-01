@@ -46,41 +46,86 @@ _HEADER_DB: dict[str, str] = {
 
 class HttpHeaderSkill(Skill):
     @property
-    def name(self) -> str: return "headers"
+    def name(self) -> str:
+        return "headers"
+
     @property
-    def description(self) -> str: return "Analyze, explain, and generate HTTP headers"
+    def description(self) -> str:
+        return "Analyze, explain, and generate HTTP headers"
 
     def tools(self) -> list[ToolDefinition]:
         return [
-            ToolDefinition(name="header_explain", description="Explain what HTTP headers do",
-                parameters={"type":"object","properties":{
-                    "headers":{"type":"string","description":"Header names (comma-separated) or raw header block"},
-                },"required":["headers"]}),
-            ToolDefinition(name="header_security", description="Analyze response headers for security issues",
-                parameters={"type":"object","properties":{
-                    "headers":{"type":"string","description":"Raw HTTP response headers"},
-                },"required":["headers"]}),
-            ToolDefinition(name="header_cors", description="Generate CORS headers for a given configuration",
-                parameters={"type":"object","properties":{
-                    "origins":{"type":"string","description":"Allowed origins (comma-separated, or * for all)"},
-                    "methods":{"type":"string","description":"Allowed methods (default: GET,POST,OPTIONS)"},
-                    "credentials":{"type":"boolean","description":"Allow credentials (default: false)"},
-                },"required":["origins"]}),
+            ToolDefinition(
+                name="header_explain",
+                description="Explain what HTTP headers do",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "headers": {
+                            "type": "string",
+                            "description": "Header names (comma-separated) or raw header block",
+                        },
+                    },
+                    "required": ["headers"],
+                },
+            ),
+            ToolDefinition(
+                name="header_security",
+                description="Analyze response headers for security issues",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "headers": {"type": "string", "description": "Raw HTTP response headers"},
+                    },
+                    "required": ["headers"],
+                },
+            ),
+            ToolDefinition(
+                name="header_cors",
+                description="Generate CORS headers for a given configuration",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "origins": {
+                            "type": "string",
+                            "description": "Allowed origins (comma-separated, or * for all)",
+                        },
+                        "methods": {
+                            "type": "string",
+                            "description": "Allowed methods (default: GET,POST,OPTIONS)",
+                        },
+                        "credentials": {
+                            "type": "boolean",
+                            "description": "Allow credentials (default: false)",
+                        },
+                    },
+                    "required": ["origins"],
+                },
+            ),
         ]
 
     async def execute(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         match tool_name:
-            case "header_explain": return self._explain(arguments["headers"])
-            case "header_security": return self._security(arguments["headers"])
-            case "header_cors": return self._cors(arguments["origins"], arguments.get("methods","GET,POST,OPTIONS"), arguments.get("credentials",False))
-            case _: return f"Unknown tool: {tool_name}"
+            case "header_explain":
+                return self._explain(arguments["headers"])
+            case "header_security":
+                return self._security(arguments["headers"])
+            case "header_cors":
+                return self._cors(
+                    arguments["origins"],
+                    arguments.get("methods", "GET,POST,OPTIONS"),
+                    arguments.get("credentials", False),
+                )
+            case _:
+                return f"Unknown tool: {tool_name}"
 
     def _explain(self, headers: str) -> str:
         lines = []
         # Parse as raw headers or comma-separated names
         if ":" in headers:
             for line in headers.strip().splitlines():
-                if ":" not in line: continue
+                if ":" not in line:
+                    continue
                 name, _, val = line.partition(":")
                 name = name.strip().lower()
                 desc = _HEADER_DB.get(name, "Custom/unknown header")
@@ -96,7 +141,8 @@ class HttpHeaderSkill(Skill):
     def _security(self, headers: str) -> str:
         parsed = {}
         for line in headers.strip().splitlines():
-            if ":" not in line: continue
+            if ":" not in line:
+                continue
             name, _, val = line.partition(":")
             parsed[name.strip().lower()] = val.strip()
 
@@ -106,26 +152,35 @@ class HttpHeaderSkill(Skill):
         if "x-content-type-options" not in parsed:
             checks.append("  [!] Missing X-Content-Type-Options (set to nosniff)")
         if "x-frame-options" not in parsed and "content-security-policy" not in parsed:
-            checks.append("  [!] Missing clickjacking protection (X-Frame-Options or CSP frame-ancestors)")
+            checks.append(
+                "  [!] Missing clickjacking protection (X-Frame-Options or CSP frame-ancestors)"
+            )
         if "content-security-policy" not in parsed:
             checks.append("  [!] Missing Content-Security-Policy")
         server = parsed.get("server", "")
-        if server and any(v in server.lower() for v in ["apache","nginx","iis"]):
+        if server and any(v in server.lower() for v in ["apache", "nginx", "iis"]):
             checks.append(f"  [!] Server header reveals software: {server}")
         if "x-powered-by" in parsed:
             checks.append(f"  [!] X-Powered-By reveals technology: {parsed['x-powered-by']}")
 
         # Good things
         good = []
-        if "strict-transport-security" in parsed: good.append("  [+] HSTS enabled")
-        if "x-content-type-options" in parsed: good.append("  [+] MIME sniffing prevented")
-        if "content-security-policy" in parsed: good.append("  [+] CSP configured")
+        if "strict-transport-security" in parsed:
+            good.append("  [+] HSTS enabled")
+        if "x-content-type-options" in parsed:
+            good.append("  [+] MIME sniffing prevented")
+        if "content-security-policy" in parsed:
+            good.append("  [+] CSP configured")
 
         result = "Security header analysis:\n"
-        if good: result += "\n".join(good) + "\n"
-        if checks: result += "\n".join(checks)
-        elif not good: result += "  No headers to analyze."
-        else: result += "  No issues found."
+        if good:
+            result += "\n".join(good) + "\n"
+        if checks:
+            result += "\n".join(checks)
+        elif not good:
+            result += "  No headers to analyze."
+        else:
+            result += "  No issues found."
         return result
 
     def _cors(self, origins: str, methods: str, credentials: bool) -> str:

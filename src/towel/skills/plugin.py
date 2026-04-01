@@ -37,6 +37,7 @@ PLUGINS_DIR = TOWEL_HOME / "plugins"
 @dataclass
 class PluginManifest:
     """Parsed plugin manifest."""
+
     name: str
     version: str
     description: str = ""
@@ -52,6 +53,7 @@ class PluginManifest:
         """Parse a towel-plugin.toml file."""
         try:
             import toml
+
             data = toml.loads(path.read_text(encoding="utf-8"))
             plugin = data.get("plugin", {})
             return cls(
@@ -123,9 +125,9 @@ def validate_plugin(path: Path) -> list[str]:
 
     # Check for skill file
     has_skill = (
-        (path / "skill.py").exists() or
-        (path / "__init__.py").exists() or
-        any(path.glob("*_skill.py"))
+        (path / "skill.py").exists()
+        or (path / "__init__.py").exists()
+        or any(path.glob("*_skill.py"))
     )
     if not has_skill:
         issues.append("No skill file found (need skill.py, __init__.py, or *_skill.py)")

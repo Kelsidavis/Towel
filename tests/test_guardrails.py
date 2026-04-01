@@ -1,5 +1,5 @@
 """Tests for content guardrails."""
-import pytest
+
 from towel.agent.guardrails import check_input, check_output, redact_sensitive
 
 

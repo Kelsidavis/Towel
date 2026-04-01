@@ -25,7 +25,10 @@ class EnvSkill(Skill):
                 parameters={
                     "type": "object",
                     "properties": {
-                        "name": {"type": "string", "description": "Variable name (e.g., PATH, HOME, SHELL)"},
+                        "name": {
+                            "type": "string",
+                            "description": "Variable name (e.g., PATH, HOME, SHELL)",
+                        },
                     },
                     "required": ["name"],
                 },
@@ -36,13 +39,19 @@ class EnvSkill(Skill):
                 parameters={
                     "type": "object",
                     "properties": {
-                        "prefix": {"type": "string", "description": "Only show variables starting with this prefix"},
+                        "prefix": {
+                            "type": "string",
+                            "description": "Only show variables starting with this prefix",
+                        },
                     },
                 },
             ),
             ToolDefinition(
                 name="env_path",
-                description="Show the PATH entries as a readable list, highlighting which directories exist",
+                description=(
+                    "Show the PATH entries as a readable list, "
+                    "highlighting which directories exist"
+                ),
                 parameters={"type": "object", "properties": {}},
             ),
             ToolDefinition(
@@ -112,6 +121,7 @@ class EnvSkill(Skill):
 
     def _which(self, command: str) -> str:
         import shutil
+
         result = shutil.which(command)
         if result:
             return f"{command}: {result}"

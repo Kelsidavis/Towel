@@ -1,7 +1,7 @@
 """Tests for towel init and the starter config."""
 
-import toml
 import pytest
+import toml
 
 from towel.cli.main import STARTER_CONFIG, cli
 from towel.config import TowelConfig
@@ -48,6 +48,7 @@ class TestInitCommand:
         monkeypatch.setattr("towel.config.TOWEL_HOME", tmp_path)
 
         from click.testing import CliRunner
+
         runner = CliRunner()
         result = runner.invoke(cli, ["init"])
         assert result.exit_code == 0
@@ -65,6 +66,7 @@ class TestInitCommand:
         monkeypatch.setattr("towel.config.TOWEL_HOME", tmp_path)
 
         from click.testing import CliRunner
+
         runner = CliRunner()
         runner.invoke(cli, ["init"])
 
@@ -78,6 +80,7 @@ class TestInitCommand:
         config_path.write_text("existing = true")
 
         from click.testing import CliRunner
+
         runner = CliRunner()
         result = runner.invoke(cli, ["init"])
 
@@ -89,6 +92,7 @@ class TestInitCommand:
         monkeypatch.setattr("towel.config.TOWEL_HOME", tmp_path)
 
         from click.testing import CliRunner
+
         runner = CliRunner()
         result = runner.invoke(cli, ["init"])
 
@@ -101,15 +105,39 @@ class TestInitCommand:
 class TestCLICommands:
     """Verify all CLI commands are registered and show help."""
 
-    @pytest.mark.parametrize("cmd", [
-        "bench", "commit", "config", "dashboard", "doc", "doctor",
-        "explain", "fix", "gc", "history", "log", "marketplace",
-        "plugins", "refactor", "review", "search", "show", "skills",
-        "status", "summarize", "templates", "test-gen", "version",
-        "watch", "webhook",
-    ])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "bench",
+            "commit",
+            "config",
+            "dashboard",
+            "doc",
+            "doctor",
+            "explain",
+            "fix",
+            "gc",
+            "history",
+            "log",
+            "marketplace",
+            "plugins",
+            "refactor",
+            "review",
+            "search",
+            "show",
+            "skills",
+            "status",
+            "summarize",
+            "templates",
+            "test-gen",
+            "version",
+            "watch",
+            "webhook",
+        ],
+    )
     def test_command_help(self, cmd):
         from click.testing import CliRunner
+
         runner = CliRunner()
         result = runner.invoke(cli, [cmd, "--help"])
         assert result.exit_code == 0

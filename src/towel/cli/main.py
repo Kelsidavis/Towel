@@ -17,9 +17,12 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import sys
+import time
 from datetime import UTC
+from typing import TYPE_CHECKING, Any
 
 import click
 from rich.console import Console
@@ -28,6 +31,9 @@ from rich.text import Text
 
 from towel import __version__
 from towel.config import TOWEL_HOME, TowelConfig
+
+if TYPE_CHECKING:
+    from towel.skills.registry import SkillRegistry
 
 console = Console()
 
@@ -64,6 +70,7 @@ def _build_skill_registry(config: TowelConfig, memory_store: Any = None) -> Skil
 
     return registry
 
+
 BANNER = rf"""
  _____ _____        _______ _
 |_   _|  _  |      | _____ | |
@@ -83,13 +90,17 @@ def cli() -> None:
     pass
 
 
-def _build_runtime(config: TowelConfig, skills: Any, memory: Any, backend: str | None, claude_model: str | None):
+def _build_runtime(
+    config: TowelConfig, skills: Any, memory: Any, backend: str | None, claude_model: str | None
+):
     """Build the appropriate runtime based on --backend flag."""
     if backend == "claude":
         from towel.agent.claude_runtime import ClaudeCodeRuntime
 
         return ClaudeCodeRuntime(
-            config, skills=skills, memory=memory,
+            config,
+            skills=skills,
+            memory=memory,
             model=claude_model or "sonnet",
         )
     else:
@@ -99,12 +110,32 @@ def _build_runtime(config: TowelConfig, skills: Any, memory: Any, backend: str |
 
 
 @cli.command()
-@click.option("--agent", "-a", default=None, help="Agent profile to use (e.g., coder, researcher, writer)")
-@click.option("--turboquant/--no-turboquant", default=None, help="Enable TurboQuant KV cache compression")
+@click.option(
+    "--agent", "-a", default=None, help="Agent profile to use (e.g., coder, researcher, writer)"
+)
+@click.option(
+    "--turboquant/--no-turboquant", default=None, help="Enable TurboQuant KV cache compression"
+)
 @click.option("--tq-bits", default=None, type=int, help="TurboQuant quantization bits (3 or 4)")
-@click.option("--backend", "-b", default=None, type=click.Choice(["mlx", "claude"]), help="Runtime backend (mlx=local model, claude=Claude Code CLI)")
-@click.option("--claude-model", default=None, help="Claude model when using --backend claude (e.g., sonnet, opus, haiku)")
-def serve(agent: str | None, turboquant: bool | None, tq_bits: int | None, backend: str | None, claude_model: str | None) -> None:
+@click.option(
+    "--backend",
+    "-b",
+    default=None,
+    type=click.Choice(["mlx", "claude"]),
+    help="Runtime backend (mlx=local model, claude=Claude Code CLI)",
+)
+@click.option(
+    "--claude-model",
+    default=None,
+    help="Claude model when using --backend claude (e.g., sonnet, opus, haiku)",
+)
+def serve(
+    agent: str | None,
+    turboquant: bool | None,
+    tq_bits: int | None,
+    backend: str | None,
+    claude_model: str | None,
+) -> None:
     """Start the Towel gateway and agent runtime."""
     console.print(Panel(Text(BANNER, style="bold green"), border_style="green"))
 
@@ -119,12 +150,20 @@ def serve(agent: str | None, turboquant: bool | None, tq_bits: int | None, backe
     else:
         console.print(f"[dim]Model:[/dim] {config.model.name}")
         if config.model.turboquant:
-            console.print(f"[dim]KV cache:[/dim] TurboQuant {config.model.turboquant_bits}-bit (QJL ratio {config.model.turboquant_qjl_ratio})")
+            console.print(
+                f"[dim]KV cache:[/dim] TurboQuant "
+                f"{config.model.turboquant_bits}-bit "
+                f"(QJL ratio {config.model.turboquant_qjl_ratio})"
+            )
     if agent:
         console.print(f"[dim]Agent:[/dim] {agent}")
-    console.print(f"[dim]Gateway:[/dim] ws://{config.gateway.host}:{config.gateway.port}")
-    console.print(f"[dim]Web UI:[/dim] http://{config.gateway.host}:{config.gateway.port + 1}/")
-    console.print(f"[dim]API:[/dim] http://{config.gateway.host}:{config.gateway.port + 1}/v1/chat/completions")
+    gw = f"{config.gateway.host}:{config.gateway.port}"
+    console.print(f"[dim]Gateway:[/dim] ws://{gw}")
+    api = f"{config.gateway.host}:{config.gateway.port + 1}"
+    console.print(f"[dim]Web UI:[/dim] http://{api}/")
+    console.print(
+        f"[dim]API:[/dim] http://{api}/v1/chat/completions"
+    )
     console.print()
 
     from towel.gateway.server import GatewayServer
@@ -148,17 +187,38 @@ async def _start(agent: Any, gateway: Any) -> None:
 @cli.command()
 @click.option("--session", "-s", default="cli", help="Session ID")
 @click.option("--agent", "-a", default=None, help="Agent profile (e.g., coder, researcher, writer)")
-@click.option("--turboquant/--no-turboquant", default=None, help="Enable TurboQuant KV cache compression")
+@click.option(
+    "--turboquant/--no-turboquant", default=None, help="Enable TurboQuant KV cache compression"
+)
 @click.option("--tq-bits", default=None, type=int, help="TurboQuant quantization bits (3 or 4)")
-@click.option("--backend", "-b", default=None, type=click.Choice(["mlx", "claude"]), help="Runtime backend (mlx=local model, claude=Claude Code CLI)")
-@click.option("--claude-model", default=None, help="Claude model when using --backend claude (e.g., sonnet, opus, haiku)")
-def chat(session: str, agent: str | None, turboquant: bool | None, tq_bits: int | None, backend: str | None, claude_model: str | None) -> None:
+@click.option(
+    "--backend",
+    "-b",
+    default=None,
+    type=click.Choice(["mlx", "claude"]),
+    help="Runtime backend (mlx=local model, claude=Claude Code CLI)",
+)
+@click.option(
+    "--claude-model",
+    default=None,
+    help="Claude model when using --backend claude (e.g., sonnet, opus, haiku)",
+)
+def chat(
+    session: str,
+    agent: str | None,
+    turboquant: bool | None,
+    tq_bits: int | None,
+    backend: str | None,
+    claude_model: str | None,
+) -> None:
     """Interactive chat with Towel."""
-    console.print(Panel(
-        "[bold green]Towel[/bold green] — Don't Panic.\n"
-        "[dim]Type your message. Ctrl+C to exit. /help for commands.[/dim]",
-        border_style="green",
-    ))
+    console.print(
+        Panel(
+            "[bold green]Towel[/bold green] — Don't Panic.\n"
+            "[dim]Type your message. Ctrl+C to exit. /help for commands.[/dim]",
+            border_style="green",
+        )
+    )
 
     config = TowelConfig.load()
     model_config, identity = config.resolve_agent(agent)
@@ -190,8 +250,11 @@ def chat(session: str, agent: str | None, turboquant: bool | None, tq_bits: int 
         conv = Conversation(id=session, channel="cli")
 
     slash_ctx = SlashContext(
-        config=config, conv=conv, agent=agent_rt,
-        memory=memory, store=store,
+        config=config,
+        conv=conv,
+        agent=agent_rt,
+        memory=memory,
+        store=store,
     )
     slash_ctx.current_agent_name = agent
 
@@ -222,6 +285,7 @@ def chat(session: str, agent: str | None, turboquant: bool | None, tq_bits: int 
             elif slash_result is None:
                 # Normal message: expand @file references and add to conversation
                 from towel.agent.refs import expand_refs, parse_refs
+
                 refs = parse_refs(user_input)
                 expanded = expand_refs(user_input) if refs else user_input
                 if refs and expanded != user_input:
@@ -231,7 +295,7 @@ def chat(session: str, agent: str | None, turboquant: bool | None, tq_bits: int 
 
             # Stream tokens live to the terminal (Ctrl+C cancels generation)
             console.print("[bold green]towel>[/bold green] ", end="")
-            cancelled = False
+            _cancelled = False
             try:
                 async for event in agent_rt.step_streaming(conv):
                     match event.type:
@@ -240,7 +304,9 @@ def chat(session: str, agent: str | None, turboquant: bool | None, tq_bits: int 
                         case EventType.TOOL_CALL:
                             tool = event.data["tool"]
                             print()
-                            console.print(f"  [yellow]>> {tool}({event.data['arguments']})[/yellow]")
+                            console.print(
+                                f"  [yellow]>> {tool}({event.data['arguments']})[/yellow]"
+                            )
                         case EventType.TOOL_RESULT:
                             result = event.data["result"]
                             display = result[:200] + "..." if len(result) > 200 else result
@@ -251,13 +317,12 @@ def chat(session: str, agent: str | None, turboquant: bool | None, tq_bits: int 
                             meta = event.data.get("metadata", {})
                             if meta.get("tps"):
                                 console.print(
-                                    f"[dim]({meta['tps']:.1f} tok/s, "
-                                    f"{meta['tokens']} tokens)[/dim]"
+                                    f"[dim]({meta['tps']:.1f} tok/s, {meta['tokens']} tokens)[/dim]"
                                 )
                         case EventType.CANCELLED:
                             print()
                             console.print("[dim](generation stopped)[/dim]")
-                            cancelled = True
+                            _cancelled = True
                         case EventType.ERROR:
                             print()
                             console.print(f"[red]Error: {event.data['message']}[/red]")
@@ -265,11 +330,12 @@ def chat(session: str, agent: str | None, turboquant: bool | None, tq_bits: int 
                 agent_rt.cancel()
                 print()
                 console.print("[dim](generation stopped)[/dim]")
-                cancelled = True
+                _cancelled = True
 
             # Auto-title after first exchange
             if not conv.title and len(conv) >= 2:
                 from towel.agent.titler import generate_title
+
                 first_user = next((m.content for m in conv.messages if m.role == Role.USER), "")
                 title = generate_title(first_user)
                 if title:
@@ -292,21 +358,23 @@ def status() -> None:
     try:
         resp = httpx.get(url, timeout=3)
         data = resp.json()
-        console.print(Panel(
-            f"[green]Status:[/green] {data['status']}\n"
-            f"[green]Version:[/green] {data['version']}\n"
-            f"[green]Connections:[/green] {data['connections']}\n"
-            f"[green]Sessions:[/green] {data['sessions']}\n"
-            f"[dim]{data['motto']}[/dim]",
-            title="Towel Gateway",
-            border_style="green",
-        ))
+        console.print(
+            Panel(
+                f"[green]Status:[/green] {data['status']}\n"
+                f"[green]Version:[/green] {data['version']}\n"
+                f"[green]Connections:[/green] {data['connections']}\n"
+                f"[green]Sessions:[/green] {data['sessions']}\n"
+                f"[dim]{data['motto']}[/dim]",
+                title="Towel Gateway",
+                border_style="green",
+            )
+        )
     except Exception:
         console.print("[red]Gateway not running.[/red] Start it with: towel serve")
         sys.exit(1)
 
 
-STARTER_CONFIG = '''\
+STARTER_CONFIG = """\
 # ─────────────────────────────────────────────────────────
 # Towel — Don't Panic.
 # Configuration file: ~/.towel/config.toml
@@ -367,7 +435,7 @@ skills_dirs = ["~/.towel/skills", "./skills"]
 #   towel agents                 List available agents
 #   towel memory list            View persistent memories
 # ─────────────────────────────────────────────────────────
-'''
+"""
 
 
 @cli.command()
@@ -385,19 +453,21 @@ def init() -> None:
     (TOWEL_HOME / "memory").mkdir(exist_ok=True)
     (TOWEL_HOME / "conversations").mkdir(exist_ok=True)
 
-    console.print(Panel(
-        "[bold green]Towel initialized.[/bold green]\n\n"
-        f"  Config:         [cyan]{config_path}[/cyan]\n"
-        f"  Skills:         [cyan]{TOWEL_HOME / 'skills'}[/cyan]\n"
-        f"  Memory:         [cyan]{TOWEL_HOME / 'memory'}[/cyan]\n"
-        f"  Conversations:  [cyan]{TOWEL_HOME / 'conversations'}[/cyan]\n\n"
-        "[dim]Next steps:[/dim]\n"
-        "  1. towel doctor        Check your setup\n"
-        "  2. towel chat          Start chatting\n"
-        "  3. towel context -c    Add project context",
-        border_style="green",
-        title="Don't Panic.",
-    ))
+    console.print(
+        Panel(
+            "[bold green]Towel initialized.[/bold green]\n\n"
+            f"  Config:         [cyan]{config_path}[/cyan]\n"
+            f"  Skills:         [cyan]{TOWEL_HOME / 'skills'}[/cyan]\n"
+            f"  Memory:         [cyan]{TOWEL_HOME / 'memory'}[/cyan]\n"
+            f"  Conversations:  [cyan]{TOWEL_HOME / 'conversations'}[/cyan]\n\n"
+            "[dim]Next steps:[/dim]\n"
+            "  1. towel doctor        Check your setup\n"
+            "  2. towel chat          Start chatting\n"
+            "  3. towel context -c    Add project context",
+            border_style="green",
+            title="Don't Panic.",
+        )
+    )
 
 
 @cli.command()
@@ -508,6 +578,7 @@ def history(limit: int, tag: str | None) -> None:
         tag_display = ""
         try:
             import json as json_mod
+
             path = store._path_for(c.id)
             data = json_mod.loads(path.read_text(encoding="utf-8"))
             tags = data.get("tags", [])
@@ -527,7 +598,13 @@ def history(limit: int, tag: str | None) -> None:
 @cli.command()
 @click.argument("query")
 @click.option("--limit", "-n", default=10, help="Max conversations to return")
-@click.option("--role", "-r", default=None, type=click.Choice(["user", "assistant", "tool"]), help="Filter by message role")
+@click.option(
+    "--role",
+    "-r",
+    default=None,
+    type=click.Choice(["user", "assistant", "tool"]),
+    help="Filter by message role",
+)
 @click.option("--regex", "-e", is_flag=True, help="Treat query as regex")
 def search(query: str, limit: int, role: str | None, regex: bool) -> None:
     """Search across all saved conversations."""
@@ -588,11 +665,18 @@ def show(conversation_id: str, tail: int) -> None:
         console.print(f"[red]Conversation not found:[/red] {conversation_id}")
         sys.exit(1)
 
-    title_line = f"[bold]{conv.display_title}[/bold]" if conv.title else f"[bold]{conv.id}[/bold]"
-    console.print(Panel(
-        f"{title_line}\n[dim]{conv.id} · {conv.channel} · {conv.created_at.isoformat()[:16]}[/dim]",
-        border_style="green",
-    ))
+    title_line = (
+        f"[bold]{conv.display_title}[/bold]"
+        if conv.title
+        else f"[bold]{conv.id}[/bold]"
+    )
+    console.print(
+        Panel(
+            f"{title_line}\n[dim]{conv.id} · {conv.channel}"
+            f" · {conv.created_at.isoformat()[:16]}[/dim]",
+            border_style="green",
+        )
+    )
 
     messages = conv.messages[-tail:] if tail else conv.messages
     if tail and len(conv.messages) > tail:
@@ -614,8 +698,17 @@ def show(conversation_id: str, tail: int) -> None:
 
 @cli.command(name="export")
 @click.argument("conversation_id")
-@click.option("--format", "-f", "fmt", default="markdown", type=click.Choice(["markdown", "text", "json", "html"]), help="Export format")
-@click.option("--output", "-o", default=None, type=click.Path(), help="Write to file instead of stdout")
+@click.option(
+    "--format",
+    "-f",
+    "fmt",
+    default="markdown",
+    type=click.Choice(["markdown", "text", "json", "html"]),
+    help="Export format",
+)
+@click.option(
+    "--output", "-o", default=None, type=click.Path(), help="Write to file instead of stdout"
+)
 @click.option("--metadata", "-m", is_flag=True, help="Include timestamps and stats (markdown only)")
 def export_cmd(conversation_id: str, fmt: str, output: str | None, metadata: bool) -> None:
     """Export a conversation to markdown, text, or JSON.
@@ -652,6 +745,7 @@ def export_cmd(conversation_id: str, fmt: str, output: str | None, metadata: boo
 
     if output:
         from pathlib import Path
+
         Path(output).write_text(result, encoding="utf-8")
         console.print(f"[green]Exported to:[/green] {output}")
     else:
@@ -764,10 +858,12 @@ def doctor() -> None:
     """Diagnose your Towel setup."""
     from towel.cli.doctor import run_doctor
 
-    console.print(Panel(
-        "[bold green]Towel Doctor[/bold green] — checking your setup...",
-        border_style="green",
-    ))
+    console.print(
+        Panel(
+            "[bold green]Towel Doctor[/bold green] — checking your setup...",
+            border_style="green",
+        )
+    )
 
     config = TowelConfig.load()
     checks = run_doctor(config)
@@ -799,12 +895,18 @@ def doctor() -> None:
 @click.argument("prompt", nargs=-1)
 @click.option("--session", "-s", default=None, help="Session ID (enables conversation context)")
 @click.option("--agent", "-a", default=None, help="Agent profile (e.g., coder, researcher, writer)")
-@click.option("--template", "-T", default=None, help="Prompt template (e.g., review, explain, summarize)")
-@click.option("--var", "-V", multiple=True, help="Template variable: key=value (e.g., -V lang=Spanish)")
+@click.option(
+    "--template", "-T", default=None, help="Prompt template (e.g., review, explain, summarize)"
+)
+@click.option(
+    "--var", "-V", multiple=True, help="Template variable: key=value (e.g., -V lang=Spanish)"
+)
 @click.option("--system", "-S", default=None, help="Override system prompt for this query")
 @click.option("--raw", "-r", is_flag=True, help="Raw output only (no formatting, no stats)")
 @click.option("--stream/--no-stream", default=True, help="Stream tokens as they generate")
-@click.option("--turboquant/--no-turboquant", default=None, help="Enable TurboQuant KV cache compression")
+@click.option(
+    "--turboquant/--no-turboquant", default=None, help="Enable TurboQuant KV cache compression"
+)
 @click.option("--tq-bits", default=None, type=int, help="TurboQuant quantization bits (3 or 4)")
 def ask(
     prompt: tuple[str, ...],
@@ -853,8 +955,8 @@ def ask(
     if not parts:
         if not raw:
             console.print("[red]No prompt provided.[/red]")
-            console.print("Usage: towel ask \"your question\"")
-            console.print("   or: echo \"question\" | towel ask")
+            console.print('Usage: towel ask "your question"')
+            console.print('   or: echo "question" | towel ask')
         sys.exit(1)
 
     full_prompt = "\n\n".join(parts)
@@ -862,6 +964,7 @@ def ask(
     # Apply template if specified
     if template:
         from towel.templates.engine import TemplateEngine
+
         engine = TemplateEngine()
         variables = dict(kv.split("=", 1) for kv in var if "=" in kv)
         rendered = engine.render(template, input_text=full_prompt, variables=variables)
@@ -874,6 +977,7 @@ def ask(
 
     # Expand @file references
     from towel.agent.refs import expand_refs
+
     full_prompt = expand_refs(full_prompt)
 
     config = TowelConfig.load()
@@ -928,8 +1032,7 @@ def ask(
                         meta = event.data.get("metadata", {})
                         if meta.get("tps"):
                             console.print(
-                                f"[dim]({meta['tps']:.1f} tok/s, "
-                                f"{meta['tokens']} tokens)[/dim]",
+                                f"[dim]({meta['tps']:.1f} tok/s, {meta['tokens']} tokens)[/dim]",
                                 stderr=True,
                             )
         elif stream and raw:
@@ -969,7 +1072,10 @@ def agents(ctx: click.Context) -> None:
             if profile.description:
                 console.print(f"    {profile.description}")
             console.print(f"    [dim]model: {profile.model.name}[/dim]")
-            console.print(f"    [dim]context: {profile.model.context_window}, temp: {profile.model.temperature}[/dim]")
+            console.print(
+                f"    [dim]context: {profile.model.context_window}, "
+                f"temp: {profile.model.temperature}[/dim]"
+            )
             console.print()
 
         console.print("[dim]towel agents create <name>  — create a new agent[/dim]")
@@ -979,24 +1085,36 @@ def agents(ctx: click.Context) -> None:
 
 @agents.command(name="create")
 @click.argument("name")
-@click.option("--model", "-m", default="mlx-community/Llama-3.3-70B-Instruct-4bit", help="Model name")
+@click.option(
+    "--model", "-m", default="mlx-community/Llama-3.3-70B-Instruct-4bit", help="Model name"
+)
 @click.option("--identity", "-i", default=None, help="System prompt / identity")
 @click.option("--description", "-d", default="", help="Short description")
 @click.option("--context-window", "-c", default=8192, help="Context window size")
 @click.option("--temperature", "-t", default=0.7, help="Temperature")
-@click.option("--turboquant/--no-turboquant", default=False, help="Enable TurboQuant KV cache compression")
+@click.option(
+    "--turboquant/--no-turboquant", default=False, help="Enable TurboQuant KV cache compression"
+)
 @click.option("--tq-bits", default=3, type=int, help="TurboQuant quantization bits (3 or 4)")
 def agents_create(
-    name: str, model: str, identity: str | None,
-    description: str, context_window: int, temperature: float,
-    turboquant: bool, tq_bits: int,
+    name: str,
+    model: str,
+    identity: str | None,
+    description: str,
+    context_window: int,
+    temperature: float,
+    turboquant: bool,
+    tq_bits: int,
 ) -> None:
     """Create a new agent profile."""
     from towel.cli.agent_mgr import create_agent
 
     config = TowelConfig.load()
     if config.get_agent(name):
-        console.print(f"[yellow]Agent '{name}' already exists.[/yellow] Use a different name or delete it first.")
+        console.print(
+            f"[yellow]Agent '{name}' already exists.[/yellow] "
+            "Use a different name or delete it first."
+        )
         return
 
     if not identity:
@@ -1062,7 +1180,7 @@ def agents_delete(name: str) -> None:
         console.print("[dim]Only user-created agents can be deleted.[/dim]")
 
     console.print("[dim]Use with: towel chat --agent coder[/dim]")
-    console.print("[dim]Or:       towel ask --agent researcher \"your question\"[/dim]")
+    console.print('[dim]Or:       towel ask --agent researcher "your question"[/dim]')
 
 
 @cli.group()
@@ -1072,7 +1190,9 @@ def memory() -> None:
 
 
 @memory.command(name="list")
-@click.option("--type", "-t", "mtype", default=None, help="Filter by type (user, project, fact, preference)")
+@click.option(
+    "--type", "-t", "mtype", default=None, help="Filter by type (user, project, fact, preference)"
+)
 def memory_list(mtype: str | None) -> None:
     """List all memories."""
     from towel.memory.store import MemoryStore
@@ -1095,7 +1215,9 @@ def memory_list(mtype: str | None) -> None:
 @memory.command(name="add")
 @click.argument("key")
 @click.argument("content")
-@click.option("--type", "-t", "mtype", default="fact", help="Memory type (user, project, fact, preference)")
+@click.option(
+    "--type", "-t", "mtype", default="fact", help="Memory type (user, project, fact, preference)"
+)
 def memory_add(key: str, content: str, mtype: str) -> None:
     """Add or update a memory."""
     from towel.memory.store import MemoryStore
@@ -1224,6 +1346,7 @@ def models_pull(model_name: str) -> None:
 
     try:
         from huggingface_hub import snapshot_download
+
         snapshot_download(model_name)
         console.print(f"[green]Downloaded:[/green] {model_name}")
         console.print("[dim]Use it with: towel chat (after setting model in config)[/dim]")
@@ -1243,10 +1366,18 @@ def models_active() -> None:
     from towel.cli.models import is_model_cached
 
     console.print(f"  [green]default[/green] -> {config.model.name}", end="")
-    console.print("  [green](cached)[/green]" if is_model_cached(config.model.name) else "  [red](not cached)[/red]")
+    console.print(
+        "  [green](cached)[/green]"
+        if is_model_cached(config.model.name)
+        else "  [red](not cached)[/red]"
+    )
 
     for name, profile in config.list_agents().items():
-        cached = "[green](cached)[/green]" if is_model_cached(profile.model.name) else "[red](not cached)[/red]"
+        cached = (
+            "[green](cached)[/green]"
+            if is_model_cached(profile.model.name)
+            else "[red](not cached)[/red]"
+        )
         console.print(f"  [green]{name}[/green] -> {profile.model.name}  {cached}")
 
 
@@ -1281,6 +1412,7 @@ def config(as_json: bool) -> None:
 
     if as_json:
         import json as json_mod
+
         data = {
             "towel_home": str(TOWEL_HOME),
             "model": {
@@ -1303,7 +1435,10 @@ def config(as_json: bool) -> None:
     console.print("[bold]Towel configuration:[/bold]\n")
     console.print(f"  [green]Home:[/green]           {TOWEL_HOME}")
     config_path = TOWEL_HOME / "config.toml"
-    console.print(f"  [green]Config file:[/green]    {config_path} {'[dim](exists)[/dim]' if config_path.exists() else '[yellow](not found)[/yellow]'}")
+    console.print(
+        f"  [green]Config file:[/green]    {config_path} "
+        f"{'[dim](exists)[/dim]' if config_path.exists() else '[yellow](not found)[/yellow]'}"
+    )
 
     console.print("\n  [bold]Model:[/bold]")
     console.print(f"    [green]Name:[/green]           {cfg.model.name}")
@@ -1315,7 +1450,9 @@ def config(as_json: bool) -> None:
     console.print("\n  [bold]Gateway:[/bold]")
     console.print(f"    [green]Host:[/green]           {cfg.gateway.host}")
     console.print(f"    [green]WebSocket:[/green]      ws://{cfg.gateway.host}:{cfg.gateway.port}")
-    console.print(f"    [green]HTTP API:[/green]       http://{cfg.gateway.host}:{cfg.gateway.port + 1}")
+    console.print(
+        f"    [green]HTTP API:[/green]       http://{cfg.gateway.host}:{cfg.gateway.port + 1}"
+    )
 
     agents = cfg.list_agents()
     if agents:
@@ -1328,6 +1465,7 @@ def config(as_json: bool) -> None:
     console.print("\n  [bold]Skills dirs:[/bold]")
     for d in cfg.skills_dirs:
         from pathlib import Path
+
         p = Path(d).expanduser()
         exists = "[dim](exists)[/dim]" if p.exists() else "[dim](not created)[/dim]"
         console.print(f"    {p} {exists}")
@@ -1337,7 +1475,9 @@ def config(as_json: bool) -> None:
 
 @cli.command(name="skill-init")
 @click.argument("name")
-@click.option("--dir", "output_dir", default=None, help="Output directory (default: ~/.towel/skills/)")
+@click.option(
+    "--dir", "output_dir", default=None, help="Output directory (default: ~/.towel/skills/)"
+)
 def skill_init(name: str, output_dir: str | None) -> None:
     """Generate a skeleton skill file to get started with custom skills."""
     from pathlib import Path
@@ -1413,7 +1553,9 @@ class {class_name}(Skill):
 
 
 @cli.command()
-@click.option("--days", "-d", default=30, help="Delete conversations older than N days (default: 30)")
+@click.option(
+    "--days", "-d", default=30, help="Delete conversations older than N days (default: 30)"
+)
 @click.option("--dry-run", is_flag=True, help="Show what would be deleted without deleting")
 @click.option("--cache", is_flag=True, help="Also report model cache sizes")
 def gc(days: int, dry_run: bool, cache: bool) -> None:
@@ -1468,9 +1610,14 @@ def gc(days: int, dry_run: bool, cache: bool) -> None:
 
     if old_files:
         old_total = sum(s for _, _, s in old_files)
-        console.print(f"\n  [yellow]To remove: {len(old_files)} conversation(s) ({old_total / 1024:.0f} KB)[/yellow]")
+        console.print(
+            f"\n  [yellow]To remove: {len(old_files)} "
+            f"conversation(s) ({old_total / 1024:.0f} KB)[/yellow]"
+        )
         for path, summary, size in old_files[:10]:
-            console.print(f"    [dim]{path.stem}[/dim]  {summary}  [dim]({size / 1024:.1f} KB)[/dim]")
+            console.print(
+                f"    [dim]{path.stem}[/dim]  {summary}  [dim]({size / 1024:.1f} KB)[/dim]"
+            )
         if len(old_files) > 10:
             console.print(f"    [dim]... and {len(old_files) - 10} more[/dim]")
 
@@ -1495,7 +1642,9 @@ def gc(days: int, dry_run: bool, cache: bool) -> None:
             if cache_path.exists():
                 try:
                     size = sum(f.stat().st_size for f in cache_path.rglob("*") if f.is_file())
-                    console.print(f"  {label}: {size / (1024**3):.1f} GB  [dim]({cache_path})[/dim]")
+                    console.print(
+                        f"  {label}: {size / (1024**3):.1f} GB  [dim]({cache_path})[/dim]"
+                    )
                 except OSError:
                     console.print(f"  {label}: [dim](error reading)[/dim]")
             else:
@@ -1541,9 +1690,13 @@ def log(limit: int, today: bool, week: bool) -> None:
         cutoff = None
 
     # Collect all conversations with their messages
-    entries: list[tuple[datetime, str, str, str, list[str]]] = []  # (time, conv_id, title, channel, tags)
+    entries: list[
+        tuple[datetime, str, str, str, list[str]]
+    ] = []  # (time, conv_id, title, channel, tags)
 
-    json_files = sorted(store.store_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    json_files = sorted(
+        store.store_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
+    )
 
     for path in json_files:
         try:
@@ -1570,12 +1723,26 @@ def log(limit: int, today: bool, week: bool) -> None:
         tool_count = sum(1 for m in conv.messages if m.role == Role.TOOL)
 
         # Get total tokens
-        total_tokens = sum(m.metadata.get("tokens", 0) for m in conv.messages if m.role == Role.ASSISTANT)
+        total_tokens = sum(
+            m.metadata.get("tokens", 0) for m in conv.messages if m.role == Role.ASSISTANT
+        )
 
         tags = data.get("tags", [])
         title = conv.display_title
 
-        entries.append((last_active, conv.id, title, conv.channel, tags, user_count, asst_count, tool_count, total_tokens))
+        entries.append(
+            (
+                last_active,
+                conv.id,
+                title,
+                conv.channel,
+                tags,
+                user_count,
+                asst_count,
+                tool_count,
+                total_tokens,
+            )
+        )
 
     # Sort by most recently active
     entries.sort(key=lambda e: e[0], reverse=True)
@@ -1613,13 +1780,18 @@ def log(limit: int, today: bool, week: bool) -> None:
             f"{title[:50]}  [dim]({stats})[/dim] {tag_str}"
         )
 
-    console.print(f"\n[dim]{len(entries)} conversation(s) shown. "
-                  f"View details: towel show <id>[/dim]")
+    console.print(
+        f"\n[dim]{len(entries)} conversation(s) shown. View details: towel show <id>[/dim]"
+    )
 
 
 @cli.command()
-@click.option("--prompt", "-p", default="Explain what a towel is in exactly three sentences.",
-              help="Prompt to use for benchmarking")
+@click.option(
+    "--prompt",
+    "-p",
+    default="Explain what a towel is in exactly three sentences.",
+    help="Prompt to use for benchmarking",
+)
 @click.option("--tokens", "-t", default=128, help="Max tokens to generate")
 @click.option("--rounds", "-r", default=3, help="Number of generation rounds")
 def bench(prompt: str, tokens: int, rounds: int) -> None:
@@ -1640,15 +1812,17 @@ def bench(prompt: str, tokens: int, rounds: int) -> None:
     config = TowelConfig.load()
     model_name = config.model.name
 
-    console.print(Panel(
-        f"[bold]Towel Bench[/bold]\n\n"
-        f"  Model:      [green]{model_name}[/green]\n"
-        f"  Max tokens: {tokens}\n"
-        f"  Rounds:     {rounds}\n"
-        f"  Prompt:     [dim]{prompt[:60]}{'...' if len(prompt) > 60 else ''}[/dim]",
-        border_style="cyan",
-        title="Don't Panic.",
-    ))
+    console.print(
+        Panel(
+            f"[bold]Towel Bench[/bold]\n\n"
+            f"  Model:      [green]{model_name}[/green]\n"
+            f"  Max tokens: {tokens}\n"
+            f"  Rounds:     {rounds}\n"
+            f"  Prompt:     [dim]{prompt[:60]}{'...' if len(prompt) > 60 else ''}[/dim]",
+            border_style="cyan",
+            title="Don't Panic.",
+        )
+    )
 
     # Load model
     console.print("\n[dim]Loading model...[/dim]")
@@ -1656,6 +1830,7 @@ def bench(prompt: str, tokens: int, rounds: int) -> None:
     try:
         from mlx_lm import generate, load
         from mlx_lm.sample_utils import make_sampler
+
         model, tokenizer = load(model_name)
     except Exception as e:
         console.print(f"[red]Failed to load model:[/red] {e}")
@@ -1669,23 +1844,28 @@ def bench(prompt: str, tokens: int, rounds: int) -> None:
             {"role": "system", "content": "You are a helpful assistant. Be concise."},
             {"role": "user", "content": prompt},
         ]
-        formatted = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        formatted = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
     else:
         formatted = f"User: {prompt}\nAssistant:"
 
     # Run benchmark rounds
     tps_values: list[float] = []
-    ttft_values: list[float] = []
+    _ttft_values: list[float] = []
     total_tokens_gen = 0
 
     for i in range(rounds):
-        console.print(f"  Round {i+1}/{rounds}... ", end="")
+        console.print(f"  Round {i + 1}/{rounds}... ", end="")
         gen_start = time_mod.perf_counter()
 
         try:
             output = generate(
-                model, tokenizer, prompt=formatted,
-                max_tokens=tokens, sampler=make_sampler(temp=0.7, top_p=0.95),
+                model,
+                tokenizer,
+                prompt=formatted,
+                max_tokens=tokens,
+                sampler=make_sampler(temp=0.7, top_p=0.95),
             )
         except Exception as e:
             console.print(f"[red]error: {e}[/red]")
@@ -1698,7 +1878,9 @@ def bench(prompt: str, tokens: int, rounds: int) -> None:
         tps = token_count / gen_elapsed if gen_elapsed > 0 else 0
         tps_values.append(tps)
 
-        console.print(f"[green]{tps:.1f} tok/s[/green]  ({token_count} tokens in {gen_elapsed:.2f}s)")
+        console.print(
+            f"[green]{tps:.1f} tok/s[/green]  ({token_count} tokens in {gen_elapsed:.2f}s)"
+        )
 
     if not tps_values:
         console.print("[red]No successful rounds.[/red]")
@@ -1709,21 +1891,26 @@ def bench(prompt: str, tokens: int, rounds: int) -> None:
     peak_tps = max(tps_values)
     min_tps = min(tps_values)
 
-    console.print(Panel(
-        f"  [green]Avg speed:[/green]   {avg_tps:.1f} tok/s\n"
-        f"  [green]Peak:[/green]        {peak_tps:.1f} tok/s\n"
-        f"  [green]Min:[/green]         {min_tps:.1f} tok/s\n"
-        f"  [green]Load time:[/green]   {load_elapsed:.1f}s\n"
-        f"  [green]Total gen:[/green]   {total_tokens_gen:,} tokens across {len(tps_values)} rounds\n"
-        f"  [green]Model:[/green]       {model_name}",
-        title="Results",
-        border_style="green",
-    ))
+    console.print(
+        Panel(
+            f"  [green]Avg speed:[/green]   {avg_tps:.1f} tok/s\n"
+            f"  [green]Peak:[/green]        {peak_tps:.1f} tok/s\n"
+            f"  [green]Min:[/green]         {min_tps:.1f} tok/s\n"
+            f"  [green]Load time:[/green]   {load_elapsed:.1f}s\n"
+            f"  [green]Total gen:[/green]   {total_tokens_gen:,} "
+            f"tokens across {len(tps_values)} rounds\n"
+            f"  [green]Model:[/green]       {model_name}",
+            title="Results",
+            border_style="green",
+        )
+    )
 
 
 @cli.command()
 @click.argument("files", nargs=-1, required=True, type=click.Path(exists=True))
-@click.option("--prompt", "-p", default=None, help="Prompt to run on each file change (default: review)")
+@click.option(
+    "--prompt", "-p", default=None, help="Prompt to run on each file change (default: review)"
+)
 @click.option("--interval", "-i", default=2.0, help="Poll interval in seconds (default: 2)")
 @click.option("--once", is_flag=True, help="Run once and exit (no watching)")
 def watch(files: tuple[str, ...], prompt: str | None, interval: float, once: bool) -> None:
@@ -1788,18 +1975,27 @@ def watch(files: tuple[str, ...], prompt: str | None, interval: float, once: boo
             console.print(f"\n[bold green]towel>[/bold green] {response.content}")
             meta = response.metadata
             if meta.get("tps"):
-                console.print(f"[dim]({meta['tps']:.1f} tok/s, {meta.get('tokens', 0)} tokens)[/dim]")
+                console.print(
+                    f"[dim]({meta['tps']:.1f} tok/s, {meta.get('tokens', 0)} tokens)[/dim]"
+                )
 
         asyncio.run(_run())
 
-    console.print(Panel(
-        f"[bold]Watching {len(paths)} file(s)[/bold]\n"
-        + "\n".join(f"  [green]{p}[/green]" for p in paths)
-        + f"\n\n[dim]Prompt: {default_prompt[:60]}{'...' if len(default_prompt) > 60 else ''}[/dim]"
-        + f"\n[dim]Interval: {interval}s · {'once' if once else 'continuous (Ctrl+C to stop)'}[/dim]",
-        border_style="cyan",
-        title="towel watch",
-    ))
+    console.print(
+        Panel(
+            f"[bold]Watching {len(paths)} file(s)[/bold]\n"
+            + "\n".join(f"  [green]{p}[/green]" for p in paths)
+            + "\n\n[dim]Prompt: "
+            + f"{default_prompt[:60]}"
+            + f"{'...' if len(default_prompt) > 60 else ''}"
+            + "[/dim]"
+            + f"\n[dim]Interval: {interval}s · "
+            + f"{'once' if once else 'continuous (Ctrl+C to stop)'}"
+            + "[/dim]",
+            border_style="cyan",
+            title="towel watch",
+        )
+    )
 
     prev_mtimes = get_mtimes()
 
@@ -1824,7 +2020,9 @@ def watch(files: tuple[str, ...], prompt: str | None, interval: float, once: boo
 
             if changed:
                 ts = time_mod.strftime("%H:%M:%S")
-                console.print(f"\n[yellow]{ts}[/yellow] Changed: {', '.join(Path(f).name for f in changed)}")
+                console.print(
+                    f"\n[yellow]{ts}[/yellow] Changed: {', '.join(Path(f).name for f in changed)}"
+                )
                 run_prompt(changed)
                 console.print("\n[dim]Waiting for changes...[/dim]")
                 prev_mtimes = curr_mtimes
@@ -1834,7 +2032,9 @@ def watch(files: tuple[str, ...], prompt: str | None, interval: float, once: boo
 
 
 @cli.command()
-@click.option("--staged", "-s", is_flag=True, help="Review only staged changes (default: all uncommitted)")
+@click.option(
+    "--staged", "-s", is_flag=True, help="Review only staged changes (default: all uncommitted)"
+)
 @click.option("--commit", "-c", default=None, help="Review a specific commit (hash or HEAD~N)")
 @click.option("--focus", "-f", default=None, help="Focus area: bugs, security, performance, style")
 @click.option("--raw", "-r", is_flag=True, help="Output plain text (no Rich formatting)")
@@ -1879,26 +2079,53 @@ def review(staged: bool, commit: str | None, focus: str | None, raw: bool) -> No
         return
 
     # Count changed files and lines
-    files_changed = len([l for l in diff.splitlines() if l.startswith("diff --git")])
-    additions = len([l for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++")])
-    deletions = len([l for l in diff.splitlines() if l.startswith("-") and not l.startswith("---")])
+    diff_lines = diff.splitlines()
+    files_changed = sum(
+        1 for ln in diff_lines if ln.startswith("diff --git")
+    )
+    additions = sum(
+        1 for ln in diff_lines
+        if ln.startswith("+") and not ln.startswith("+++")
+    )
+    deletions = sum(
+        1 for ln in diff_lines
+        if ln.startswith("-") and not ln.startswith("---")
+    )
 
     if not raw:
-        console.print(Panel(
-            f"[bold]Reviewing {label}[/bold]\n"
-            f"  Files: {files_changed}  +{additions} -{deletions} lines",
-            border_style="cyan",
-            title="towel review",
-        ))
+        console.print(
+            Panel(
+                f"[bold]Reviewing {label}[/bold]\n"
+                f"  Files: {files_changed}  +{additions} -{deletions} lines",
+                border_style="cyan",
+                title="towel review",
+            )
+        )
 
     # Build the review prompt
     focus_instruction = ""
     if focus:
         focus_map = {
-            "bugs": "Focus primarily on bugs, logic errors, off-by-one errors, null/undefined access, and incorrect behavior.",
-            "security": "Focus primarily on security vulnerabilities: injection, XSS, CSRF, hardcoded secrets, insecure defaults, auth issues.",
-            "performance": "Focus primarily on performance: N+1 queries, unnecessary allocations, missing caches, O(n²) algorithms.",
-            "style": "Focus primarily on code style: naming, structure, readability, DRY violations, dead code.",
+            "bugs": (
+                "Focus primarily on bugs, logic errors, "
+                "off-by-one errors, null/undefined access, "
+                "and incorrect behavior."
+            ),
+            "security": (
+                "Focus primarily on security vulnerabilities: "
+                "injection, XSS, CSRF, hardcoded secrets, "
+                "insecure defaults, auth issues."
+            ),
+            "performance": (
+                "Focus primarily on performance: N+1 queries, "
+                "unnecessary allocations, missing caches, "
+                "O(n²) algorithms."
+            ),
+            "style": (
+                "Focus primarily on code style: naming, "
+                "structure, readability, DRY violations, "
+                "dead code."
+            ),
         }
         focus_instruction = focus_map.get(focus, f"Focus on: {focus}")
 
@@ -1934,6 +2161,7 @@ def review(staged: bool, commit: str | None, focus: str | None, raw: bool) -> No
             print(response.content)
         else:
             from towel.agent.events import EventType
+
             console.print("[bold green]towel>[/bold green] ", end="")
             async for event in agent_rt.step_streaming(conv):
                 match event.type:
@@ -1943,7 +2171,10 @@ def review(staged: bool, commit: str | None, focus: str | None, raw: bool) -> No
                         print()
                         meta = event.data.get("metadata", {})
                         if meta.get("tps"):
-                            console.print(f"[dim]({meta['tps']:.1f} tok/s, {meta.get('tokens', 0)} tokens)[/dim]")
+                            console.print(
+                                f"[dim]({meta['tps']:.1f} tok/s, "
+                                f"{meta.get('tokens', 0)} tokens)[/dim]"
+                            )
 
     asyncio.run(_run())
 
@@ -2072,19 +2303,23 @@ def webhook(port: int, host: str, token: str | None) -> None:
     """
     from towel.channels.webhook import WebhookChannel
 
-    console.print(Panel(
-        f"[bold]Webhook Channel[/bold]\n\n"
-        f"  Endpoint: [green]http://{host}:{port}/message[/green]\n"
-        f"  Health:   http://{host}:{port}/health\n"
-        f"  Auth:     {'Bearer token required' if token else 'none (open)'}\n\n"
-        f"[dim]POST {{\"text\": \"your message\"}} to get AI responses.[/dim]",
-        border_style="cyan",
-        title="Don't Panic.",
-    ))
+    console.print(
+        Panel(
+            f"[bold]Webhook Channel[/bold]\n\n"
+            f"  Endpoint: [green]http://{host}:{port}/message[/green]\n"
+            f"  Health:   http://{host}:{port}/health\n"
+            f"  Auth:     {'Bearer token required' if token else 'none (open)'}\n\n"
+            f'[dim]POST {{"text": "your message"}} to get AI responses.[/dim]',
+            border_style="cyan",
+            title="Don't Panic.",
+        )
+    )
 
     channel = WebhookChannel(
         gateway_url=f"ws://{TowelConfig.load().gateway.host}:{TowelConfig.load().gateway.port}",
-        port=port, host=host, token=token,
+        port=port,
+        host=host,
+        token=token,
     )
     asyncio.run(channel.listen())
 
@@ -2092,8 +2327,13 @@ def webhook(port: int, host: str, token: str | None) -> None:
 @cli.command()
 @click.argument("target", required=False)
 @click.option("--bullets", "-b", is_flag=True, help="Output as bullet points")
-@click.option("--length", "-l", default="medium", type=click.Choice(["short", "medium", "long"]),
-              help="Summary length (default: medium)")
+@click.option(
+    "--length",
+    "-l",
+    default="medium",
+    type=click.Choice(["short", "medium", "long"]),
+    help="Summary length (default: medium)",
+)
 @click.option("--raw", "-r", is_flag=True, help="Plain text output (no Rich)")
 def summarize(target: str | None, bullets: bool, length: str, raw: bool) -> None:
     """Summarize a file, URL, or piped input.
@@ -2116,6 +2356,7 @@ def summarize(target: str | None, bullets: bool, length: str, raw: bool) -> None
             # Fetch URL
             try:
                 import httpx
+
                 resp = httpx.get(target, timeout=10, follow_redirects=True)
                 content = resp.text[:50000]
                 source = target
@@ -2178,6 +2419,7 @@ def summarize(target: str | None, bullets: bool, length: str, raw: bool) -> None
             print(resp.content)
         else:
             from towel.agent.events import EventType
+
             async for event in agent_rt.step_streaming(conv):
                 if event.type == EventType.TOKEN:
                     print(event.data["content"], end="", flush=True)
@@ -2196,6 +2438,7 @@ def _oneshot(config, prompt: str, raw: bool = False) -> None:
 
     memory = MemoryStore()
     from towel.cli.main import _build_skill_registry
+
     skills_reg = _build_skill_registry(config, memory_store=memory)
     agent_rt = AgentRuntime(config, skills=skills_reg, memory=memory)
     conv = Conversation(channel="oneshot")
@@ -2214,6 +2457,7 @@ def _oneshot(config, prompt: str, raw: bool = False) -> None:
                     print()
 
     import asyncio as _aio
+
     _aio.run(_run())
 
 
@@ -2355,43 +2599,50 @@ def dashboard() -> None:
 
     # Templates
     from towel.templates.engine import TemplateEngine
+
     tpl_count = len(TemplateEngine().list_templates())
 
     # Aliases & snippets
     try:
         from towel.cli.aliases import list_aliases
+
         alias_count = len(list_aliases())
-    except: alias_count = 0
+    except Exception:
+        alias_count = 0
     try:
         from towel.cli.snippets import list_snippets
-        snippet_count = len(list_snippets())
-    except: snippet_count = 0
 
-    console.print(Panel(
-        f"[bold green]Towel v{__version__}[/bold green] — Don't Panic.\n\n"
-        f"  [bold]Agent[/bold]\n"
-        f"    Model:          [green]{config.model.name}[/green]\n"
-        f"    Context window: {config.model.context_window:,} tokens\n"
-        f"    Max output:     {config.model.max_tokens:,} tokens\n"
-        f"    Temperature:    {config.model.temperature}\n\n"
-        f"  [bold]Skills & Tools[/bold]\n"
-        f"    Skills:    [green]{skill_count}[/green] registered\n"
-        f"    Tools:     [green]{tool_count}[/green] available\n"
-        f"    Templates: {tpl_count}\n"
-        f"    Aliases:   {alias_count}\n"
-        f"    Snippets:  {snippet_count}\n\n"
-        f"  [bold]Data[/bold]\n"
-        f"    Conversations: {len(convos):,}\n"
-        f"    Messages:      {total_msgs:,}\n"
-        f"    Memories:      {mem_count}\n"
-        f"    Storage:       {storage_kb:,} KB\n\n"
-        f"  [bold]Gateway[/bold]\n"
-        f"    WebSocket: ws://{config.gateway.host}:{config.gateway.port}\n"
-        f"    HTTP API:  http://{config.gateway.host}:{config.gateway.port + 1}\n"
-        f"    Home:      {TOWEL_HOME}",
-        border_style="green",
-        title="Dashboard",
-    ))
+        snippet_count = len(list_snippets())
+    except Exception:
+        snippet_count = 0
+
+    console.print(
+        Panel(
+            f"[bold green]Towel v{__version__}[/bold green] — Don't Panic.\n\n"
+            f"  [bold]Agent[/bold]\n"
+            f"    Model:          [green]{config.model.name}[/green]\n"
+            f"    Context window: {config.model.context_window:,} tokens\n"
+            f"    Max output:     {config.model.max_tokens:,} tokens\n"
+            f"    Temperature:    {config.model.temperature}\n\n"
+            f"  [bold]Skills & Tools[/bold]\n"
+            f"    Skills:    [green]{skill_count}[/green] registered\n"
+            f"    Tools:     [green]{tool_count}[/green] available\n"
+            f"    Templates: {tpl_count}\n"
+            f"    Aliases:   {alias_count}\n"
+            f"    Snippets:  {snippet_count}\n\n"
+            f"  [bold]Data[/bold]\n"
+            f"    Conversations: {len(convos):,}\n"
+            f"    Messages:      {total_msgs:,}\n"
+            f"    Memories:      {mem_count}\n"
+            f"    Storage:       {storage_kb:,} KB\n\n"
+            f"  [bold]Gateway[/bold]\n"
+            f"    WebSocket: ws://{config.gateway.host}:{config.gateway.port}\n"
+            f"    HTTP API:  http://{config.gateway.host}:{config.gateway.port + 1}\n"
+            f"    Home:      {TOWEL_HOME}",
+            border_style="green",
+            title="Dashboard",
+        )
+    )
 
 
 @cli.command(name="version")
@@ -2410,6 +2661,7 @@ def version_cmd(full: bool) -> None:
 
     # Count slash commands
     from towel.cli.slash import HELP_TEXT
+
     slash_count = HELP_TEXT.count("/")
 
     console.print("\n[bold]System inventory:[/bold]")
@@ -2423,6 +2675,7 @@ def version_cmd(full: bool) -> None:
 
     try:
         import mlx
+
         console.print(f"  MLX:            {getattr(mlx, '__version__', '?')}")
     except ImportError:
         console.print("  MLX:            not installed")
@@ -2460,8 +2713,10 @@ def plugins(action: str, name: str) -> None:
         for p in found:
             tags = " ".join(f"[dim]#{t}[/dim]" for t in p.tags) if p.tags else ""
             console.print(f"  [green]{p.name}[/green] v{p.version} {tags}")
-            if p.description: console.print(f"    {p.description}")
-            if p.author: console.print(f"    [dim]by {p.author}[/dim]")
+            if p.description:
+                console.print(f"    {p.description}")
+            if p.author:
+                console.print(f"    [dim]by {p.author}[/dim]")
 
     elif action == "create":
         if not name:
@@ -2514,7 +2769,7 @@ def fix(file: str, error: str | None, line: int | None, raw: bool) -> None:
 
     if not error:
         console.print("[red]No error message.[/red]")
-        console.print("  towel fix app.py \"the error message\"")
+        console.print('  towel fix app.py "the error message"')
         console.print("  python app.py 2>&1 | towel fix app.py")
         return
 
@@ -2523,7 +2778,9 @@ def fix(file: str, error: str | None, line: int | None, raw: bool) -> None:
         lines = content.splitlines()
         start = max(0, line - 10)
         end = min(len(lines), line + 10)
-        context = "\n".join(f"{i+1:4d}  {'>>>' if i+1 == line else '   '} {lines[i]}" for i in range(start, end))
+        context = "\n".join(
+            f"{i + 1:4d}  {'>>>' if i + 1 == line else '   '} {lines[i]}" for i in range(start, end)
+        )
         prompt = (
             f"Fix the bug in this {ext} code. The error occurs at line {line}.\n\n"
             f"Error: {error}\n\n"
@@ -2547,7 +2804,9 @@ def fix(file: str, error: str | None, line: int | None, raw: bool) -> None:
 
 @cli.command(name="test-gen")
 @click.argument("file", type=click.Path(exists=True))
-@click.option("--framework", "-f", default=None, help="Test framework (pytest, jest, go test, etc.)")
+@click.option(
+    "--framework", "-f", default=None, help="Test framework (pytest, jest, go test, etc.)"
+)
 @click.option("--output", "-o", default=None, help="Write tests to file instead of stdout")
 @click.option("--raw", "-r", is_flag=True, help="Plain text output")
 def test_gen(file: str, framework: str | None, output: str | None, raw: bool) -> None:
@@ -2564,8 +2823,15 @@ def test_gen(file: str, framework: str | None, output: str | None, raw: bool) ->
     content = Path(file).read_text(encoding="utf-8", errors="replace")
     ext = Path(file).suffix.lstrip(".")
 
-    fw_map = {"py": "pytest", "js": "jest", "ts": "jest", "go": "go test",
-              "rs": "cargo test", "java": "JUnit", "rb": "RSpec"}
+    fw_map = {
+        "py": "pytest",
+        "js": "jest",
+        "ts": "jest",
+        "go": "go test",
+        "rs": "cargo test",
+        "java": "JUnit",
+        "rb": "RSpec",
+    }
     fw = framework or fw_map.get(ext, "appropriate framework")
 
     prompt = (
@@ -2583,6 +2849,7 @@ def test_gen(file: str, framework: str | None, output: str | None, raw: bool) ->
         from towel.agent.conversation import Conversation, Role
         from towel.agent.runtime import AgentRuntime
         from towel.memory.store import MemoryStore
+
         memory = MemoryStore()
         skills_reg = _build_skill_registry(config, memory_store=memory)
         agent_rt = AgentRuntime(config, skills=skills_reg, memory=memory)
@@ -2612,7 +2879,9 @@ def test_gen(file: str, framework: str | None, output: str | None, raw: bool) ->
 
 @cli.command()
 @click.argument("file", type=click.Path(exists=True))
-@click.option("--focus", "-f", default=None, help="Focus: performance, readability, dry, types, security")
+@click.option(
+    "--focus", "-f", default=None, help="Focus: performance, readability, dry, types, security"
+)
 @click.option("--raw", "-r", is_flag=True, help="Plain text output")
 def refactor(file: str, focus: str | None, raw: bool) -> None:
     """Refactor a file — suggest improvements and output cleaned code.
@@ -2624,6 +2893,7 @@ def refactor(file: str, focus: str | None, raw: bool) -> None:
         towel refactor utils.py -f dry
     """
     from pathlib import Path
+
     content = Path(file).read_text(encoding="utf-8", errors="replace")
     ext = Path(file).suffix.lstrip(".")
     focus_inst = f" Focus specifically on {focus}." if focus else ""
@@ -2633,14 +2903,20 @@ def refactor(file: str, focus: str | None, raw: bool) -> None:
         f"```{ext}\n{content[:30000]}\n```"
     )
     config = TowelConfig.load()
-    if not raw: console.print(f"[dim]Refactoring {Path(file).name}...[/dim]")
+    if not raw:
+        console.print(f"[dim]Refactoring {Path(file).name}...[/dim]")
     _oneshot(config, prompt, raw)
 
 
 @cli.command()
 @click.argument("file", type=click.Path(exists=True))
-@click.option("--style", "-s", default="google", type=click.Choice(["google", "numpy", "sphinx", "jsdoc"]),
-              help="Docstring style")
+@click.option(
+    "--style",
+    "-s",
+    default="google",
+    type=click.Choice(["google", "numpy", "sphinx", "jsdoc"]),
+    help="Docstring style",
+)
 @click.option("--output", "-o", default=None, help="Write documented code to file")
 @click.option("--raw", "-r", is_flag=True, help="Plain text output")
 def doc(file: str, style: str, output: str | None, raw: bool) -> None:
@@ -2653,6 +2929,7 @@ def doc(file: str, style: str, output: str | None, raw: bool) -> None:
         towel doc utils.py -o utils_documented.py
     """
     from pathlib import Path
+
     content = Path(file).read_text(encoding="utf-8", errors="replace")
     ext = Path(file).suffix.lstrip(".")
     prompt = (
@@ -2667,14 +2944,17 @@ def doc(file: str, style: str, output: str | None, raw: bool) -> None:
         from towel.agent.conversation import Conversation, Role
         from towel.agent.runtime import AgentRuntime
         from towel.memory.store import MemoryStore
+
         memory = MemoryStore()
         skills_reg = _build_skill_registry(config, memory_store=memory)
         agent_rt = AgentRuntime(config, skills=skills_reg, memory=memory)
         conv = Conversation(channel="doc")
         conv.add(Role.USER, prompt)
+
         async def _gen():
             await agent_rt.load_model()
             return (await agent_rt.step(conv)).content
+
         console.print(f"[dim]Documenting {Path(file).name}...[/dim]")
         result = asyncio.run(_gen())
         if result.startswith("```"):
@@ -2683,7 +2963,8 @@ def doc(file: str, style: str, output: str | None, raw: bool) -> None:
         Path(output).write_text(result + "\n", encoding="utf-8")
         console.print(f"[green]Documented code written to:[/green] {output}")
     else:
-        if not raw: console.print(f"[dim]Documenting {Path(file).name}...[/dim]")
+        if not raw:
+            console.print(f"[dim]Documenting {Path(file).name}...[/dim]")
         _oneshot(config, prompt, raw)
 
 
@@ -2704,13 +2985,20 @@ def completions(shell: str) -> None:
     elif shell == "bash":
         script = f'eval "$({env_var}=bash_source towel)"'
     elif shell == "fish":
-        script = f'{env_var}=fish_source towel | source'
+        script = f"{env_var}=fish_source towel | source"
     print(script)
 
 
 @cli.command()
 @click.option("--chat", "-c", is_flag=True, help="Continuous voice chat mode")
-@click.option("--file", "-f", "audio_file", default=None, type=click.Path(exists=True), help="Transcribe an audio file")
+@click.option(
+    "--file",
+    "-f",
+    "audio_file",
+    default=None,
+    type=click.Path(exists=True),
+    help="Transcribe an audio file",
+)
 @click.option("--duration", "-d", default=10.0, help="Max recording duration in seconds")
 def voice(chat: bool, audio_file: str | None, duration: float) -> None:
     """Talk to Towel with your voice.
@@ -2738,11 +3026,13 @@ def voice(chat: bool, audio_file: str | None, duration: float) -> None:
         return
 
     if chat:
-        console.print(Panel(
-            "[bold green]Voice Chat[/bold green] — speak and get AI responses.\n"
-            "[dim]Press Ctrl+C to stop recording. Say 'exit' or 'quit' to end.[/dim]",
-            border_style="green",
-        ))
+        console.print(
+            Panel(
+                "[bold green]Voice Chat[/bold green] — speak and get AI responses.\n"
+                "[dim]Press Ctrl+C to stop recording. Say 'exit' or 'quit' to end.[/dim]",
+                border_style="green",
+            )
+        )
 
         config = TowelConfig.load()
 
@@ -2776,7 +3066,13 @@ def voice(chat: bool, audio_file: str | None, duration: float) -> None:
 
 
 @cli.command()
-@click.option("--token", "-t", required=True, envvar="DISCORD_TOKEN", help="Discord bot token (or set DISCORD_TOKEN env var)")
+@click.option(
+    "--token",
+    "-t",
+    required=True,
+    envvar="DISCORD_TOKEN",
+    help="Discord bot token (or set DISCORD_TOKEN env var)",
+)
 @click.option("--prefix", "-p", default="!towel", help="Command prefix (default: !towel)")
 def discord(token: str, prefix: str) -> None:
     """Run Towel as a Discord bot.
@@ -2796,24 +3092,33 @@ def discord(token: str, prefix: str) -> None:
     """
     from towel.channels.discord import DiscordChannel
 
-    console.print(Panel(
-        f"[bold green]Discord Bot[/bold green]\n\n"
-        f"  Prefix: [green]{prefix}[/green]\n"
-        f"  Gateway: ws://{TowelConfig.load().gateway.host}:{TowelConfig.load().gateway.port}\n\n"
-        f"[dim]Make sure 'towel serve' is running in another terminal.[/dim]",
-        border_style="blue",
-        title="Don't Panic.",
-    ))
+    console.print(
+        Panel(
+            f"[bold green]Discord Bot[/bold green]\n\n"
+            f"  Prefix: [green]{prefix}[/green]\n"
+            f"  Gateway: ws://{TowelConfig.load().gateway.host}:{TowelConfig.load().gateway.port}\n\n"
+            f"[dim]Make sure 'towel serve' is running in another terminal.[/dim]",
+            border_style="blue",
+            title="Don't Panic.",
+        )
+    )
 
     channel = DiscordChannel(
-        token=token, prefix=prefix,
+        token=token,
+        prefix=prefix,
         gateway_url=f"ws://{TowelConfig.load().gateway.host}:{TowelConfig.load().gateway.port}",
     )
     asyncio.run(channel.listen())
 
 
 @cli.command()
-@click.option("--token", "-t", required=True, envvar="TELEGRAM_TOKEN", help="Telegram bot token (or set TELEGRAM_TOKEN)")
+@click.option(
+    "--token",
+    "-t",
+    required=True,
+    envvar="TELEGRAM_TOKEN",
+    help="Telegram bot token (or set TELEGRAM_TOKEN)",
+)
 def telegram(token: str) -> None:
     """Run Towel as a Telegram bot.
 
@@ -2828,12 +3133,14 @@ def telegram(token: str) -> None:
     """
     from towel.channels.telegram import TelegramChannel
 
-    console.print(Panel(
-        "[bold green]Telegram Bot[/bold green]\n\n"
-        "[dim]Make sure 'towel serve' is running in another terminal.[/dim]",
-        border_style="blue",
-        title="Don't Panic.",
-    ))
+    console.print(
+        Panel(
+            "[bold green]Telegram Bot[/bold green]\n\n"
+            "[dim]Make sure 'towel serve' is running in another terminal.[/dim]",
+            border_style="blue",
+            title="Don't Panic.",
+        )
+    )
 
     channel = TelegramChannel(
         token=token,
@@ -2843,8 +3150,12 @@ def telegram(token: str) -> None:
 
 
 @cli.command()
-@click.option("--bot-token", "-b", required=True, envvar="SLACK_BOT_TOKEN", help="Slack bot token (xoxb-...)")
-@click.option("--app-token", "-a", required=True, envvar="SLACK_APP_TOKEN", help="Slack app token (xapp-...)")
+@click.option(
+    "--bot-token", "-b", required=True, envvar="SLACK_BOT_TOKEN", help="Slack bot token (xoxb-...)"
+)
+@click.option(
+    "--app-token", "-a", required=True, envvar="SLACK_APP_TOKEN", help="Slack app token (xapp-...)"
+)
 def slack(bot_token: str, app_token: str) -> None:
     """Run Towel as a Slack bot via Socket Mode.
 
@@ -2861,15 +3172,18 @@ def slack(bot_token: str, app_token: str) -> None:
     """
     from towel.channels.slack import SlackChannel
 
-    console.print(Panel(
-        "[bold green]Slack Bot[/bold green] (Socket Mode)\n\n"
-        "[dim]Make sure 'towel serve' is running in another terminal.[/dim]",
-        border_style="blue",
-        title="Don't Panic.",
-    ))
+    console.print(
+        Panel(
+            "[bold green]Slack Bot[/bold green] (Socket Mode)\n\n"
+            "[dim]Make sure 'towel serve' is running in another terminal.[/dim]",
+            border_style="blue",
+            title="Don't Panic.",
+        )
+    )
 
     channel = SlackChannel(
-        bot_token=bot_token, app_token=app_token,
+        bot_token=bot_token,
+        app_token=app_token,
         gateway_url=f"ws://{TowelConfig.load().gateway.host}:{TowelConfig.load().gateway.port}",
     )
     asyncio.run(channel.listen())
@@ -2942,7 +3256,9 @@ def tui() -> None:
 
 @cli.command()
 @click.argument("conversation_id", required=False)
-@click.option("--format", "-f", "fmt", default="markdown", type=click.Choice(["markdown", "text", "html"]))
+@click.option(
+    "--format", "-f", "fmt", default="markdown", type=click.Choice(["markdown", "text", "html"])
+)
 @click.option("--expire", "-e", default="1w", help="Expiry (1h, 1d, 1w, 1m)")
 def share(conversation_id: str | None, fmt: str, expire: str) -> None:
     """Share a conversation via a temporary paste link.
@@ -2976,9 +3292,12 @@ def share(conversation_id: str | None, fmt: str, expire: str) -> None:
         return
 
     match fmt:
-        case "html": content = export_html(conv)
-        case "text": content = export_text(conv)
-        case _: content = export_markdown(conv, include_metadata=True)
+        case "html":
+            content = export_html(conv)
+        case "text":
+            content = export_text(conv)
+        case _:
+            content = export_markdown(conv, include_metadata=True)
 
     expire_map = {"1h": 3600, "1d": 86400, "1w": 604800, "1m": 2592000}
     expiry_seconds = expire_map.get(expire, 604800)
@@ -3004,6 +3323,7 @@ def share(conversation_id: str | None, fmt: str, expire: str) -> None:
             # Copy to clipboard
             import platform
             import subprocess
+
             if platform.system() == "Darwin":
                 subprocess.run(["pbcopy"], input=url.encode(), capture_output=True)
                 console.print("  [dim](copied to clipboard)[/dim]")
@@ -3032,15 +3352,19 @@ def repl() -> None:
     """
     config = TowelConfig.load()
     from towel.memory.store import MemoryStore
+
     memory = MemoryStore()
     skills = _build_skill_registry(config, memory_store=memory)
 
     from towel.cli.repl import run_repl
+
     run_repl(skills)
 
 
 @cli.command()
-@click.option("--homeserver", "-h", required=True, envvar="MATRIX_HOMESERVER", help="Matrix homeserver URL")
+@click.option(
+    "--homeserver", "-h", required=True, envvar="MATRIX_HOMESERVER", help="Matrix homeserver URL"
+)
 @click.option("--token", "-t", required=True, envvar="MATRIX_TOKEN", help="Access token")
 def matrix(homeserver: str, token: str) -> None:
     """Run Towel as a Matrix bot.
@@ -3053,16 +3377,19 @@ def matrix(homeserver: str, token: str) -> None:
     """
     from towel.channels.matrix import MatrixChannel
 
-    console.print(Panel(
-        f"[bold green]Matrix Bot[/bold green]\n\n"
-        f"  Homeserver: {homeserver}\n"
-        f"[dim]Make sure 'towel serve' is running.[/dim]",
-        border_style="purple",
-        title="Don't Panic.",
-    ))
+    console.print(
+        Panel(
+            f"[bold green]Matrix Bot[/bold green]\n\n"
+            f"  Homeserver: {homeserver}\n"
+            f"[dim]Make sure 'towel serve' is running.[/dim]",
+            border_style="purple",
+            title="Don't Panic.",
+        )
+    )
 
     channel = MatrixChannel(
-        homeserver=homeserver, access_token=token,
+        homeserver=homeserver,
+        access_token=token,
         gateway_url=f"ws://{TowelConfig.load().gateway.host}:{TowelConfig.load().gateway.port}",
     )
     asyncio.run(channel.listen())
@@ -3198,15 +3525,23 @@ def eval_cmd(suite: str, verbose: bool) -> None:
     console.print(f"[bold]Running eval suite[/bold] ({len(cases)} cases)\n")
 
     # We can't actually run inference without a model, so just score structure
-    result = EvalResult(cases=cases)
+    _result = EvalResult(cases=cases)
 
-    console.print("[dim]Note: full eval requires a loaded model (towel serve must be running).[/dim]")
+    console.print(
+        "[dim]Note: full eval requires a loaded model (towel serve must be running).[/dim]"
+    )
     console.print(f"[dim]Eval suite has {len(cases)} test cases ready.[/dim]")
     console.print("\n[bold]Test cases:[/bold]")
     for i, c in enumerate(cases):
-        tools = f" [yellow]expects: {', '.join(c.expected_tools)}[/yellow]" if c.expected_tools else ""
-        keywords = f" [cyan]keywords: {', '.join(c.expected_keywords[:3])}[/cyan]" if c.expected_keywords else ""
-        console.print(f"  {i+1}. {c.prompt}{tools}{keywords}")
+        tools = (
+            f" [yellow]expects: {', '.join(c.expected_tools)}[/yellow]" if c.expected_tools else ""
+        )
+        keywords = (
+            f" [cyan]keywords: {', '.join(c.expected_keywords[:3])}[/cyan]"
+            if c.expected_keywords
+            else ""
+        )
+        console.print(f"  {i + 1}. {c.prompt}{tools}{keywords}")
 
 
 @cli.command(name="agent")
@@ -3215,7 +3550,9 @@ def eval_cmd(suite: str, verbose: bool) -> None:
 @click.option("--goal", "-g", default=None, help="Agent goal")
 @click.option("--interval", "-i", default=300, help="Check interval in seconds")
 @click.option("--tools", "-t", default=None, help="Comma-separated tool names")
-def agent_cmd(action: str, name: str | None, goal: str | None, interval: int, tools: str | None) -> None:
+def agent_cmd(
+    action: str, name: str | None, goal: str | None, interval: int, tools: str | None
+) -> None:
     """Manage autonomous agents.
 
     \b
@@ -3236,11 +3573,17 @@ def agent_cmd(action: str, name: str | None, goal: str | None, interval: int, to
         for a in agents:
             icon = "[green]●[/green]" if a.enabled else "[dim]○[/dim]"
             console.print(f"  {icon} [green]{a.name}[/green] — {a.goal[:50]}")
-            console.print(f"      Every {a.check_interval}s · {a.total_runs} runs · Tools: {', '.join(a.tools) or 'any'}")
+            console.print(
+                f"      Every {a.check_interval}s · "
+                f"{a.total_runs} runs · "
+                f"Tools: {', '.join(a.tools) or 'any'}"
+            )
 
     elif action == "create":
         if not name or not goal:
-            console.print("[red]Usage:[/red] towel agent create <name> -g 'goal' [-i interval] [-t tools]")
+            console.print(
+                "[red]Usage:[/red] towel agent create <name> -g 'goal' [-i interval] [-t tools]"
+            )
             return
         tool_list = [t.strip() for t in tools.split(",")] if tools else []
         a = create_agent(name, goal, interval, tool_list)
@@ -3260,8 +3603,8 @@ def agent_cmd(action: str, name: str | None, goal: str | None, interval: int, to
             console.print(f"[dim]No logs for {name}.[/dim]")
             return
         console.print(f"[bold]Logs for {name}[/bold] ({len(a.logs)} entries):")
-        for l in a.logs[-10:]:
-            console.print(f"  [{l.timestamp[:19]}] {l.action}: {l.result[:60]}")
+        for entry in a.logs[-10:]:
+            console.print(f"  [{entry.timestamp[:19]}] {entry.action}: {entry.result[:60]}")
 
     elif action == "delete":
         if not name:
@@ -3294,14 +3637,16 @@ def ab_test(prompt: str, model_a: str | None, model_b: str, tokens: int) -> None
     config = TowelConfig.load()
     model_a_name = model_a or config.model.name
 
-    console.print(Panel(
-        f"[bold]A/B Test[/bold]\n\n"
-        f"  A: [green]{model_a_name}[/green]\n"
-        f"  B: [green]{model_b}[/green]\n"
-        f"  Prompt: {prompt[:60]}{'...' if len(prompt) > 60 else ''}\n"
-        f"  Max tokens: {tokens}",
-        border_style="cyan",
-    ))
+    console.print(
+        Panel(
+            f"[bold]A/B Test[/bold]\n\n"
+            f"  A: [green]{model_a_name}[/green]\n"
+            f"  B: [green]{model_b}[/green]\n"
+            f"  Prompt: {prompt[:60]}{'...' if len(prompt) > 60 else ''}\n"
+            f"  Max tokens: {tokens}",
+            border_style="cyan",
+        )
+    )
 
     result = ABTestResult(prompt=prompt)
     result.a.label = model_a_name.split("/")[-1][:20]
@@ -3311,6 +3656,7 @@ def ab_test(prompt: str, model_a: str | None, model_b: str, tokens: int) -> None
     console.print(f"\n[dim]Running model A ({model_a_name})...[/dim]")
     try:
         import copy
+
         config_a = copy.deepcopy(config)
         config_a.model.name = model_a_name
         config_a.model.max_tokens = tokens

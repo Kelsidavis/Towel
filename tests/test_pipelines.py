@@ -1,6 +1,6 @@
 """Tests for tool pipelines."""
-import pytest
-from towel.agent.pipelines import Pipeline, PipeStep, PipelineResult, get_pipeline, list_pipelines
+
+from towel.agent.pipelines import PipelineResult, PipeStep, get_pipeline, list_pipelines
 
 
 class TestPipeStep:
@@ -12,23 +12,33 @@ class TestPipeStep:
 
 class TestPipelineResult:
     def test_success(self):
-        r = PipelineResult(name="test", steps=[
-            PipeStep(tool="a", status="completed"),
-            PipeStep(tool="b", status="completed"),
-        ])
+        r = PipelineResult(
+            name="test",
+            steps=[
+                PipeStep(tool="a", status="completed"),
+                PipeStep(tool="b", status="completed"),
+            ],
+        )
         assert r.success
 
     def test_failure(self):
-        r = PipelineResult(name="test", steps=[
-            PipeStep(tool="a", status="completed"),
-            PipeStep(tool="b", status="failed"),
-        ])
+        r = PipelineResult(
+            name="test",
+            steps=[
+                PipeStep(tool="a", status="completed"),
+                PipeStep(tool="b", status="failed"),
+            ],
+        )
         assert not r.success
 
     def test_summary(self):
-        r = PipelineResult(name="test", steps=[
-            PipeStep(tool="a", status="completed", elapsed=1.2, result="ok"),
-        ], total_elapsed=1.5)
+        r = PipelineResult(
+            name="test",
+            steps=[
+                PipeStep(tool="a", status="completed", elapsed=1.2, result="ok"),
+            ],
+            total_elapsed=1.5,
+        )
         s = r.summary()
         assert "test" in s
         assert "✓" in s

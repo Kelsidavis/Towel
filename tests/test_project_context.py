@@ -1,14 +1,10 @@
 """Tests for .towel.md project context loading."""
 
-from pathlib import Path
-
-import pytest
-
 from towel.agent.project import (
-    find_project_contexts,
-    load_project_context,
     CONTEXT_FILENAME,
     MAX_CONTEXT_BYTES,
+    find_project_contexts,
+    load_project_context,
 )
 
 

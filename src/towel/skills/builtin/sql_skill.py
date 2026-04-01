@@ -29,7 +29,10 @@ class SqlSkill(Skill):
                 parameters={
                     "type": "object",
                     "properties": {
-                        "database": {"type": "string", "description": "Path to .db or .sqlite file"},
+                        "database": {
+                            "type": "string",
+                            "description": "Path to .db or .sqlite file",
+                        },
                         "query": {"type": "string", "description": "SQL SELECT query"},
                         "limit": {"type": "integer", "description": "Max rows (default: 50)"},
                     },
@@ -43,7 +46,10 @@ class SqlSkill(Skill):
                     "type": "object",
                     "properties": {
                         "database": {"type": "string", "description": "Path to database"},
-                        "table": {"type": "string", "description": "Specific table (optional, shows all if omitted)"},
+                        "table": {
+                            "type": "string",
+                            "description": "Specific table (optional, shows all if omitted)",
+                        },
                     },
                     "required": ["database"],
                 },
@@ -66,7 +72,8 @@ class SqlSkill(Skill):
         match tool_name:
             case "sql_query":
                 return self._query(
-                    arguments["database"], arguments["query"],
+                    arguments["database"],
+                    arguments["query"],
                     arguments.get("limit", 50),
                 )
             case "sql_schema":
@@ -90,7 +97,11 @@ class SqlSkill(Skill):
     def _query(self, db_path: str, query: str, limit: int) -> str:
         # Safety: only allow SELECT and PRAGMA
         stripped = query.strip().upper()
-        if not (stripped.startswith("SELECT") or stripped.startswith("PRAGMA") or stripped.startswith("WITH")):
+        if not (
+            stripped.startswith("SELECT")
+            or stripped.startswith("PRAGMA")
+            or stripped.startswith("WITH")
+        ):
             return "Only SELECT, WITH, and PRAGMA queries are allowed (read-only)."
 
         conn = self._connect(db_path)
@@ -152,7 +163,10 @@ class SqlSkill(Skill):
                     lines.append(f"  {c['name']} {c['type']}{pk}{nn}{default}")
                 return "\n".join(lines)
             else:
-                cursor = conn.execute("SELECT name, type FROM sqlite_master WHERE type IN ('table','view') ORDER BY name")
+                cursor = conn.execute(
+                    "SELECT name, type FROM sqlite_master "
+                    "WHERE type IN ('table','view') ORDER BY name"
+                )
                 items = cursor.fetchall()
                 if not items:
                     return "Database has no tables."
@@ -161,7 +175,7 @@ class SqlSkill(Skill):
                     cols = conn.execute(f"PRAGMA table_info({item['name']})").fetchall()
                     col_names = ", ".join(c["name"] for c in cols[:8])
                     if len(cols) > 8:
-                        col_names += f", ... (+{len(cols)-8})"
+                        col_names += f", ... (+{len(cols) - 8})"
                     lines.append(f"  {item['type']} {item['name']} ({len(cols)} cols: {col_names})")
                 return "\n".join(lines)
 

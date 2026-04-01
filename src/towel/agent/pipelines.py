@@ -25,6 +25,7 @@ log = logging.getLogger("towel.agent.pipelines")
 @dataclass
 class PipeStep:
     """A single step in a pipeline."""
+
     tool: str
     args: dict[str, Any] = field(default_factory=dict)
     input_key: str | None = None  # which arg receives previous step's output
@@ -37,6 +38,7 @@ class PipeStep:
 @dataclass
 class PipelineResult:
     """Result of a pipeline execution."""
+
     name: str
     steps: list[PipeStep]
     total_elapsed: float = 0.0
@@ -48,9 +50,11 @@ class PipelineResult:
     def summary(self) -> str:
         lines = [f"Pipeline: {self.name} ({self.total_elapsed:.1f}s)"]
         for i, s in enumerate(self.steps):
-            icon = {"completed":"✓","failed":"✗","skipped":"○","pending":" "}.get(s.status,"?")
-            preview = s.result[:60].replace("\n"," ") if s.result else ""
-            lines.append(f"  [{icon}] {i+1}. {s.tool} ({s.elapsed:.1f}s) {preview}")
+            icon = {"completed": "✓", "failed": "✗", "skipped": "○", "pending": " "}.get(
+                s.status, "?"
+            )
+            preview = s.result[:60].replace("\n", " ") if s.result else ""
+            lines.append(f"  [{icon}] {i + 1}. {s.tool} ({s.elapsed:.1f}s) {preview}")
         return "\n".join(lines)
 
 
@@ -123,7 +127,9 @@ def get_pipeline(name: str) -> Pipeline | None:
     spec = BUILTIN_PIPELINES.get(name)
     if not spec:
         return None
-    steps = [PipeStep(tool=s["tool"], args=s.get("args", {}), input_key=s.get("input_key")) for s in spec]
+    steps = [
+        PipeStep(tool=s["tool"], args=s.get("args", {}), input_key=s.get("input_key")) for s in spec
+    ]
     return Pipeline(name, steps)
 
 

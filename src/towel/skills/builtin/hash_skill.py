@@ -82,7 +82,10 @@ class HashSkill(Skill):
                     "type": "object",
                     "properties": {
                         "text": {"type": "string", "description": "Text to encode/decode"},
-                        "decode": {"type": "boolean", "description": "Decode instead of encode (default: false)"},
+                        "decode": {
+                            "type": "boolean",
+                            "description": "Decode instead of encode (default: false)",
+                        },
                     },
                     "required": ["text"],
                 },
@@ -114,6 +117,7 @@ class HashSkill(Skill):
 
     def _hash_file(self, path: str, algo: str) -> str:
         from pathlib import Path
+
         target = Path(path).expanduser()
         if not target.is_file():
             return f"File not found: {path}"

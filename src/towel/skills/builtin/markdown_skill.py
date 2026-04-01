@@ -27,8 +27,14 @@ class MarkdownSkill(Skill):
                 parameters={
                     "type": "object",
                     "properties": {
-                        "data": {"type": "string", "description": "JSON array of objects or CSV text"},
-                        "alignment": {"type": "string", "description": "Column alignment: left, center, right (default: left)"},
+                        "data": {
+                            "type": "string",
+                            "description": "JSON array of objects or CSV text",
+                        },
+                        "alignment": {
+                            "type": "string",
+                            "description": "Column alignment: left, center, right (default: left)",
+                        },
                     },
                     "required": ["data"],
                 },
@@ -39,8 +45,14 @@ class MarkdownSkill(Skill):
                 parameters={
                     "type": "object",
                     "properties": {
-                        "markdown": {"type": "string", "description": "Markdown text to generate TOC from"},
-                        "max_depth": {"type": "integer", "description": "Max heading depth (default: 3)"},
+                        "markdown": {
+                            "type": "string",
+                            "description": "Markdown text to generate TOC from",
+                        },
+                        "max_depth": {
+                            "type": "integer",
+                            "description": "Max heading depth (default: 3)",
+                        },
                     },
                     "required": ["markdown"],
                 },
@@ -127,6 +139,7 @@ class MarkdownSkill(Skill):
 
     def _toc(self, markdown: str, max_depth: int) -> str:
         import re
+
         lines = []
         for line in markdown.splitlines():
             m = re.match(r"^(#{1,6})\s+(.+)", line)

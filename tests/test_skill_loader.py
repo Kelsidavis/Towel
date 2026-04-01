@@ -1,15 +1,13 @@
 """Tests for the skill auto-loader."""
 
 import textwrap
-from pathlib import Path
 
 import pytest
 
-from towel.skills.registry import SkillRegistry
 from towel.skills.loader import SkillLoader
+from towel.skills.registry import SkillRegistry
 
-
-SINGLE_FILE_SKILL = textwrap.dedent('''\
+SINGLE_FILE_SKILL = textwrap.dedent("""\
     from typing import Any
     from towel.skills.base import Skill, ToolDefinition
 
@@ -29,9 +27,9 @@ SINGLE_FILE_SKILL = textwrap.dedent('''\
 
         async def execute(self, tool_name: str, arguments: dict[str, Any]) -> Any:
             return f"Hello, {arguments.get('name', 'world')}!"
-''')
+""")
 
-PACKAGE_INIT_SKILL = textwrap.dedent('''\
+PACKAGE_INIT_SKILL = textwrap.dedent("""\
     from typing import Any
     from towel.skills.base import Skill, ToolDefinition
 
@@ -49,7 +47,7 @@ PACKAGE_INIT_SKILL = textwrap.dedent('''\
 
         async def execute(self, tool_name: str, arguments: dict[str, Any]) -> Any:
             return arguments.get("a", 0) + arguments.get("b", 0)
-''')
+""")
 
 BAD_SKILL = "raise ImportError('intentional test error')"
 

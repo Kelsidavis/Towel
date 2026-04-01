@@ -41,10 +41,14 @@ class Channel(abc.ABC):
     async def connect(self) -> None:
         """Connect to the gateway WebSocket."""
         self._ws = await websockets.connect(self.gateway_url)
-        await self._ws.send(json.dumps({
-            "type": "register",
-            "id": f"channel:{self.name}",
-        }))
+        await self._ws.send(
+            json.dumps(
+                {
+                    "type": "register",
+                    "id": f"channel:{self.name}",
+                }
+            )
+        )
         resp = json.loads(await self._ws.recv())
         assert resp.get("type") == "registered"
 
@@ -53,13 +57,17 @@ class Channel(abc.ABC):
         if not self._ws:
             await self.connect()
 
-        await self._ws.send(json.dumps({
-            "type": "message",
-            "channel": self.name,
-            "session": session,
-            "content": content,
-            "stream": False,
-        }))
+        await self._ws.send(
+            json.dumps(
+                {
+                    "type": "message",
+                    "channel": self.name,
+                    "session": session,
+                    "content": content,
+                    "stream": False,
+                }
+            )
+        )
         raw = await self._ws.recv()
         return json.loads(raw)
 
@@ -70,13 +78,17 @@ class Channel(abc.ABC):
         if not self._ws:
             await self.connect()
 
-        await self._ws.send(json.dumps({
-            "type": "message",
-            "channel": self.name,
-            "session": session,
-            "content": content,
-            "stream": True,
-        }))
+        await self._ws.send(
+            json.dumps(
+                {
+                    "type": "message",
+                    "channel": self.name,
+                    "session": session,
+                    "content": content,
+                    "stream": True,
+                }
+            )
+        )
 
         while True:
             raw = await self._ws.recv()

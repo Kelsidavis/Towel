@@ -1,15 +1,32 @@
 """Tests for RAG retrieval system."""
+
 import pytest
-from towel.agent.rag import RAGIndex, RAGResult
+
+from towel.agent.rag import RAGIndex
 
 
 class TestRAGIndex:
     @pytest.fixture
     def idx(self):
         rag = RAGIndex(chunk_size=50)
-        rag.add("python", "Python is a high-level programming language known for readability. It supports multiple paradigms including object-oriented and functional programming.")
-        rag.add("javascript", "JavaScript is the language of the web. It runs in browsers and on servers via Node.js. It is dynamically typed and supports async programming.")
-        rag.add("rust", "Rust is a systems programming language focused on safety and performance. It prevents memory errors at compile time through its ownership system.")
+        rag.add(
+            "python",
+            "Python is a high-level programming language known for "
+            "readability. It supports multiple paradigms including "
+            "object-oriented and functional programming.",
+        )
+        rag.add(
+            "javascript",
+            "JavaScript is the language of the web. It runs in "
+            "browsers and on servers via Node.js. It is dynamically "
+            "typed and supports async programming.",
+        )
+        rag.add(
+            "rust",
+            "Rust is a systems programming language focused on "
+            "safety and performance. It prevents memory errors at "
+            "compile time through its ownership system.",
+        )
         return rag
 
     def test_basic_search(self, idx):

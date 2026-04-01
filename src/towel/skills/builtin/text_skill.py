@@ -22,7 +22,10 @@ class TextSkill(Skill):
         return [
             ToolDefinition(
                 name="text_stats",
-                description="Get statistics about text: characters, words, lines, sentences, reading time",
+                description=(
+                    "Get statistics about text: characters, "
+                    "words, lines, sentences, reading time"
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
@@ -33,14 +36,27 @@ class TextSkill(Skill):
             ),
             ToolDefinition(
                 name="text_transform",
-                description="Transform text: uppercase, lowercase, title case, snake_case, camelCase, reverse",
+                description=(
+                    "Transform text: uppercase, lowercase, "
+                    "title case, snake_case, camelCase, reverse"
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "text": {"type": "string", "description": "Text to transform"},
                         "transform": {
                             "type": "string",
-                            "enum": ["upper", "lower", "title", "snake", "camel", "reverse", "sort_lines", "unique_lines", "number_lines"],
+                            "enum": [
+                                "upper",
+                                "lower",
+                                "title",
+                                "snake",
+                                "camel",
+                                "reverse",
+                                "sort_lines",
+                                "unique_lines",
+                                "number_lines",
+                            ],
                             "description": "Transformation to apply",
                         },
                     },
@@ -54,8 +70,15 @@ class TextSkill(Skill):
                     "type": "object",
                     "properties": {
                         "text": {"type": "string", "description": "Text to analyze"},
-                        "mode": {"type": "string", "enum": ["words", "chars"], "description": "Count words or characters (default: words)"},
-                        "top": {"type": "integer", "description": "Number of top items (default: 20)"},
+                        "mode": {
+                            "type": "string",
+                            "enum": ["words", "chars"],
+                            "description": "Count words or characters (default: words)",
+                        },
+                        "top": {
+                            "type": "integer",
+                            "description": "Number of top items (default: 20)",
+                        },
                     },
                     "required": ["text"],
                 },
@@ -69,7 +92,9 @@ class TextSkill(Skill):
             case "text_transform":
                 return self._transform(arguments["text"], arguments["transform"])
             case "text_frequency":
-                return self._frequency(arguments["text"], arguments.get("mode", "words"), arguments.get("top", 20))
+                return self._frequency(
+                    arguments["text"], arguments.get("mode", "words"), arguments.get("top", 20)
+                )
             case _:
                 return f"Unknown tool: {tool_name}"
 
@@ -94,17 +119,22 @@ class TextSkill(Skill):
 
     def _transform(self, text: str, transform: str) -> str:
         match transform:
-            case "upper": return text.upper()
-            case "lower": return text.lower()
-            case "title": return text.title()
+            case "upper":
+                return text.upper()
+            case "lower":
+                return text.lower()
+            case "title":
+                return text.title()
             case "snake":
                 s = re.sub(r"([A-Z])", r"_\1", text).lower()
                 return re.sub(r"[^a-z0-9]+", "_", s).strip("_")
             case "camel":
                 words = re.split(r"[_\s-]+", text)
                 return words[0].lower() + "".join(w.capitalize() for w in words[1:])
-            case "reverse": return text[::-1]
-            case "sort_lines": return "\n".join(sorted(text.splitlines()))
+            case "reverse":
+                return text[::-1]
+            case "sort_lines":
+                return "\n".join(sorted(text.splitlines()))
             case "unique_lines":
                 seen: set[str] = set()
                 result = []
@@ -114,8 +144,9 @@ class TextSkill(Skill):
                         result.append(line)
                 return "\n".join(result)
             case "number_lines":
-                return "\n".join(f"{i+1:4d}  {line}" for i, line in enumerate(text.splitlines()))
-            case _: return f"Unknown transform: {transform}"
+                return "\n".join(f"{i + 1:4d}  {line}" for i, line in enumerate(text.splitlines()))
+            case _:
+                return f"Unknown transform: {transform}"
 
     def _frequency(self, text: str, mode: str, top: int) -> str:
         if mode == "chars":

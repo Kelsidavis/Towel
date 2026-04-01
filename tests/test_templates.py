@@ -2,7 +2,7 @@
 
 import pytest
 
-from towel.templates.engine import TemplateEngine, BUILTIN_TEMPLATES
+from towel.templates.engine import BUILTIN_TEMPLATES, TemplateEngine
 
 
 @pytest.fixture
@@ -97,7 +97,9 @@ class TestRender:
 class TestCLI:
     def test_templates_command(self):
         from click.testing import CliRunner
+
         from towel.cli.main import cli
+
         runner = CliRunner()
         result = runner.invoke(cli, ["templates"])
         assert result.exit_code == 0

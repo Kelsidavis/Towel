@@ -51,34 +51,34 @@ HELP_TEXT = """[bold]Chat commands:[/bold]
   [green]/forget[/green] <key>         Remove a memory
   [green]/t[/green] <template> <input>  Apply a prompt template (e.g., /t review code here)
   [green]/templates[/green]            List available templates
-  [green]/compact[/green] [n]            Summarize old messages to free context (keep last n, default 4)
-  [green]/diff[/green] <id>             Compare this conversation with a saved one
-  [green]/grep[/green] <query>          Search within this conversation
-  [green]/pin[/green]                  Pin last response (stays in context even when old msgs drop)
-  [green]/pins[/green]                 List pinned messages
-  [green]/report[/green]               Generate a session summary (topics, tools, code, decisions)
-  [green]/save[/green] <file> [n]       Save code block from last response to a file (n=block index)
-  [green]/copy[/green] [code]           Copy last response to clipboard (or just code blocks)
-  [green]/tag[/green] <name>            Add a tag to this conversation (or remove with -name)
-  [green]/tags[/green]                 Show tags on this conversation
-  [green]/history[/green] [n]           Browse recent conversations (default: 10)
-  [green]/resume[/green] <id>          Switch to a saved conversation
-  [green]/rename[/green] <title>       Set a title for this conversation
-  [green]/export[/green] [file]        Export conversation to markdown (.html for HTML)
+  [green]/compact[/green] [n]           Summarize old messages (keep last n, default 4)
+  [green]/diff[/green] <id>            Compare this conversation with a saved one
+  [green]/grep[/green] <query>         Search within this conversation
+  [green]/pin[/green]                 Pin last response (stays in context)
+  [green]/pins[/green]                List pinned messages
+  [green]/report[/green]              Generate a session summary (topics, tools, code)
+  [green]/save[/green] <file> [n]      Save code block from last response (n=index)
+  [green]/copy[/green] [code]          Copy last response to clipboard (or code blocks)
+  [green]/tag[/green] <name>           Add a tag to this conversation (or remove with -name)
+  [green]/tags[/green]                Show tags on this conversation
+  [green]/history[/green] [n]          Browse recent conversations (default: 10)
+  [green]/resume[/green] <id>         Switch to a saved conversation
+  [green]/rename[/green] <title>      Set a title for this conversation
+  [green]/export[/green] [file]       Export conversation to markdown (.html for HTML)
   [green]/newagent[/green] <name> <model> <prompt>  Create new agent
-  [green]/delagent[/green] <name>      Delete user agent
-  [green]/context[/green]              Show loaded .towel.md project context
-  [green]/snippet[/green] <n> <text>    Save a reusable text snippet
-  [green]/snippets[/green]             List all snippets
-  [green]/s[/green] <name>              Insert a snippet into your message
-  [green]/alias[/green] <name> <prompt> Create a prompt shortcut (e.g., /alias review Review this code)
-  [green]/aliases[/green]              List all defined aliases
-  [green]/unalias[/green] <name>       Remove an alias
-  [green]/whoami[/green]              Show agent identity, model, and context budget
-  [green]/delegate[/green] <role> <task> Delegate to specialist (coder, reviewer, architect...)
-  [green]/health[/green]              Show agent health and error counts
-  [green]/loop[/green] <interval> <prompt> Run a prompt on a recurring interval (e.g., /loop 5m check status)
-  [green]/system[/green] <prompt>      Override the system prompt
+  [green]/delagent[/green] <name>     Delete user agent
+  [green]/context[/green]             Show loaded .towel.md project context
+  [green]/snippet[/green] <n> <text>   Save a reusable text snippet
+  [green]/snippets[/green]            List all snippets
+  [green]/s[/green] <name>             Insert a snippet into your message
+  [green]/alias[/green] <name> <cmd>   Create a prompt shortcut (e.g., /alias review ...)
+  [green]/aliases[/green]             List all defined aliases
+  [green]/unalias[/green] <name>      Remove an alias
+  [green]/whoami[/green]             Show agent identity, model, and context budget
+  [green]/delegate[/green] <role> <task> Delegate to specialist (coder, reviewer...)
+  [green]/health[/green]             Show agent health and error counts
+  [green]/loop[/green] <interval> <prompt> Run prompt on interval (e.g., /loop 5m ...)
+  [green]/system[/green] <prompt>     Override the system prompt
 """
 
 
@@ -310,13 +310,18 @@ def _cmd_stats(ctx: SlashContext) -> None:
         duration_str = "—"
 
     console.print("[bold]Session statistics:[/bold]")
-    console.print(f"  [green]Messages:[/green]     {len(user_msgs)} you, {len(asst_msgs)} towel, {len(tool_msgs)} tool")
+    console.print(
+        f"  [green]Messages:[/green]     {len(user_msgs)} you, "
+        f"{len(asst_msgs)} towel, {len(tool_msgs)} tool"
+    )
     console.print(f"  [green]Characters:[/green]   {user_chars:,} in, {asst_chars:,} out")
     console.print(f"  [green]Tokens out:[/green]   {total_tokens:,}")
     if tps_values:
         avg_tps = sum(tps_values) / len(tps_values)
         max_tps = max(tps_values)
-        console.print(f"  [green]Speed:[/green]        {avg_tps:.1f} tok/s avg, {max_tps:.1f} tok/s peak")
+        console.print(
+            f"  [green]Speed:[/green]        {avg_tps:.1f} tok/s avg, {max_tps:.1f} tok/s peak"
+        )
     console.print(f"  [green]Duration:[/green]     {duration_str}")
     console.print(f"  [green]Model:[/green]        {ctx.config.model.name}")
 
@@ -418,13 +423,15 @@ def _cmd_fork(ctx: SlashContext, arg: str) -> None:
         created_at=ctx.conv.created_at,
     )
     for msg in ctx.conv.messages:
-        new_conv.messages.append(Message(
-            role=msg.role,
-            content=msg.content,
-            timestamp=msg.timestamp,
-            metadata=dict(msg.metadata),
-            id=msg.id,
-        ))
+        new_conv.messages.append(
+            Message(
+                role=msg.role,
+                content=msg.content,
+                timestamp=msg.timestamp,
+                metadata=dict(msg.metadata),
+                id=msg.id,
+            )
+        )
 
     # Switch to the fork
     ctx.conv.id = new_conv.id
@@ -535,12 +542,14 @@ def _cmd_template(ctx: SlashContext, arg: str) -> bool:
 
     # Expand @file references in the rendered template
     from towel.agent.refs import expand_refs
+
     rendered = expand_refs(rendered)
 
     console.print(f"[dim]  template: {template_name}[/dim]")
 
     # Inject into conversation — the caller will check for False and send it
     from towel.agent.conversation import Role
+
     ctx.conv.add(Role.USER, rendered)
 
     # Return False to signal "this is NOT consumed — run agent step"
@@ -549,6 +558,7 @@ def _cmd_template(ctx: SlashContext, arg: str) -> bool:
 
 def _cmd_templates(ctx: SlashContext) -> None:
     from towel.templates.engine import TemplateEngine
+
     engine = TemplateEngine()
     tpls = engine.list_templates()
     if not tpls:
@@ -563,7 +573,11 @@ def _cmd_newagent(ctx: SlashContext, arg: str) -> None:
     parts = arg.split(None, 2)
     if len(parts) < 2:
         console.print("[red]Usage:[/red] /newagent <name> <model> [identity]")
-        console.print("  Example: /newagent mybot mlx-community/Llama-3.2-8B-Instruct-4bit You are a helpful bot.")
+        console.print(
+            "  Example: /newagent mybot "
+            "mlx-community/Llama-3.2-8B-Instruct-4bit "
+            "You are a helpful bot."
+        )
         return
 
     name = parts[0]
@@ -575,6 +589,7 @@ def _cmd_newagent(ctx: SlashContext, arg: str) -> None:
         return
 
     from towel.cli.agent_mgr import create_agent
+
     profile = create_agent(name=name, model_name=model, identity=identity)
     console.print(f"[green]Created agent:[/green] {name}")
     console.print(f"  Model: {profile.model.name}")
@@ -588,11 +603,13 @@ def _cmd_delagent(ctx: SlashContext, arg: str) -> None:
         return
 
     from towel.config import DEFAULT_AGENTS
+
     if name in DEFAULT_AGENTS:
         console.print(f"[yellow]Cannot delete built-in agent '{name}'.[/yellow]")
         return
 
     from towel.cli.agent_mgr import delete_agent
+
     if delete_agent(name):
         console.print(f"[green]Deleted agent:[/green] {name}")
     else:
@@ -633,13 +650,13 @@ def _cmd_compact(ctx: SlashContext, arg: str) -> None:
     summary_parts.append(f"[Compacted summary of {len(compressible)} earlier messages]\n")
 
     for msg in compressible:
-        role = msg.role.value
+        _role = msg.role.value
         content = msg.content
 
         if msg.role == Role.TOOL:
             # Just note the tool was called
             if content.startswith("[") and "]" in content:
-                tool_name = content[1:content.index("]")]
+                tool_name = content[1 : content.index("]")]
                 summary_parts.append(f"- Tool: {tool_name}")
             continue
 
@@ -647,7 +664,7 @@ def _cmd_compact(ctx: SlashContext, arg: str) -> None:
             continue
 
         # Extract first meaningful line
-        lines = [l.strip() for l in content.split("\n") if l.strip()]
+        lines = [line.strip() for line in content.split("\n") if line.strip()]
         first_line = lines[0][:120] if lines else ""
 
         # Extract code blocks (preserve them fully — they're high-value)
@@ -719,8 +736,8 @@ def _cmd_diff(ctx: SlashContext, arg: str) -> None:
 
     # Show diverging messages side by side
     max_show = 5
-    cur_unique = cur_msgs[common:common + max_show]
-    oth_unique = oth_msgs[common:common + max_show]
+    cur_unique = cur_msgs[common : common + max_show]
+    oth_unique = oth_msgs[common : common + max_show]
 
     if cur_unique:
         console.print("  [cyan]Current branch:[/cyan]")
@@ -728,7 +745,9 @@ def _cmd_diff(ctx: SlashContext, arg: str) -> None:
             preview = msg.content[:80].replace("\n", " ")
             if len(msg.content) > 80:
                 preview += "..."
-            role_color = {"user": "cyan", "assistant": "green", "tool": "yellow"}.get(msg.role.value, "dim")
+            role_color = {"user": "cyan", "assistant": "green", "tool": "yellow"}.get(
+                msg.role.value, "dim"
+            )
             console.print(f"    [{role_color}]{msg.role.value}[/{role_color}] {preview}")
         if len(cur_msgs) - common > max_show:
             console.print(f"    [dim]... and {len(cur_msgs) - common - max_show} more[/dim]")
@@ -739,7 +758,9 @@ def _cmd_diff(ctx: SlashContext, arg: str) -> None:
             preview = msg.content[:80].replace("\n", " ")
             if len(msg.content) > 80:
                 preview += "..."
-            role_color = {"user": "cyan", "assistant": "green", "tool": "yellow"}.get(msg.role.value, "dim")
+            role_color = {"user": "cyan", "assistant": "green", "tool": "yellow"}.get(
+                msg.role.value, "dim"
+            )
             console.print(f"    [{role_color}]{msg.role.value}[/{role_color}] {preview}")
         if len(oth_msgs) - common > max_show:
             console.print(f"    [dim]... and {len(oth_msgs) - common - max_show} more[/dim]")
@@ -769,7 +790,12 @@ def _cmd_grep(ctx: SlashContext, arg: str) -> None:
         if pattern.search(msg.content):
             matches += 1
             role = msg.role.value
-            role_color = {"user": "cyan", "assistant": "green", "tool": "yellow", "system": "dim"}.get(role, "white")
+            role_color = {
+                "user": "cyan",
+                "assistant": "green",
+                "tool": "yellow",
+                "system": "dim",
+            }.get(role, "white")
 
             # Extract snippet around match
             m = pattern.search(msg.content)
@@ -785,7 +811,9 @@ def _cmd_grep(ctx: SlashContext, arg: str) -> None:
             snippet = pattern.sub(lambda x: f"[bold yellow]{x.group()}[/bold yellow]", snippet)
 
             pin_mark = " [magenta]pinned[/magenta]" if msg.pinned else ""
-            console.print(f"  [dim]#{i+1}[/dim] [{role_color}]{role}[/{role_color}]{pin_mark}  {snippet}")
+            console.print(
+                f"  [dim]#{i + 1}[/dim] [{role_color}]{role}[/{role_color}]{pin_mark}  {snippet}"
+            )
 
     if matches == 0:
         console.print(f"[dim]No matches for:[/dim] {query}")
@@ -828,7 +856,9 @@ def _cmd_pin(ctx: SlashContext, arg: str) -> None:
     preview = target.content[:60] + "..." if len(target.content) > 60 else target.content
     preview = preview.replace("\n", " ")
     console.print(f"[green]{action}:[/green] {preview}")
-    console.print("[dim]Pinned messages stay in context even when older messages are dropped.[/dim]")
+    console.print(
+        "[dim]Pinned messages stay in context even when older messages are dropped.[/dim]"
+    )
 
 
 def _cmd_pins(ctx: SlashContext) -> None:
@@ -878,7 +908,7 @@ def _cmd_report(ctx: SlashContext) -> None:
     tool_names: Counter[str] = Counter()
     for m in tool_msgs:
         if m.content.startswith("[") and "]" in m.content:
-            name = m.content[1:m.content.index("]")]
+            name = m.content[1 : m.content.index("]")]
             tool_names[name] += 1
 
     # ── Code blocks in responses ──
@@ -929,7 +959,11 @@ def _cmd_report(ctx: SlashContext) -> None:
             console.print(f"  [yellow]{name}[/yellow] ×{count}")
 
     if code_count:
-        lang_str = ", ".join(f"{l} ({c})" for l, c in languages.most_common(5)) if languages else "unspecified"
+        lang_str = (
+            ", ".join(f"{lang} ({cnt})" for lang, cnt in languages.most_common(5))
+            if languages
+            else "unspecified"
+        )
         console.print(f"\n[bold]Code:[/bold] {code_count} blocks — {lang_str}")
 
     if pinned:
@@ -975,11 +1009,13 @@ def _cmd_save(ctx: SlashContext, arg: str) -> None:
         return
 
     if block_idx < 0 or block_idx >= len(blocks):
-        console.print(f"[red]Block {block_idx + 1} not found.[/red] Response has {len(blocks)} code block(s).")
+        console.print(
+            f"[red]Block {block_idx + 1} not found.[/red] Response has {len(blocks)} code block(s)."
+        )
         if len(blocks) > 1:
             for i, b in enumerate(blocks):
                 preview = b.strip().split("\n")[0][:60]
-                console.print(f"  [dim]{i+1}. {preview}...[/dim]")
+                console.print(f"  [dim]{i + 1}. {preview}...[/dim]")
         return
 
     content = blocks[block_idx].strip()
@@ -1102,6 +1138,7 @@ def _cmd_history(ctx: SlashContext, arg: str) -> None:
         tag_str = ""
         try:
             import json as _json
+
             data = _json.loads(ctx.store._path_for(c.id).read_text(encoding="utf-8"))
             tags = data.get("tags", [])
             if tags:
@@ -1210,6 +1247,7 @@ def _cmd_export(ctx: SlashContext, arg: str) -> None:
 
     if filename:
         from pathlib import Path
+
         Path(filename).write_text(content, encoding="utf-8")
         console.print(f"[green]Exported to:[/green] {filename}")
     else:
@@ -1376,7 +1414,11 @@ def _try_alias(ctx: SlashContext, cmd: str, arg: str) -> bool | None:
 
 def _cmd_system(ctx: SlashContext, arg: str) -> None:
     if not arg:
-        console.print(f"  [dim]{ctx.config.identity[:100]}...[/dim]" if len(ctx.config.identity) > 100 else f"  [dim]{ctx.config.identity}[/dim]")
+        console.print(
+            f"  [dim]{ctx.config.identity[:100]}...[/dim]"
+            if len(ctx.config.identity) > 100
+            else f"  [dim]{ctx.config.identity}[/dim]"
+        )
         console.print("[dim]Override with: /system <new prompt>[/dim]")
         return
     ctx.config.identity = arg
@@ -1446,12 +1488,14 @@ def _cmd_loop(ctx: SlashContext, arg: str) -> None:
 
     def _run_loop():
         import time
+
         while _active_loops.get(loop_name):
             time.sleep(seconds)
             if not _active_loops.get(loop_name):
                 break
             # Add prompt as user message and signal the chat loop
             from towel.agent.conversation import Role
+
             ctx.conv.add(Role.USER, f"[{loop_name}] {prompt}")
             console.print(f"\n[yellow][{loop_name}][/yellow] {prompt}")
 
@@ -1463,7 +1507,7 @@ def _cmd_health(ctx: SlashContext) -> None:
     """Show agent health status."""
 
     # Check if heartbeat is attached to agent
-    hb = getattr(ctx.agent, '_heartbeat', None)
+    hb = getattr(ctx.agent, "_heartbeat", None)
     if not hb:
         console.print("[dim]No heartbeat monitor active.[/dim]")
         console.print("[dim]Heartbeat starts automatically with `towel serve`.[/dim]")
@@ -1493,6 +1537,7 @@ def _cmd_delegate(ctx: SlashContext, arg: str) -> bool | None:
     role, task = parts[0].lower(), parts[1]
 
     from towel.agent.orchestrator import ROLE_PROMPTS
+
     if role not in ROLE_PROMPTS:
         console.print(f"[red]Unknown role:[/red] {role}")
         console.print(f"[dim]Available: {', '.join(sorted(ROLE_PROMPTS.keys()))}[/dim]")
@@ -1520,7 +1565,7 @@ def _cmd_whoami(ctx: SlashContext) -> None:
 
     # Count conversation tokens
     conv_chars = sum(len(m.content) for m in conv.messages)
-    conv_tokens = count_tokens_fallback(str(conv_chars))
+    _conv_tokens = count_tokens_fallback(str(conv_chars))
 
     # Skills
     skills = ctx.agent.skills
@@ -1531,15 +1576,22 @@ def _cmd_whoami(ctx: SlashContext) -> None:
     console.print(f"  Model: [green]{config.model.name}[/green]")
     console.print(f"  Agent: {ctx.current_agent_name or 'default'}")
     if config.model.turboquant:
-        console.print(f"  KV cache: [cyan]TurboQuant {config.model.turboquant_bits}-bit[/cyan] (QJL ratio {config.model.turboquant_qjl_ratio})")
-    console.print(f"  Identity: [dim]{config.identity[:80]}{'...' if len(config.identity) > 80 else ''}[/dim]")
+        console.print(
+            f"  KV cache: [cyan]TurboQuant "
+            f"{config.model.turboquant_bits}-bit[/cyan] "
+            f"(QJL ratio {config.model.turboquant_qjl_ratio})"
+        )
+    console.print(
+        f"  Identity: [dim]{config.identity[:80]}{'...' if len(config.identity) > 80 else ''}[/dim]"
+    )
     console.print("\n[bold]Context budget:[/bold]")
     console.print(f"  Window:     {config.model.context_window:,} tokens")
     console.print(f"  Max output: {config.model.max_tokens:,} tokens")
     console.print(f"  System:     ~{sys_tokens:,} tokens")
     console.print(f"  Messages:   {len(conv)} ({conv_chars:,} chars)")
     pinned = sum(1 for m in conv.messages if m.pinned)
-    if pinned: console.print(f"  Pinned:     {pinned}")
+    if pinned:
+        console.print(f"  Pinned:     {pinned}")
     console.print("\n[bold]Capabilities:[/bold]")
     console.print(f"  Skills: {skill_count}  Tools: {tool_count}")
     if conv.tags:

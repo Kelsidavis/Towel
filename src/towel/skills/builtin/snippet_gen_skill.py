@@ -39,7 +39,7 @@ def main(input: str, output: str, verbose: bool) -> None:
 if __name__ == "__main__":
     main()
 ''',
-    "python-test": '''import pytest
+    "python-test": """import pytest
 
 
 class Test{name}:
@@ -53,7 +53,7 @@ class Test{name}:
     def test_basic_behavior(self, subject):
         # TODO: implement
         pass
-''',
+""",
     "python-async": '''import asyncio
 
 async def {name}({params}) -> {return_type}:
@@ -68,7 +68,7 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 ''',
-    "js-fetch": '''async function {name}(url, options = {{}}) {{
+    "js-fetch": """async function {name}(url, options = {{}}) {{
   const response = await fetch(url, {{
     headers: {{ 'Content-Type': 'application/json', ...options.headers }},
     ...options,
@@ -76,8 +76,8 @@ if __name__ == "__main__":
   if (!response.ok) throw new Error(`HTTP ${{response.status}}`);
   return response.json();
 }}
-''',
-    "js-express": '''import express from 'express';
+""",
+    "js-express": """import express from 'express';
 
 const app = express();
 app.use(express.json());
@@ -87,8 +87,8 @@ app.get('/', (req, res) => {{
 }});
 
 app.listen(3000, () => console.log('Listening on :3000'));
-''',
-    "sql-create-table": '''CREATE TABLE {name} (
+""",
+    "sql-create-table": """CREATE TABLE {name} (
     id SERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -96,8 +96,8 @@ app.listen(3000, () => console.log('Listening on :3000'));
 );
 
 CREATE INDEX idx_{name}_created_at ON {name}(created_at);
-''',
-    "docker-compose": '''version: '3.8'
+""",
+    "docker-compose": """version: '3.8'
 
 services:
   app:
@@ -120,12 +120,12 @@ services:
 
 volumes:
   pgdata:
-''',
-    "github-pr-template": '''## Summary
+""",
+    "github-pr-template": """## Summary
 <!-- What does this PR do? -->
 
 ## Changes
-- 
+-
 
 ## Test Plan
 - [ ] Unit tests pass
@@ -133,27 +133,46 @@ volumes:
 
 ## Screenshots
 <!-- If applicable -->
-''',
+""",
 }
 
 
 class SnippetGenSkill(Skill):
     @property
-    def name(self) -> str: return "codegen"
+    def name(self) -> str:
+        return "codegen"
+
     @property
-    def description(self) -> str: return "Generate code snippets and common patterns for multiple languages"
+    def description(self) -> str:
+        return "Generate code snippets and common patterns for multiple languages"
 
     def tools(self) -> list[ToolDefinition]:
         return [
-            ToolDefinition(name="codegen_list", description="List available code snippet templates",
-                parameters={"type":"object","properties":{}}),
-            ToolDefinition(name="codegen_generate", description="Generate a code snippet from a template",
-                parameters={"type":"object","properties":{
-                    "template":{"type":"string","description":f"Template: {', '.join(SNIPPETS.keys())}"},
-                    "name":{"type":"string","description":"Name (class/function/table name)"},
-                    "description":{"type":"string","description":"Description"},
-                    "params":{"type":"string","description":"Parameters (optional)"},
-                },"required":["template","name"]}),
+            ToolDefinition(
+                name="codegen_list",
+                description="List available code snippet templates",
+                parameters={"type": "object", "properties": {}},
+            ),
+            ToolDefinition(
+                name="codegen_generate",
+                description="Generate a code snippet from a template",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "template": {
+                            "type": "string",
+                            "description": f"Template: {', '.join(SNIPPETS.keys())}",
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "Name (class/function/table name)",
+                        },
+                        "description": {"type": "string", "description": "Description"},
+                        "params": {"type": "string", "description": "Parameters (optional)"},
+                    },
+                    "required": ["template", "name"],
+                },
+            ),
         ]
 
     async def execute(self, tool_name: str, arguments: dict[str, Any]) -> Any:
@@ -161,9 +180,14 @@ class SnippetGenSkill(Skill):
             case "codegen_list":
                 return "Code templates:\n" + "\n".join(f"  {k}" for k in sorted(SNIPPETS.keys()))
             case "codegen_generate":
-                return self._gen(arguments["template"], arguments["name"],
-                                 arguments.get("description",""), arguments.get("params",""))
-            case _: return f"Unknown tool: {tool_name}"
+                return self._gen(
+                    arguments["template"],
+                    arguments["name"],
+                    arguments.get("description", ""),
+                    arguments.get("params", ""),
+                )
+            case _:
+                return f"Unknown tool: {tool_name}"
 
     def _gen(self, template: str, name: str, desc: str, params: str) -> str:
         if template not in SNIPPETS:

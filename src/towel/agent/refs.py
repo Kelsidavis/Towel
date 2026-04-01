@@ -56,12 +56,14 @@ def parse_refs(text: str) -> list[FileRef]:
         path_part = full.split(":")[0]
         line_start = int(match.group(2)) if match.group(2) else None
         line_end = int(match.group(3)) if match.group(3) else None
-        refs.append(FileRef(
-            raw=f"@{full}",
-            path=path_part,
-            line_start=line_start,
-            line_end=line_end,
-        ))
+        refs.append(
+            FileRef(
+                raw=f"@{full}",
+                path=path_part,
+                line_start=line_start,
+                line_end=line_end,
+            )
+        )
     return refs
 
 
@@ -152,7 +154,11 @@ def _read_file(path: Path, line_start: int | None, line_end: int | None) -> str 
     """Read a file (or a line range) and return a fenced code block."""
     try:
         if path.stat().st_size > MAX_FILE_SIZE:
-            return f"\n**{path.name}** (too large — {path.stat().st_size} bytes, max {MAX_FILE_SIZE})\n"
+            size = path.stat().st_size
+            return (
+                f"\n**{path.name}** (too large — "
+                f"{size} bytes, max {MAX_FILE_SIZE})\n"
+            )
 
         content = path.read_text(encoding="utf-8", errors="replace")
 
@@ -228,12 +234,31 @@ def _fetch_url(url: str) -> str | None:
 def _ext_to_lang(ext: str) -> str:
     """Map file extension to markdown code fence language."""
     mapping = {
-        "py": "python", "js": "javascript", "ts": "typescript",
-        "tsx": "tsx", "jsx": "jsx", "rs": "rust", "go": "go",
-        "c": "c", "h": "c", "cpp": "cpp", "hpp": "cpp",
-        "java": "java", "rb": "ruby", "sh": "bash", "zsh": "bash",
-        "yml": "yaml", "yaml": "yaml", "toml": "toml", "json": "json",
-        "md": "markdown", "html": "html", "css": "css", "sql": "sql",
-        "swift": "swift", "kt": "kotlin", "r": "r",
+        "py": "python",
+        "js": "javascript",
+        "ts": "typescript",
+        "tsx": "tsx",
+        "jsx": "jsx",
+        "rs": "rust",
+        "go": "go",
+        "c": "c",
+        "h": "c",
+        "cpp": "cpp",
+        "hpp": "cpp",
+        "java": "java",
+        "rb": "ruby",
+        "sh": "bash",
+        "zsh": "bash",
+        "yml": "yaml",
+        "yaml": "yaml",
+        "toml": "toml",
+        "json": "json",
+        "md": "markdown",
+        "html": "html",
+        "css": "css",
+        "sql": "sql",
+        "swift": "swift",
+        "kt": "kotlin",
+        "r": "r",
     }
     return mapping.get(ext, ext)

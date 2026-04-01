@@ -82,9 +82,7 @@ class MemoryStore:
             return self._cache
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            self._cache = {
-                k: MemoryEntry.from_dict(v) for k, v in data.items()
-            }
+            self._cache = {k: MemoryEntry.from_dict(v) for k, v in data.items()}
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             log.warning(f"Failed to load memories: {e}")
             self._cache = {}
@@ -147,8 +145,7 @@ class MemoryStore:
         """Search memories by key or content."""
         q = query.lower()
         return [
-            e for e in self._load_all().values()
-            if q in e.key.lower() or q in e.content.lower()
+            e for e in self._load_all().values() if q in e.key.lower() or q in e.content.lower()
         ]
 
     def to_prompt_block(self) -> str:
@@ -157,7 +154,9 @@ class MemoryStore:
         if not entries:
             return ""
 
-        lines = ["\n\n## Your Memory\nYou have the following persistent memories from past sessions:\n"]
+        lines = [
+            "\n\n## Your Memory\nYou have the following persistent memories from past sessions:\n"
+        ]
 
         by_type: dict[str, list[MemoryEntry]] = {}
         for e in entries:

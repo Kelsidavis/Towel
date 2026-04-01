@@ -33,12 +33,18 @@ class HttpSkill(Skill):
                             "type": "object",
                             "description": "Request headers as key-value pairs",
                         },
-                        "body": {"type": "string", "description": "Request body (for POST/PUT/PATCH)"},
+                        "body": {
+                            "type": "string",
+                            "description": "Request body (for POST/PUT/PATCH)",
+                        },
                         "json_body": {
                             "type": "object",
                             "description": "JSON body (auto-sets Content-Type)",
                         },
-                        "timeout": {"type": "number", "description": "Timeout in seconds (default: 10)"},
+                        "timeout": {
+                            "type": "number",
+                            "description": "Timeout in seconds (default: 10)",
+                        },
                     },
                     "required": ["url"],
                 },
@@ -73,8 +79,13 @@ class HttpSkill(Skill):
                 return f"Unknown tool: {tool_name}"
 
     async def _request(
-        self, url: str, method: str, headers: dict | None,
-        body: str | None, json_body: dict | None, timeout: float,
+        self,
+        url: str,
+        method: str,
+        headers: dict | None,
+        body: str | None,
+        json_body: dict | None,
+        timeout: float,
     ) -> str:
         import httpx
 
@@ -82,7 +93,11 @@ class HttpSkill(Skill):
         req_headers = dict(headers) if headers else {}
         req_headers.setdefault("User-Agent", "Towel/1.0")
 
-        kwargs: dict[str, Any] = {"headers": req_headers, "timeout": timeout, "follow_redirects": True}
+        kwargs: dict[str, Any] = {
+            "headers": req_headers,
+            "timeout": timeout,
+            "follow_redirects": True,
+        }
 
         if json_body is not None:
             kwargs["json"] = json_body
@@ -99,8 +114,14 @@ class HttpSkill(Skill):
             ]
 
             # Key headers
-            for h in ["content-type", "content-length", "server", "location",
-                       "x-request-id", "x-ratelimit-remaining"]:
+            for h in [
+                "content-type",
+                "content-length",
+                "server",
+                "location",
+                "x-request-id",
+                "x-ratelimit-remaining",
+            ]:
                 val = resp.headers.get(h)
                 if val:
                     lines.append(f"{h}: {val}")
@@ -129,6 +150,7 @@ class HttpSkill(Skill):
 
     async def _head(self, url: str) -> str:
         import httpx
+
         try:
             async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
                 resp = await client.head(url, headers={"User-Agent": "Towel/1.0"})

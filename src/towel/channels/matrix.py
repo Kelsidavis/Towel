@@ -48,7 +48,9 @@ class MatrixChannel(Channel):
 
         # Verify token and get user ID
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{self.homeserver}/_matrix/client/v3/account/whoami", headers=headers)
+            resp = await client.get(
+                f"{self.homeserver}/_matrix/client/v3/account/whoami", headers=headers
+            )
             data = resp.json()
             if "user_id" not in data:
                 log.error(f"Auth failed: {data}")
@@ -60,7 +62,8 @@ class MatrixChannel(Channel):
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(
                 f"{self.homeserver}/_matrix/client/v3/sync",
-                headers=headers, params={"timeout": "0"},
+                headers=headers,
+                params={"timeout": "0"},
             )
             self._next_batch = resp.json().get("next_batch", "")
 
@@ -113,6 +116,7 @@ class MatrixChannel(Channel):
 
     async def _send_message(self, room_id: str, text: str, headers: dict) -> None:
         import httpx
+
         txn_id = str(int(time.time() * 1000))
         try:
             async with httpx.AsyncClient(timeout=10) as client:

@@ -123,11 +123,7 @@ class SkillLoader:
         skills: list[Skill] = []
 
         for _name, obj in inspect.getmembers(module, inspect.isclass):
-            if (
-                issubclass(obj, Skill)
-                and obj is not Skill
-                and not inspect.isabstract(obj)
-            ):
+            if issubclass(obj, Skill) and obj is not Skill and not inspect.isabstract(obj):
                 try:
                     instance = obj()
                     skills.append(instance)

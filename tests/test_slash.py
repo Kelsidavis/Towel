@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from towel.agent.conversation import Conversation, Role
-from towel.cli.slash import handle_slash, SlashContext
+from towel.cli.slash import SlashContext, handle_slash
 from towel.config import TowelConfig
 from towel.memory.store import MemoryStore
 
@@ -181,8 +181,9 @@ class TestCompact:
 
 class TestDiff:
     def test_diff_identical(self, ctx, tmp_path):
-        from towel.persistence.store import ConversationStore
         from towel.agent.conversation import Conversation
+        from towel.persistence.store import ConversationStore
+
         store = ConversationStore(store_dir=tmp_path / "convs")
         ctx.store = store
 
@@ -195,8 +196,9 @@ class TestDiff:
         handle_slash("/diff other-1", ctx)  # should say identical
 
     def test_diff_divergent(self, ctx, tmp_path):
-        from towel.persistence.store import ConversationStore
         from towel.agent.conversation import Conversation
+        from towel.persistence.store import ConversationStore
+
         store = ConversationStore(store_dir=tmp_path / "convs")
         ctx.store = store
 
@@ -272,6 +274,7 @@ class TestPin:
 
     def test_pinned_serialization(self):
         from towel.agent.conversation import Message, Role
+
         msg = Message(role=Role.ASSISTANT, content="important", pinned=True)
         d = msg.to_dict()
         assert d["pinned"] is True
@@ -280,6 +283,7 @@ class TestPin:
 
     def test_unpinned_not_in_dict(self):
         from towel.agent.conversation import Message, Role
+
         msg = Message(role=Role.ASSISTANT, content="normal")
         d = msg.to_dict()
         assert "pinned" not in d  # only serialized when True
@@ -342,7 +346,10 @@ class TestCopy:
     def test_copy_extracts_code_blocks(self, ctx):
         """Test code extraction logic without actually touching clipboard."""
         import re
-        ctx.conv.add(Role.ASSISTANT, "Here:\n```python\nprint('hi')\n```\nand\n```js\nalert(1)\n```")
+
+        ctx.conv.add(
+            Role.ASSISTANT, "Here:\n```python\nprint('hi')\n```\nand\n```js\nalert(1)\n```"
+        )
         last = ctx.conv.messages[-1]
         blocks = re.findall(r"```\w*\n(.*?)```", last.content, re.DOTALL)
         assert len(blocks) == 2
@@ -415,8 +422,9 @@ class TestFork:
 
 class TestHistoryAndResume:
     def test_history_shows_conversations(self, ctx, tmp_path):
-        from towel.persistence.store import ConversationStore
         from towel.agent.conversation import Conversation
+        from towel.persistence.store import ConversationStore
+
         store = ConversationStore(store_dir=tmp_path / "convs")
         ctx.store = store
 
@@ -432,12 +440,14 @@ class TestHistoryAndResume:
 
     def test_history_empty(self, ctx, tmp_path):
         from towel.persistence.store import ConversationStore
+
         ctx.store = ConversationStore(store_dir=tmp_path / "empty")
         handle_slash("/history", ctx)  # should say "no saved"
 
     def test_resume_switches_conversation(self, ctx, tmp_path):
-        from towel.persistence.store import ConversationStore
         from towel.agent.conversation import Conversation
+        from towel.persistence.store import ConversationStore
+
         store = ConversationStore(store_dir=tmp_path / "convs")
         ctx.store = store
 
@@ -458,6 +468,7 @@ class TestHistoryAndResume:
 
     def test_resume_not_found(self, ctx, tmp_path):
         from towel.persistence.store import ConversationStore
+
         ctx.store = ConversationStore(store_dir=tmp_path / "empty")
         handle_slash("/resume nonexistent", ctx)  # should print error
 
@@ -515,6 +526,7 @@ class TestSnippets:
         monkeypatch.setattr("towel.cli.snippets.SNIPPETS_FILE", tmp_path / "snippets.json")
         handle_slash("/snippet header # My Project", ctx)
         from towel.cli.snippets import get_snippet
+
         monkeypatch.setattr("towel.cli.snippets.SNIPPETS_FILE", tmp_path / "snippets.json")
         assert get_snippet("header") == "# My Project"
 
@@ -522,15 +534,18 @@ class TestSnippets:
         monkeypatch.setattr("towel.cli.snippets.SNIPPETS_FILE", tmp_path / "snippets.json")
         handle_slash("/snippet sig Best regards\\nKelsi", ctx)
         from towel.cli.snippets import get_snippet
+
         monkeypatch.setattr("towel.cli.snippets.SNIPPETS_FILE", tmp_path / "snippets.json")
         assert get_snippet("sig") == "Best regards\nKelsi"
 
     def test_remove_snippet(self, ctx, tmp_path, monkeypatch):
         monkeypatch.setattr("towel.cli.snippets.SNIPPETS_FILE", tmp_path / "snippets.json")
         from towel.cli.snippets import set_snippet
+
         set_snippet("temp", "temporary")
         handle_slash("/snippet -temp", ctx)
         from towel.cli.snippets import get_snippet
+
         monkeypatch.setattr("towel.cli.snippets.SNIPPETS_FILE", tmp_path / "snippets.json")
         assert get_snippet("temp") is None
 
@@ -542,6 +557,7 @@ class TestSnippets:
     def test_use_snippet(self, ctx, tmp_path, monkeypatch):
         monkeypatch.setattr("towel.cli.snippets.SNIPPETS_FILE", tmp_path / "snippets.json")
         from towel.cli.snippets import set_snippet
+
         set_snippet("greet", "Hello, please help with")
         result = handle_slash("/s greet my code", ctx)
         assert result is False  # signal agent step
@@ -560,6 +576,7 @@ class TestAliases:
         monkeypatch.setattr("towel.cli.aliases.ALIASES_FILE", tmp_path / "aliases.json")
         handle_slash("/alias review Review this code carefully", ctx)
         from towel.cli.aliases import get_alias
+
         monkeypatch.setattr("towel.cli.aliases.ALIASES_FILE", tmp_path / "aliases.json")
         assert get_alias("review") == "Review this code carefully"
 
@@ -573,12 +590,14 @@ class TestAliases:
         handle_slash("/alias temp Temporary alias", ctx)
         handle_slash("/unalias temp", ctx)
         from towel.cli.aliases import get_alias
+
         monkeypatch.setattr("towel.cli.aliases.ALIASES_FILE", tmp_path / "aliases.json")
         assert get_alias("temp") is None
 
     def test_alias_expansion(self, ctx, tmp_path, monkeypatch):
         monkeypatch.setattr("towel.cli.aliases.ALIASES_FILE", tmp_path / "aliases.json")
         from towel.cli.aliases import set_alias
+
         set_alias("greet", "Say hello to")
         result = handle_slash("/greet the world", ctx)
         assert result is False  # should signal agent step
@@ -590,6 +609,7 @@ class TestAliases:
     def test_alias_no_args(self, ctx, tmp_path, monkeypatch):
         monkeypatch.setattr("towel.cli.aliases.ALIASES_FILE", tmp_path / "aliases.json")
         from towel.cli.aliases import set_alias
+
         set_alias("status", "What is the current project status?")
         result = handle_slash("/status", ctx)
         assert result is False

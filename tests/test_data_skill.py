@@ -1,6 +1,7 @@
 """Tests for the data skill."""
 
 import pytest
+
 from towel.skills.builtin.data import DataSkill
 
 
@@ -108,5 +109,7 @@ class TestCalculate:
 
     @pytest.mark.asyncio
     async def test_no_builtins_access(self, skill):
-        result = await skill.execute("calculate", {"expression": "__import__('os').system('echo hi')"})
+        result = await skill.execute(
+            "calculate", {"expression": "__import__('os').system('echo hi')"}
+        )
         assert "error" in result.lower()

@@ -1,7 +1,5 @@
 """Tests for conversation titles."""
 
-import pytest
-
 from towel.agent.conversation import Conversation, Role
 from towel.persistence.store import ConversationStore
 
@@ -87,8 +85,9 @@ class TestStoreRename:
 class TestGatewayRename:
     def test_rename_endpoint(self, tmp_path):
         from starlette.testclient import TestClient
-        from towel.config import TowelConfig
+
         from towel.agent.runtime import AgentRuntime
+        from towel.config import TowelConfig
         from towel.gateway.server import GatewayServer
         from towel.gateway.sessions import SessionManager
 
@@ -116,8 +115,9 @@ class TestGatewayRename:
 
     def test_rename_nonexistent(self, tmp_path):
         from starlette.testclient import TestClient
-        from towel.config import TowelConfig
+
         from towel.agent.runtime import AgentRuntime
+        from towel.config import TowelConfig
         from towel.gateway.server import GatewayServer
         from towel.gateway.sessions import SessionManager
 
@@ -135,8 +135,9 @@ class TestGatewayRename:
 
     def test_rename_empty_title_rejected(self, tmp_path):
         from starlette.testclient import TestClient
-        from towel.config import TowelConfig
+
         from towel.agent.runtime import AgentRuntime
+        from towel.config import TowelConfig
         from towel.gateway.server import GatewayServer
         from towel.gateway.sessions import SessionManager
 

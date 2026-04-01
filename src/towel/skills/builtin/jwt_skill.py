@@ -13,26 +13,38 @@ from towel.skills.base import Skill, ToolDefinition
 
 def _b64_decode(s: str) -> bytes:
     padding = 4 - len(s) % 4
-    if padding != 4: s += "=" * padding
+    if padding != 4:
+        s += "=" * padding
     return base64.urlsafe_b64decode(s)
 
 
 class JwtSkill(Skill):
     @property
-    def name(self) -> str: return "jwt"
+    def name(self) -> str:
+        return "jwt"
+
     @property
-    def description(self) -> str: return "Decode and inspect JSON Web Tokens (no signature verification)"
+    def description(self) -> str:
+        return "Decode and inspect JSON Web Tokens (no signature verification)"
 
     def tools(self) -> list[ToolDefinition]:
         return [
-            ToolDefinition(name="jwt_decode", description="Decode a JWT and show header, payload, and expiry status",
-                parameters={"type":"object","properties":{
-                    "token":{"type":"string","description":"The JWT string"},
-                },"required":["token"]}),
+            ToolDefinition(
+                name="jwt_decode",
+                description="Decode a JWT and show header, payload, and expiry status",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "token": {"type": "string", "description": "The JWT string"},
+                    },
+                    "required": ["token"],
+                },
+            ),
         ]
 
     async def execute(self, tool_name: str, arguments: dict[str, Any]) -> Any:
-        if tool_name != "jwt_decode": return f"Unknown tool: {tool_name}"
+        if tool_name != "jwt_decode":
+            return f"Unknown tool: {tool_name}"
         return self._decode(arguments["token"])
 
     def _decode(self, token: str) -> str:
@@ -60,6 +72,7 @@ class JwtSkill(Skill):
 
         if exp:
             from datetime import datetime
+
             exp_dt = datetime.fromtimestamp(exp, tz=UTC)
             if exp < now:
                 lines.append(f"\nStatus: EXPIRED (expired {exp_dt.isoformat()})")
@@ -70,13 +83,16 @@ class JwtSkill(Skill):
 
         if iat:
             from datetime import datetime
+
             iat_dt = datetime.fromtimestamp(iat, tz=UTC)
             lines.append(f"Issued: {iat_dt.isoformat()}")
 
         sub = payload.get("sub")
-        if sub: lines.append(f"Subject: {sub}")
+        if sub:
+            lines.append(f"Subject: {sub}")
         iss = payload.get("iss")
-        if iss: lines.append(f"Issuer: {iss}")
+        if iss:
+            lines.append(f"Issuer: {iss}")
 
         lines.append(f"\nAlgorithm: {header.get('alg', 'unknown')}")
         lines.append("(Signature not verified — decode only)")

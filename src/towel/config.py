@@ -123,6 +123,7 @@ class TowelConfig(BaseModel):
         if agents_file.exists():
             try:
                 import toml as _toml
+
                 for name, data in _toml.load(agents_file).items():
                     result[name] = AgentProfile.model_validate(data)
             except Exception:

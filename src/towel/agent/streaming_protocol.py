@@ -29,7 +29,7 @@ def build_sse_routes(agent: Any, config: Any) -> list[Route]:
 
         if not prompt:
             return StreamingResponse(
-                iter(["data: {\"error\": \"prompt parameter required\"}\n\n"]),
+                iter(['data: {"error": "prompt parameter required"}\n\n']),
                 media_type="text/event-stream",
             )
 
@@ -51,24 +51,52 @@ def build_sse_routes(agent: Any, config: Any) -> list[Route]:
                     yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
 
                 elif event.type == EventType.TOOL_CALL:
-                    yield f"data: {json.dumps({'type': 'tool_call', 'tool': event.data['tool'], 'arguments': str(event.data.get('arguments', {}))[:200]})}\n\n"
+                    payload = {
+                        'type': 'tool_call',
+                        'tool': event.data['tool'],
+                        'arguments': str(
+                            event.data.get('arguments', {})
+                        )[:200],
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
 
                 elif event.type == EventType.TOOL_RESULT:
-                    yield f"data: {json.dumps({'type': 'tool_result', 'tool': event.data['tool'], 'result': event.data['result'][:500]})}\n\n"
+                    payload = {
+                        'type': 'tool_result',
+                        'tool': event.data['tool'],
+                        'result': event.data['result'][:500],
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
 
                 elif event.type == EventType.RESPONSE_COMPLETE:
                     meta = event.data.get("metadata", {})
-                    yield f"data: {json.dumps({'type': 'done', 'content': full_text, 'tokens': meta.get('tokens', 0), 'tps': round(meta.get('tps', 0), 1)})}\n\n"
+                    payload = {
+                        'type': 'done',
+                        'content': full_text,
+                        'tokens': meta.get('tokens', 0),
+                        'tps': round(meta.get('tps', 0), 1),
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
 
                 elif event.type == EventType.ERROR:
-                    yield f"data: {json.dumps({'type': 'error', 'message': event.data.get('message', 'unknown')})}\n\n"
+                    payload = {
+                        'type': 'error',
+                        'message': event.data.get(
+                            'message', 'unknown'
+                        ),
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
 
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(
             generate(),
             media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
         )
 
     async def stream_post(request: Request) -> StreamingResponse:
@@ -77,7 +105,7 @@ def build_sse_routes(agent: Any, config: Any) -> list[Route]:
             body = await request.json()
         except Exception:
             return StreamingResponse(
-                iter(["data: {\"error\": \"invalid JSON\"}\n\n"]),
+                iter(['data: {"error": "invalid JSON"}\n\n']),
                 media_type="text/event-stream",
             )
 
@@ -86,7 +114,7 @@ def build_sse_routes(agent: Any, config: Any) -> list[Route]:
 
         if not prompt:
             return StreamingResponse(
-                iter(["data: {\"error\": \"prompt required\"}\n\n"]),
+                iter(['data: {"error": "prompt required"}\n\n']),
                 media_type="text/event-stream",
             )
 
@@ -102,15 +130,26 @@ def build_sse_routes(agent: Any, config: Any) -> list[Route]:
             async for event in agent.step_streaming(conv):
                 if event.type == EventType.TOKEN:
                     full_text += event.data["content"]
-                    yield f"data: {json.dumps({'type': 'token', 'content': event.data['content']})}\n\n"
+                    payload = {
+                        'type': 'token',
+                        'content': event.data['content'],
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
                 elif event.type == EventType.RESPONSE_COMPLETE:
                     meta = event.data.get("metadata", {})
-                    yield f"data: {json.dumps({'type': 'done', 'tokens': meta.get('tokens', 0)})}\n\n"
+                    payload = {
+                        'type': 'done',
+                        'tokens': meta.get('tokens', 0),
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
 
             yield "data: [DONE]\n\n"
 
-        return StreamingResponse(generate(), media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        )
 
     return [
         Route("/v1/stream", stream_endpoint, methods=["GET"]),

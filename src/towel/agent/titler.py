@@ -9,7 +9,8 @@ from __future__ import annotations
 import re
 
 # Common filler words to skip
-STOP_WORDS = frozenset("""
+STOP_WORDS = frozenset(
+    """
 a an the is are was were be been being have has had do does did will would
 shall should may might can could must need dare ought to of in for on at by
 with from as into through during before after above below between out off
@@ -22,7 +23,8 @@ yourselves he him his himself she her hers herself it its itself they them
 their theirs themselves what which who whom this that these those am about
 up please could help me tell explain show give make write create find get
 want like know think also really
-""".split())
+""".split()
+)
 
 MAX_TITLE_WORDS = 6
 MIN_TITLE_WORDS = 2

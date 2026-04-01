@@ -23,7 +23,10 @@ class GitSkill(Skill):
         return [
             ToolDefinition(
                 name="git_status",
-                description="Show working tree status: branch, staged changes, unstaged changes, untracked files",
+                description=(
+                    "Show working tree status: branch, staged "
+                    "changes, unstaged changes, untracked files"
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
@@ -33,13 +36,22 @@ class GitSkill(Skill):
             ),
             ToolDefinition(
                 name="git_diff",
-                description="Show file diffs. Use staged=true for staged changes, or specify a file path.",
+                description=(
+                    "Show file diffs. Use staged=true for "
+                    "staged changes, or specify a file path."
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "path": {"type": "string", "description": "Repo path (default: cwd)"},
-                        "staged": {"type": "boolean", "description": "Show staged changes (default: false)"},
-                        "file": {"type": "string", "description": "Specific file to diff (optional)"},
+                        "staged": {
+                            "type": "boolean",
+                            "description": "Show staged changes (default: false)",
+                        },
+                        "file": {
+                            "type": "string",
+                            "description": "Specific file to diff (optional)",
+                        },
                     },
                 },
             ),
@@ -50,8 +62,14 @@ class GitSkill(Skill):
                     "type": "object",
                     "properties": {
                         "path": {"type": "string", "description": "Repo path (default: cwd)"},
-                        "limit": {"type": "integer", "description": "Number of commits (default: 10)"},
-                        "oneline": {"type": "boolean", "description": "Compact format (default: false)"},
+                        "limit": {
+                            "type": "integer",
+                            "description": "Number of commits (default: 10)",
+                        },
+                        "oneline": {
+                            "type": "boolean",
+                            "description": "Compact format (default: false)",
+                        },
                     },
                 },
             ),
@@ -63,7 +81,13 @@ class GitSkill(Skill):
                     "properties": {
                         "message": {"type": "string", "description": "Commit message"},
                         "path": {"type": "string", "description": "Repo path (default: cwd)"},
-                        "files": {"type": "string", "description": "Specific files to stage (space-separated, default: all)"},
+                        "files": {
+                            "type": "string",
+                            "description": (
+                                "Specific files to stage "
+                                "(space-separated, default: all)"
+                            ),
+                        },
                     },
                     "required": ["message"],
                 },
@@ -75,7 +99,10 @@ class GitSkill(Skill):
                     "type": "object",
                     "properties": {
                         "path": {"type": "string", "description": "Repo path (default: cwd)"},
-                        "create": {"type": "string", "description": "Create and switch to a new branch"},
+                        "create": {
+                            "type": "string",
+                            "description": "Create and switch to a new branch",
+                        },
                         "switch": {"type": "string", "description": "Switch to an existing branch"},
                     },
                 },
@@ -91,7 +118,9 @@ class GitSkill(Skill):
             case "git_diff":
                 return await self._diff(path, arguments.get("staged", False), arguments.get("file"))
             case "git_log":
-                return await self._log(path, arguments.get("limit", 10), arguments.get("oneline", False))
+                return await self._log(
+                    path, arguments.get("limit", 10), arguments.get("oneline", False)
+                )
             case "git_commit":
                 return await self._commit(path, arguments["message"], arguments.get("files"))
             case "git_branch":

@@ -1,15 +1,10 @@
 """Tests for built-in skills."""
 
-import asyncio
-import tempfile
-from pathlib import Path
-
 import pytest
 
+from towel.skills.builtin import register_builtins
 from towel.skills.builtin.filesystem import FileSystemSkill
 from towel.skills.builtin.shell import ShellSkill
-from towel.skills.builtin.web import WebFetchSkill
-from towel.skills.builtin import register_builtins
 from towel.skills.registry import SkillRegistry
 
 
@@ -78,9 +73,7 @@ class TestShellSkill:
 
     @pytest.mark.asyncio
     async def test_timeout(self, shell_skill):
-        result = await shell_skill.execute(
-            "run_command", {"command": "sleep 10", "timeout": 1}
-        )
+        result = await shell_skill.execute("run_command", {"command": "sleep 10", "timeout": 1})
         assert "timed out" in result.lower()
 
 
@@ -88,6 +81,7 @@ class TestSystemSkill:
     @pytest.fixture
     def sys_skill(self):
         from towel.skills.builtin.system import SystemSkill
+
         return SystemSkill()
 
     def test_tools_defined(self, sys_skill):
@@ -116,6 +110,7 @@ class TestTimeSkill:
     @pytest.fixture
     def time_skill(self):
         from towel.skills.builtin.time_skill import TimeSkill
+
         return TimeSkill()
 
     def test_tools_defined(self, time_skill):
@@ -142,7 +137,9 @@ class TestTimeSkill:
 
     @pytest.mark.asyncio
     async def test_time_between(self, time_skill):
-        result = await time_skill.execute("time_between", {"start": "2026-01-01", "end": "2026-03-27"})
+        result = await time_skill.execute(
+            "time_between", {"start": "2026-01-01", "end": "2026-03-27"}
+        )
         assert "85 days" in result
 
     @pytest.mark.asyncio
@@ -165,6 +162,7 @@ class TestNetworkSkill:
     @pytest.fixture
     def net_skill(self):
         from towel.skills.builtin.network import NetworkSkill
+
         return NetworkSkill()
 
     def test_tools_defined(self, net_skill):
@@ -185,13 +183,17 @@ class TestNetworkSkill:
     @pytest.mark.asyncio
     async def test_port_check_closed(self, net_skill):
         # Port 1 is almost certainly closed
-        result = await net_skill.execute("port_check", {"host": "127.0.0.1", "port": 1, "timeout": 1})
+        result = await net_skill.execute(
+            "port_check", {"host": "127.0.0.1", "port": 1, "timeout": 1}
+        )
         assert "CLOSED" in result or "TIMEOUT" in result
 
     @pytest.mark.asyncio
     async def test_http_ping(self, net_skill):
         # Ping a reliable host
-        result = await net_skill.execute("http_ping", {"url": "https://httpbin.org/status/200", "timeout": 5})
+        result = await net_skill.execute(
+            "http_ping", {"url": "https://httpbin.org/status/200", "timeout": 5}
+        )
         assert "200" in result or "TIMEOUT" in result or "ERROR" in result
 
 
@@ -199,6 +201,7 @@ class TestHashSkill:
     @pytest.fixture
     def hash_skill(self):
         from towel.skills.builtin.hash_skill import HashSkill
+
         return HashSkill()
 
     def test_tools_defined(self, hash_skill):
@@ -254,6 +257,7 @@ class TestEnvSkill:
     @pytest.fixture
     def env_skill(self):
         from towel.skills.builtin.env_skill import EnvSkill
+
         return EnvSkill()
 
     def test_tools_defined(self, env_skill):
@@ -311,6 +315,7 @@ class TestRegexSkill:
     @pytest.fixture
     def rx(self):
         from towel.skills.builtin.regex_skill import RegexSkill
+
         return RegexSkill()
 
     def test_tools_defined(self, rx):
@@ -342,9 +347,10 @@ class TestRegexSkill:
 
     @pytest.mark.asyncio
     async def test_replace(self, rx):
-        result = await rx.execute("regex_replace", {
-            "pattern": r"\d+", "replacement": "N", "text": "item 1, item 2, item 3"
-        })
+        result = await rx.execute(
+            "regex_replace",
+            {"pattern": r"\d+", "replacement": "N", "text": "item 1, item 2, item 3"},
+        )
         assert "item N, item N, item N" in result
         assert "3 match" in result
 
@@ -368,6 +374,7 @@ class TestConvertSkill:
     @pytest.fixture
     def conv(self):
         from towel.skills.builtin.convert_skill import ConvertSkill
+
         return ConvertSkill()
 
     def test_tools_defined(self, conv):
@@ -376,32 +383,44 @@ class TestConvertSkill:
 
     @pytest.mark.asyncio
     async def test_km_to_mi(self, conv):
-        result = await conv.execute("convert_units", {"value": 10, "from_unit": "km", "to_unit": "mi"})
+        result = await conv.execute(
+            "convert_units", {"value": 10, "from_unit": "km", "to_unit": "mi"}
+        )
         assert "6.21" in result
 
     @pytest.mark.asyncio
     async def test_f_to_c(self, conv):
-        result = await conv.execute("convert_units", {"value": 212, "from_unit": "F", "to_unit": "C"})
+        result = await conv.execute(
+            "convert_units", {"value": 212, "from_unit": "F", "to_unit": "C"}
+        )
         assert "100" in result
 
     @pytest.mark.asyncio
     async def test_gb_to_mb(self, conv):
-        result = await conv.execute("convert_units", {"value": 1, "from_unit": "GB", "to_unit": "MB"})
+        result = await conv.execute(
+            "convert_units", {"value": 1, "from_unit": "GB", "to_unit": "MB"}
+        )
         assert "1024" in result
 
     @pytest.mark.asyncio
     async def test_lb_to_kg(self, conv):
-        result = await conv.execute("convert_units", {"value": 100, "from_unit": "lb", "to_unit": "kg"})
+        result = await conv.execute(
+            "convert_units", {"value": 100, "from_unit": "lb", "to_unit": "kg"}
+        )
         assert "45" in result
 
     @pytest.mark.asyncio
     async def test_cross_category_error(self, conv):
-        result = await conv.execute("convert_units", {"value": 1, "from_unit": "km", "to_unit": "kg"})
+        result = await conv.execute(
+            "convert_units", {"value": 1, "from_unit": "km", "to_unit": "kg"}
+        )
         assert "Cannot convert" in result
 
     @pytest.mark.asyncio
     async def test_unknown_unit(self, conv):
-        result = await conv.execute("convert_units", {"value": 1, "from_unit": "zorps", "to_unit": "km"})
+        result = await conv.execute(
+            "convert_units", {"value": 1, "from_unit": "zorps", "to_unit": "km"}
+        )
         assert "Unknown unit" in result
 
     @pytest.mark.asyncio
@@ -432,6 +451,7 @@ class TestDiffSkill:
     @pytest.fixture
     def diff_skill(self):
         from towel.skills.builtin.diff_skill import DiffSkill
+
         return DiffSkill()
 
     def test_tools_defined(self, diff_skill):
@@ -440,22 +460,28 @@ class TestDiffSkill:
 
     @pytest.mark.asyncio
     async def test_diff_files_identical(self, diff_skill, tmp_path):
-        a = tmp_path / "a.txt"; b = tmp_path / "b.txt"
-        a.write_text("hello\n"); b.write_text("hello\n")
+        a = tmp_path / "a.txt"
+        b = tmp_path / "b.txt"
+        a.write_text("hello\n")
+        b.write_text("hello\n")
         result = await diff_skill.execute("diff_files", {"file_a": str(a), "file_b": str(b)})
         assert "identical" in result.lower()
 
     @pytest.mark.asyncio
     async def test_diff_files_different(self, diff_skill, tmp_path):
-        a = tmp_path / "a.txt"; b = tmp_path / "b.txt"
-        a.write_text("line1\nline2\n"); b.write_text("line1\nchanged\n")
+        a = tmp_path / "a.txt"
+        b = tmp_path / "b.txt"
+        a.write_text("line1\nline2\n")
+        b.write_text("line1\nchanged\n")
         result = await diff_skill.execute("diff_files", {"file_a": str(a), "file_b": str(b)})
         assert "-line2" in result
         assert "+changed" in result
 
     @pytest.mark.asyncio
     async def test_diff_files_missing(self, diff_skill):
-        result = await diff_skill.execute("diff_files", {"file_a": "/nonexistent", "file_b": "/also-no"})
+        result = await diff_skill.execute(
+            "diff_files", {"file_a": "/nonexistent", "file_b": "/also-no"}
+        )
         assert "not found" in result.lower()
 
     @pytest.mark.asyncio
@@ -466,8 +492,10 @@ class TestDiffSkill:
 
     @pytest.mark.asyncio
     async def test_diff_stats(self, diff_skill, tmp_path):
-        a = tmp_path / "a.txt"; b = tmp_path / "b.txt"
-        a.write_text("a\nb\nc\n"); b.write_text("a\nx\nc\nd\n")
+        a = tmp_path / "a.txt"
+        b = tmp_path / "b.txt"
+        a.write_text("a\nb\nc\n")
+        b.write_text("a\nx\nc\nd\n")
         result = await diff_skill.execute("diff_stats", {"file_a": str(a), "file_b": str(b)})
         assert "Similarity" in result
         assert "Additions" in result
@@ -477,6 +505,7 @@ class TestArchiveSkill:
     @pytest.fixture
     def arc(self):
         from towel.skills.builtin.archive_skill import ArchiveSkill
+
         return ArchiveSkill()
 
     def test_tools_defined(self, arc):
@@ -488,9 +517,10 @@ class TestArchiveSkill:
         (tmp_path / "a.txt").write_text("aaa")
         (tmp_path / "b.txt").write_text("bbb")
         out = str(tmp_path / "test.zip")
-        result = await arc.execute("archive_create", {
-            "output": out, "sources": [str(tmp_path / "a.txt"), str(tmp_path / "b.txt")]
-        })
+        result = await arc.execute(
+            "archive_create",
+            {"output": out, "sources": [str(tmp_path / "a.txt"), str(tmp_path / "b.txt")]},
+        )
         assert "Created" in result
         assert "2 files" in result
 
@@ -500,7 +530,8 @@ class TestArchiveSkill:
 
     @pytest.mark.asyncio
     async def test_create_directory(self, arc, tmp_path):
-        d = tmp_path / "mydir"; d.mkdir()
+        d = tmp_path / "mydir"
+        d.mkdir()
         (d / "x.txt").write_text("x")
         (d / "y.txt").write_text("y")
         out = str(tmp_path / "dir.zip")
@@ -509,7 +540,8 @@ class TestArchiveSkill:
 
     @pytest.mark.asyncio
     async def test_extract(self, arc, tmp_path):
-        src = tmp_path / "f.txt"; src.write_text("content")
+        src = tmp_path / "f.txt"
+        src.write_text("content")
         zp = str(tmp_path / "e.zip")
         await arc.execute("archive_create", {"output": zp, "sources": [str(src)]})
         dest = tmp_path / "out"
@@ -527,6 +559,7 @@ class TestCronSkill:
     @pytest.fixture
     def cron(self):
         from towel.skills.builtin.cron_skill import CronSkill
+
         return CronSkill()
 
     def test_tools_defined(self, cron):
@@ -552,7 +585,7 @@ class TestCronSkill:
     async def test_next_runs(self, cron):
         result = await cron.execute("cron_next", {"expression": "*/5 * * * *", "count": 3})
         assert "Next runs" in result
-        lines = [l for l in result.splitlines() if l.strip().startswith("20")]
+        lines = [line for line in result.splitlines() if line.strip().startswith("20")]
         assert len(lines) == 3
 
     @pytest.mark.asyncio
@@ -580,6 +613,7 @@ class TestMarkdownSkill:
     @pytest.fixture
     def md(self):
         from towel.skills.builtin.markdown_skill import MarkdownSkill
+
         return MarkdownSkill()
 
     def test_tools_defined(self, md):
@@ -618,6 +652,7 @@ class TestHttpSkill:
     @pytest.fixture
     def http(self):
         from towel.skills.builtin.http_skill import HttpSkill
+
         return HttpSkill()
 
     def test_tools_defined(self, http):
@@ -626,7 +661,9 @@ class TestHttpSkill:
 
     @pytest.mark.asyncio
     async def test_get(self, http):
-        result = await http.execute("http_request", {"url": "https://httpbin.org/get", "timeout": 5})
+        result = await http.execute(
+            "http_request", {"url": "https://httpbin.org/get", "timeout": 5}
+        )
         assert "200" in result or "TIMEOUT" in result or "Error" in result
 
     @pytest.mark.asyncio
@@ -638,6 +675,7 @@ class TestHttpSkill:
 class TestHeartbeat:
     def test_heartbeat_lifecycle(self):
         from towel.agent.heartbeat import Heartbeat
+
         hb = Heartbeat(interval=0.1)
         hb.start()
         hb.on_model_loaded()
@@ -651,9 +689,11 @@ class TestHeartbeat:
 
     def test_heartbeat_errors(self):
         from towel.agent.heartbeat import Heartbeat
+
         triggered = []
-        hb = Heartbeat(interval=60, max_consecutive_errors=3,
-                       on_unhealthy=lambda s: triggered.append(True))
+        hb = Heartbeat(
+            interval=60, max_consecutive_errors=3, on_unhealthy=lambda s: triggered.append(True)
+        )
         hb.start()
         for _ in range(3):
             hb.on_error(RuntimeError("test"))
@@ -665,6 +705,7 @@ class TestHeartbeat:
 
     def test_heartbeat_error_reset(self):
         from towel.agent.heartbeat import Heartbeat
+
         hb = Heartbeat(interval=60, max_consecutive_errors=5)
         hb.start()
         hb.on_error(RuntimeError("e1"))
@@ -680,11 +721,13 @@ class TestSqlSkill:
     @pytest.fixture
     def sql(self):
         from towel.skills.builtin.sql_skill import SqlSkill
+
         return SqlSkill()
 
     @pytest.fixture
     def db(self, tmp_path):
         import sqlite3
+
         path = tmp_path / "test.db"
         conn = sqlite3.connect(str(path))
         conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)")
@@ -708,7 +751,9 @@ class TestSqlSkill:
 
     @pytest.mark.asyncio
     async def test_query_where(self, sql, db):
-        result = await sql.execute("sql_query", {"database": db, "query": "SELECT name FROM users WHERE age > 28"})
+        result = await sql.execute(
+            "sql_query", {"database": db, "query": "SELECT name FROM users WHERE age > 28"}
+        )
         assert "Alice" in result
         assert "Charlie" in result
         assert "Bob" not in result
@@ -737,7 +782,9 @@ class TestSqlSkill:
 
     @pytest.mark.asyncio
     async def test_not_found(self, sql):
-        result = await sql.execute("sql_query", {"database": "/nonexistent.db", "query": "SELECT 1"})
+        result = await sql.execute(
+            "sql_query", {"database": "/nonexistent.db", "query": "SELECT 1"}
+        )
         assert "not found" in result.lower()
 
 
@@ -745,6 +792,7 @@ class TestImageSkill:
     @pytest.fixture
     def img(self):
         from towel.skills.builtin.image_skill import ImageSkill
+
         return ImageSkill()
 
     def test_tools_defined(self, img):
@@ -755,12 +803,14 @@ class TestImageSkill:
     async def test_png(self, img, tmp_path):
         # Minimal valid PNG: 1x1 pixel
         import struct
-        png = b'\x89PNG\r\n\x1a\n'
+
+        png = b"\x89PNG\r\n\x1a\n"
         # IHDR chunk
-        ihdr_data = struct.pack('>IIBBBBB', 100, 200, 8, 2, 0, 0, 0)
+        ihdr_data = struct.pack(">IIBBBBB", 100, 200, 8, 2, 0, 0, 0)
         import zlib
-        crc = struct.pack('>I', zlib.crc32(b'IHDR' + ihdr_data) & 0xffffffff)
-        ihdr = struct.pack('>I', len(ihdr_data)) + b'IHDR' + ihdr_data + crc
+
+        crc = struct.pack(">I", zlib.crc32(b"IHDR" + ihdr_data) & 0xFFFFFFFF)
+        ihdr = struct.pack(">I", len(ihdr_data)) + b"IHDR" + ihdr_data + crc
         f = tmp_path / "test.png"
         f.write_bytes(png + ihdr)
         result = await img.execute("image_info", {"path": str(f)})
@@ -777,6 +827,7 @@ class TestProcessSkill:
     @pytest.fixture
     def proc(self):
         from towel.skills.builtin.process_skill import ProcessSkill
+
         return ProcessSkill()
 
     def test_tools_defined(self, proc):
@@ -785,13 +836,13 @@ class TestProcessSkill:
 
     @pytest.mark.asyncio
     async def test_find(self, proc):
-        import os
         result = await proc.execute("process_find", {"name": "python"})
         assert "python" in result.lower() or "No processes" in result
 
     @pytest.mark.asyncio
     async def test_info_self(self, proc):
         import os
+
         result = await proc.execute("process_info", {"pid": os.getpid()})
         assert "python" in result.lower() or str(os.getpid()) in result
 
@@ -800,6 +851,7 @@ class TestTextSkill:
     @pytest.fixture
     def txt(self):
         from towel.skills.builtin.text_skill import TextSkill
+
         return TextSkill()
 
     def test_tools_defined(self, txt):
@@ -829,7 +881,9 @@ class TestTextSkill:
 
     @pytest.mark.asyncio
     async def test_transform_number_lines(self, txt):
-        result = await txt.execute("text_transform", {"text": "a\nb\nc", "transform": "number_lines"})
+        result = await txt.execute(
+            "text_transform", {"text": "a\nb\nc", "transform": "number_lines"}
+        )
         assert "   1  a" in result
         assert "   3  c" in result
 
@@ -841,7 +895,9 @@ class TestTextSkill:
 
     @pytest.mark.asyncio
     async def test_unique_lines(self, txt):
-        result = await txt.execute("text_transform", {"text": "a\nb\na\nc\nb", "transform": "unique_lines"})
+        result = await txt.execute(
+            "text_transform", {"text": "a\nb\na\nc\nb", "transform": "unique_lines"}
+        )
         assert result == "a\nb\nc"
 
 
@@ -850,11 +906,14 @@ class TestKnowledgeSkill:
     def kb(self, tmp_path, monkeypatch):
         monkeypatch.setattr("towel.skills.builtin.knowledge_skill.KB_FILE", tmp_path / "kb.json")
         from towel.skills.builtin.knowledge_skill import KnowledgeSkill
+
         return KnowledgeSkill()
 
     @pytest.mark.asyncio
     async def test_add_and_search(self, kb):
-        await kb.execute("kb_add", {"content": "Python uses indentation", "tags": ["python", "syntax"]})
+        await kb.execute(
+            "kb_add", {"content": "Python uses indentation", "tags": ["python", "syntax"]}
+        )
         result = await kb.execute("kb_search", {"query": "indentation"})
         assert "indentation" in result
 
@@ -876,16 +935,21 @@ class TestTranslateSkill:
     @pytest.fixture
     def tr(self):
         from towel.skills.builtin.translate_skill import TranslateSkill
+
         return TranslateSkill()
 
     @pytest.mark.asyncio
     async def test_detect_spanish(self, tr):
-        result = await tr.execute("detect_language", {"text": "el gato está en la mesa de la cocina"})
+        result = await tr.execute(
+            "detect_language", {"text": "el gato está en la mesa de la cocina"}
+        )
         assert "Spanish" in result
 
     @pytest.mark.asyncio
     async def test_translation_prompt(self, tr):
-        result = await tr.execute("translation_prompt", {"text": "Hello world", "target_language": "French"})
+        result = await tr.execute(
+            "translation_prompt", {"text": "Hello world", "target_language": "French"}
+        )
         assert "French" in result
         assert "Hello world" in result
 
@@ -894,6 +958,7 @@ class TestSecuritySkill:
     @pytest.fixture
     def sec(self):
         from towel.skills.builtin.security_skill import SecuritySkill
+
         return SecuritySkill()
 
     @pytest.mark.asyncio
@@ -920,6 +985,7 @@ class TestTodoSkill:
     def todo(self, tmp_path, monkeypatch):
         monkeypatch.setattr("towel.skills.builtin.todo_skill.TODO_FILE", tmp_path / "todos.json")
         from towel.skills.builtin.todo_skill import TodoSkill
+
         return TodoSkill()
 
     @pytest.mark.asyncio
@@ -948,6 +1014,7 @@ class TestTemplateGenSkill:
     @pytest.fixture
     def scaffold(self):
         from towel.skills.builtin.template_gen_skill import TemplateGenSkill
+
         return TemplateGenSkill()
 
     @pytest.mark.asyncio
@@ -958,10 +1025,15 @@ class TestTemplateGenSkill:
 
     @pytest.mark.asyncio
     async def test_generate(self, scaffold, tmp_path):
-        result = await scaffold.execute("scaffold_generate", {
-            "template": "readme", "name": "myapp", "description": "A cool app",
-            "output_dir": str(tmp_path),
-        })
+        result = await scaffold.execute(
+            "scaffold_generate",
+            {
+                "template": "readme",
+                "name": "myapp",
+                "description": "A cool app",
+                "output_dir": str(tmp_path),
+            },
+        )
         assert "Created" in result
         content = (tmp_path / "README.md").read_text()
         assert "myapp" in content
@@ -977,6 +1049,7 @@ class TestMathSkill:
     @pytest.fixture
     def m(self):
         from towel.skills.builtin.math_skill import MathSkill
+
         return MathSkill()
 
     @pytest.mark.asyncio
@@ -1010,11 +1083,18 @@ class TestDockerSkill:
     @pytest.fixture
     def dock(self):
         from towel.skills.builtin.docker_skill import DockerSkill
+
         return DockerSkill()
 
     def test_tools_defined(self, dock):
         names = {t.name for t in dock.tools()}
-        assert names == {"docker_ps", "docker_images", "docker_logs", "docker_inspect", "docker_stats"}
+        assert names == {
+            "docker_ps",
+            "docker_images",
+            "docker_logs",
+            "docker_inspect",
+            "docker_stats",
+        }
 
     @pytest.mark.asyncio
     async def test_ps(self, dock):
@@ -1027,6 +1107,7 @@ class TestCalendarSkill:
     @pytest.fixture
     def cal(self):
         from towel.skills.builtin.calendar_skill import CalendarSkill
+
         return CalendarSkill()
 
     def test_tools_defined(self, cal):
@@ -1041,7 +1122,9 @@ class TestCalendarSkill:
 
     @pytest.mark.asyncio
     async def test_business_days(self, cal):
-        result = await cal.execute("cal_business_days", {"start": "2026-03-23", "end": "2026-03-27"})
+        result = await cal.execute(
+            "cal_business_days", {"start": "2026-03-23", "end": "2026-03-27"}
+        )
         assert "Business days: 5" in result
 
     @pytest.mark.asyncio
@@ -1060,6 +1143,7 @@ class TestQrSkill:
     @pytest.fixture
     def qr(self):
         from towel.skills.builtin.qr_skill import QrSkill
+
         return QrSkill()
 
     def test_tools_defined(self, qr):
@@ -1077,12 +1161,18 @@ class TestJwtSkill:
     @pytest.fixture
     def jwt(self):
         from towel.skills.builtin.jwt_skill import JwtSkill
+
         return JwtSkill()
 
     @pytest.mark.asyncio
     async def test_decode_valid(self, jwt):
         # A real JWT (expired, public test token)
-        token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        token = (
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+            "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6Ik"
+            "pvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ."
+            "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        )
         result = await jwt.execute("jwt_decode", {"token": token})
         assert "John Doe" in result
         assert "HS256" in result
@@ -1097,6 +1187,7 @@ class TestColorSkill:
     @pytest.fixture
     def col(self):
         from towel.skills.builtin.color_skill import ColorSkill
+
         return ColorSkill()
 
     @pytest.mark.asyncio
@@ -1127,6 +1218,7 @@ class TestUuidSkill:
     @pytest.fixture
     def uu(self):
         from towel.skills.builtin.uuid_skill import UuidSkill
+
         return UuidSkill()
 
     @pytest.mark.asyncio
@@ -1154,12 +1246,14 @@ class TestYamlSkill:
     @pytest.fixture
     def ym(self):
         from towel.skills.builtin.yaml_skill import YamlSkill
+
         return YamlSkill()
 
     @pytest.mark.asyncio
     async def test_parse(self, ym):
         result = await ym.execute("yaml_parse", {"text": "name: Alice\nage: 30\nactive: true"})
         import json
+
         data = json.loads(result)
         assert data["name"] == "Alice"
         assert data["age"] == 30
@@ -1169,6 +1263,7 @@ class TestYamlSkill:
     async def test_yaml_to_json(self, ym):
         result = await ym.execute("yaml_to_json", {"text": "host: localhost\nport: 8080"})
         import json
+
         data = json.loads(result)
         assert data["host"] == "localhost"
         assert data["port"] == 8080
@@ -1188,6 +1283,7 @@ class TestYamlSkill:
     async def test_parse_list(self, ym):
         result = await ym.execute("yaml_parse", {"text": "- apple\n- banana\n- cherry"})
         import json
+
         data = json.loads(result)
         assert data == ["apple", "banana", "cherry"]
 
@@ -1196,6 +1292,7 @@ class TestSnippetGenSkill:
     @pytest.fixture
     def cg(self):
         from towel.skills.builtin.snippet_gen_skill import SnippetGenSkill
+
         return SnippetGenSkill()
 
     @pytest.mark.asyncio
@@ -1206,26 +1303,28 @@ class TestSnippetGenSkill:
 
     @pytest.mark.asyncio
     async def test_generate_class(self, cg):
-        result = await cg.execute("codegen_generate", {
-            "template": "python-class", "name": "User", "params": "name, email"
-        })
+        result = await cg.execute(
+            "codegen_generate",
+            {"template": "python-class", "name": "User", "params": "name, email"},
+        )
         assert "class User:" in result
         assert "self.name = name" in result
         assert "self.email = email" in result
 
     @pytest.mark.asyncio
     async def test_generate_dataclass(self, cg):
-        result = await cg.execute("codegen_generate", {
-            "template": "python-dataclass", "name": "Config", "params": "host, port"
-        })
+        result = await cg.execute(
+            "codegen_generate",
+            {"template": "python-dataclass", "name": "Config", "params": "host, port"},
+        )
         assert "@dataclass" in result
         assert "host: str" in result
 
     @pytest.mark.asyncio
     async def test_generate_docker_compose(self, cg):
-        result = await cg.execute("codegen_generate", {
-            "template": "docker-compose", "name": "myapp"
-        })
+        result = await cg.execute(
+            "codegen_generate", {"template": "docker-compose", "name": "myapp"}
+        )
         assert "services:" in result
         assert "myapp" in result
 
@@ -1239,13 +1338,16 @@ class TestCsvToolsSkill:
     @pytest.fixture
     def cs(self):
         from towel.skills.builtin.csv_skill import CsvSkill
+
         return CsvSkill()
 
     CSV = "name,age,city\nAlice,30,NYC\nBob,25,LA\nCharlie,35,NYC\nDiana,28,LA"
 
     @pytest.mark.asyncio
     async def test_filter(self, cs):
-        result = await cs.execute("csv_filter", {"data": self.CSV, "column": "city", "value": "NYC"})
+        result = await cs.execute(
+            "csv_filter", {"data": self.CSV, "column": "city", "value": "NYC"}
+        )
         assert "Alice" in result
         assert "Charlie" in result
         assert "Bob" not in result
@@ -1265,7 +1367,10 @@ class TestCsvToolsSkill:
 
     @pytest.mark.asyncio
     async def test_aggregate(self, cs):
-        result = await cs.execute("csv_aggregate", {"data": self.CSV, "group_by": "city", "value_column": "age", "operation": "avg"})
+        result = await cs.execute(
+            "csv_aggregate",
+            {"data": self.CSV, "group_by": "city", "value_column": "age", "operation": "avg"},
+        )
         assert "NYC" in result
         assert "LA" in result
 
@@ -1281,6 +1386,7 @@ class TestSemverSkill:
     @pytest.fixture
     def sv(self):
         from towel.skills.builtin.semver_skill import SemverSkill
+
         return SemverSkill()
 
     @pytest.mark.asyncio
@@ -1310,6 +1416,7 @@ class TestIpCalcSkill:
     @pytest.fixture
     def ip(self):
         from towel.skills.builtin.ip_calc_skill import IpCalcSkill
+
         return IpCalcSkill()
 
     @pytest.mark.asyncio
@@ -1343,6 +1450,7 @@ class TestDotenvSkill:
     @pytest.fixture
     def de(self):
         from towel.skills.builtin.dotenv_skill import DotenvSkill
+
         return DotenvSkill()
 
     @pytest.mark.asyncio
@@ -1356,7 +1464,10 @@ class TestDotenvSkill:
     async def test_validate(self, de, tmp_path):
         (tmp_path / ".env").write_text("DB_HOST=localhost\n")
         (tmp_path / ".env.example").write_text("DB_HOST=\nDB_PORT=\nSECRET=\n")
-        result = await de.execute("dotenv_validate", {"env_path": str(tmp_path/".env"), "template_path": str(tmp_path/".env.example")})
+        result = await de.execute(
+            "dotenv_validate",
+            {"env_path": str(tmp_path / ".env"), "template_path": str(tmp_path / ".env.example")},
+        )
         assert "Missing" in result
         assert "DB_PORT" in result
 
@@ -1364,7 +1475,9 @@ class TestDotenvSkill:
     async def test_diff(self, de, tmp_path):
         (tmp_path / "a.env").write_text("X=1\nY=2\n")
         (tmp_path / "b.env").write_text("X=1\nZ=3\n")
-        result = await de.execute("dotenv_diff", {"path_a": str(tmp_path/"a.env"), "path_b": str(tmp_path/"b.env")})
+        result = await de.execute(
+            "dotenv_diff", {"path_a": str(tmp_path / "a.env"), "path_b": str(tmp_path / "b.env")}
+        )
         assert "Y" in result
         assert "Z" in result
 
@@ -1373,6 +1486,7 @@ class TestLogAnalyzerSkill:
     @pytest.fixture
     def la(self):
         from towel.skills.builtin.log_analyzer_skill import LogAnalyzerSkill
+
         return LogAnalyzerSkill()
 
     LOG = """2026-03-28T10:00:00 INFO Starting server
@@ -1394,7 +1508,9 @@ class TestLogAnalyzerSkill:
     @pytest.mark.asyncio
     async def test_filter_errors(self, la, tmp_path):
         (tmp_path / "app.log").write_text(self.LOG)
-        result = await la.execute("log_filter", {"path": str(tmp_path / "app.log"), "level": "ERROR"})
+        result = await la.execute(
+            "log_filter", {"path": str(tmp_path / "app.log"), "level": "ERROR"}
+        )
         assert "Connection refused" in result
         assert "INFO" not in result
 
@@ -1415,11 +1531,14 @@ class TestHttpHeaderSkill:
     @pytest.fixture
     def hh(self):
         from towel.skills.builtin.http_header_skill import HttpHeaderSkill
+
         return HttpHeaderSkill()
 
     @pytest.mark.asyncio
     async def test_explain(self, hh):
-        result = await hh.execute("header_explain", {"headers": "content-type, authorization, cache-control"})
+        result = await hh.execute(
+            "header_explain", {"headers": "content-type, authorization, cache-control"}
+        )
         assert "MIME" in result
         assert "authentication" in result.lower()
 
@@ -1432,7 +1551,9 @@ class TestHttpHeaderSkill:
 
     @pytest.mark.asyncio
     async def test_cors(self, hh):
-        result = await hh.execute("header_cors", {"origins": "https://example.com", "credentials": True})
+        result = await hh.execute(
+            "header_cors", {"origins": "https://example.com", "credentials": True}
+        )
         assert "Access-Control-Allow-Origin" in result
         assert "Credentials: true" in result
 
@@ -1441,6 +1562,7 @@ class TestAsciiSkill:
     @pytest.fixture
     def asc(self):
         from towel.skills.builtin.ascii_skill import AsciiSkill
+
         return AsciiSkill()
 
     @pytest.mark.asyncio
@@ -1456,7 +1578,9 @@ class TestAsciiSkill:
 
     @pytest.mark.asyncio
     async def test_table(self, asc):
-        result = await asc.execute("ascii_table", {"headers": ["Name","Age"], "rows": [["Alice","30"],["Bob","25"]]})
+        result = await asc.execute(
+            "ascii_table", {"headers": ["Name", "Age"], "rows": [["Alice", "30"], ["Bob", "25"]]}
+        )
         assert "+---" in result
         assert "Alice" in result
 
@@ -1465,11 +1589,14 @@ class TestStringSkill:
     @pytest.fixture
     def ss(self):
         from towel.skills.builtin.string_skill import StringSkill
+
         return StringSkill()
 
     @pytest.mark.asyncio
     async def test_escape_html(self, ss):
-        result = await ss.execute("string_escape", {"text": "<script>alert(1)</script>", "format": "html"})
+        result = await ss.execute(
+            "string_escape", {"text": "<script>alert(1)</script>", "format": "html"}
+        )
         assert "&lt;script&gt;" in result
 
     @pytest.mark.asyncio
@@ -1479,7 +1606,9 @@ class TestStringSkill:
 
     @pytest.mark.asyncio
     async def test_pad(self, ss):
-        result = await ss.execute("string_pad", {"text": "42", "length": 6, "char": "0", "side": "left"})
+        result = await ss.execute(
+            "string_pad", {"text": "42", "length": 6, "char": "0", "side": "left"}
+        )
         assert result == "000042"
 
     @pytest.mark.asyncio
@@ -1492,6 +1621,7 @@ class TestSshSkill:
     @pytest.fixture
     def ssh(self):
         from towel.skills.builtin.ssh_skill import SshSkill
+
         return SshSkill()
 
     def test_tools(self, ssh):
@@ -1507,11 +1637,16 @@ class TestNpmSkill:
     @pytest.fixture
     def npm(self):
         from towel.skills.builtin.npm_skill import NpmSkill
+
         return NpmSkill()
 
     @pytest.mark.asyncio
     async def test_info(self, npm, tmp_path):
-        (tmp_path / "package.json").write_text('{"name":"test","version":"1.0.0","dependencies":{"express":"^4.0"},"scripts":{"start":"node ."}}')
+        (tmp_path / "package.json").write_text(
+            '{"name":"test","version":"1.0.0",'
+            '"dependencies":{"express":"^4.0"},'
+            '"scripts":{"start":"node ."}}'
+        )
         result = await npm.execute("npm_info", {"path": str(tmp_path)})
         assert "test" in result
         assert "1.0.0" in result
@@ -1534,6 +1669,7 @@ class TestPipSkill:
     @pytest.fixture
     def pip(self):
         from towel.skills.builtin.pip_skill import PipSkill
+
         return PipSkill()
 
     @pytest.mark.asyncio
@@ -1555,11 +1691,15 @@ class TestMetricsSkill:
     @pytest.fixture(autouse=True)
     def reset(self):
         from towel.skills.builtin.metrics_skill import _counters, _gauges, _timers
-        _counters.clear(); _gauges.clear(); _timers.clear()
+
+        _counters.clear()
+        _gauges.clear()
+        _timers.clear()
 
     @pytest.fixture
     def met(self):
         from towel.skills.builtin.metrics_skill import MetricsSkill
+
         return MetricsSkill()
 
     @pytest.mark.asyncio
@@ -1594,6 +1734,7 @@ class TestPdfSkill:
     @pytest.fixture
     def pdf(self):
         from towel.skills.builtin.pdf_skill import PdfSkill
+
         return PdfSkill()
 
     @pytest.mark.asyncio
@@ -1614,6 +1755,7 @@ class TestPlaceholderSkill:
     @pytest.fixture
     def ph(self):
         from towel.skills.builtin.placeholder_skill import PlaceholderSkill
+
         return PlaceholderSkill()
 
     @pytest.mark.asyncio
@@ -1624,6 +1766,7 @@ class TestPlaceholderSkill:
     @pytest.mark.asyncio
     async def test_fake_users_json(self, ph):
         import json
+
         result = await ph.execute("fake_users", {"count": 3, "format": "json"})
         data = json.loads(result)
         assert len(data) == 3
@@ -1651,6 +1794,7 @@ class TestGitignoreSkill:
     @pytest.fixture
     def gi(self):
         from towel.skills.builtin.gitignore_skill import GitignoreSkill
+
         return GitignoreSkill()
 
     @pytest.mark.asyncio
@@ -1661,7 +1805,9 @@ class TestGitignoreSkill:
 
     @pytest.mark.asyncio
     async def test_generate_multi(self, gi):
-        result = await gi.execute("gitignore_generate", {"languages": ["python", "node"], "extras": ["*.bak"]})
+        result = await gi.execute(
+            "gitignore_generate", {"languages": ["python", "node"], "extras": ["*.bak"]}
+        )
         assert "__pycache__/" in result
         assert "node_modules/" in result
         assert "*.bak" in result
@@ -1677,6 +1823,7 @@ class TestLintSkill:
     @pytest.fixture
     def lint(self):
         from towel.skills.builtin.lint_skill import LintSkill
+
         return LintSkill()
 
     @pytest.mark.asyncio
@@ -1710,6 +1857,7 @@ class TestWebhookTriggerSkill:
     @pytest.fixture
     def wh(self):
         from towel.skills.builtin.webhook_trigger_skill import WebhookTriggerSkill
+
         return WebhookTriggerSkill()
 
     def test_tools(self, wh):
@@ -1721,6 +1869,7 @@ class TestDiagramSkill:
     @pytest.fixture
     def dia(self):
         from towel.skills.builtin.diagram_skill import DiagramSkill
+
         return DiagramSkill()
 
     @pytest.mark.asyncio
@@ -1732,22 +1881,35 @@ class TestDiagramSkill:
 
     @pytest.mark.asyncio
     async def test_flow_horizontal(self, dia):
-        result = await dia.execute("diagram_flow", {"steps": ["A", "B", "C"], "direction": "horizontal"})
+        result = await dia.execute(
+            "diagram_flow", {"steps": ["A", "B", "C"], "direction": "horizontal"}
+        )
         assert "-->" in result
         assert "[A]" in result
 
     @pytest.mark.asyncio
     async def test_tree(self, dia):
-        result = await dia.execute("diagram_tree", {"root": "src", "children": "components\n  Button\n  Card\nutils\n  helpers"})
+        result = await dia.execute(
+            "diagram_tree",
+            {"root": "src", "children": "components\n  Button\n  Card\nutils\n  helpers"},
+        )
         assert "src" in result
         assert "├" in result or "└" in result
 
     @pytest.mark.asyncio
     async def test_sequence(self, dia):
-        result = await dia.execute("diagram_sequence", {
-            "actors": ["Client", "Server", "DB"],
-            "messages": ["Client->Server: GET /api", "Server->DB: SELECT *", "DB->Server: rows", "Server->Client: 200 OK"],
-        })
+        result = await dia.execute(
+            "diagram_sequence",
+            {
+                "actors": ["Client", "Server", "DB"],
+                "messages": [
+                    "Client->Server: GET /api",
+                    "Server->DB: SELECT *",
+                    "DB->Server: rows",
+                    "Server->Client: 200 OK",
+                ],
+            },
+        )
         assert "Client" in result
         assert "Server" in result
         assert ">" in result
@@ -1757,6 +1919,7 @@ class TestChangelogGenSkill:
     @pytest.fixture
     def clog(self):
         from towel.skills.builtin.changelog_gen_skill import ChangelogGenSkill
+
         return ChangelogGenSkill()
 
     def test_tools(self, clog):
@@ -1768,11 +1931,13 @@ class TestNoteSkill:
     @pytest.fixture(autouse=True)
     def reset(self):
         from towel.skills.builtin.note_skill import _notes
+
         _notes.clear()
 
     @pytest.fixture
     def note(self):
         from towel.skills.builtin.note_skill import NoteSkill
+
         return NoteSkill()
 
     @pytest.mark.asyncio
@@ -1800,9 +1965,13 @@ class TestNoteSkill:
 class TestHooks:
     def test_hook_registry(self):
         from towel.agent.hooks import HookRegistry
+
         reg = HookRegistry()
         called = []
-        async def my_hook(**kw): called.append(kw)
+
+        async def my_hook(**kw):
+            called.append(kw)
+
         reg.on("test_event", "my_hook", my_hook)
         assert reg.count == 1
         assert "test_event" in reg.list_hooks()
@@ -1810,9 +1979,13 @@ class TestHooks:
     @pytest.mark.asyncio
     async def test_hook_emit(self):
         from towel.agent.hooks import HookRegistry
+
         reg = HookRegistry()
         results = []
-        async def capture(**kw): results.append(kw)
+
+        async def capture(**kw):
+            results.append(kw)
+
         reg.on("on_message", "capture", capture)
         await reg.emit("on_message", text="hello")
         assert len(results) == 1
@@ -1821,8 +1994,12 @@ class TestHooks:
     @pytest.mark.asyncio
     async def test_hook_off(self):
         from towel.agent.hooks import HookRegistry
+
         reg = HookRegistry()
-        async def noop(**kw): pass
+
+        async def noop(**kw):
+            pass
+
         reg.on("evt", "noop", noop)
         assert reg.count == 1
         reg.off("evt", "noop")
@@ -1834,11 +2011,14 @@ class TestBookmarkSkill:
     def bm(self, tmp_path, monkeypatch):
         monkeypatch.setattr("towel.skills.builtin.bookmark_skill.BM_FILE", tmp_path / "bm.json")
         from towel.skills.builtin.bookmark_skill import BookmarkSkill
+
         return BookmarkSkill()
 
     @pytest.mark.asyncio
     async def test_add_and_search(self, bm):
-        await bm.execute("bookmark_add", {"url": "https://example.com", "title": "Example", "tags": ["test"]})
+        await bm.execute(
+            "bookmark_add", {"url": "https://example.com", "title": "Example", "tags": ["test"]}
+        )
         result = await bm.execute("bookmark_search", {"query": "example"})
         assert "Example" in result
         assert "example.com" in result
@@ -1861,6 +2041,7 @@ class TestCrontabSkill:
     @pytest.fixture
     def ct(self):
         from towel.skills.builtin.crontab_skill import CrontabSkill
+
         return CrontabSkill()
 
     def test_tools(self, ct):
@@ -1872,9 +2053,20 @@ class TestOpenApiSkill:
     @pytest.fixture
     def oa(self):
         from towel.skills.builtin.openapi_skill import OpenApiSkill
+
         return OpenApiSkill()
 
-    SPEC = '{"info":{"title":"Pet Store","version":"1.0.0"},"paths":{"/pets":{"get":{"summary":"List pets","tags":["pets"]},"post":{"summary":"Create pet","tags":["pets"]}},"/pets/{id}":{"get":{"summary":"Get pet","parameters":[{"name":"id","in":"path","required":true,"schema":{"type":"integer"}}],"responses":{"200":{"description":"OK"},"404":{"description":"Not found"}}}}}}'
+    SPEC = (
+        '{"info":{"title":"Pet Store","version":"1.0.0"},'
+        '"paths":{"/pets":{"get":{"summary":"List pets",'
+        '"tags":["pets"]},"post":{"summary":"Create pet",'
+        '"tags":["pets"]}},"/pets/{id}":{"get":{'
+        '"summary":"Get pet","parameters":[{"name":"id",'
+        '"in":"path","required":true,"schema":'
+        '{"type":"integer"}}],"responses":{"200":'
+        '{"description":"OK"},"404":'
+        '{"description":"Not found"}}}}}}'
+    )
 
     @pytest.mark.asyncio
     async def test_summary(self, oa):
@@ -1891,7 +2083,9 @@ class TestOpenApiSkill:
 
     @pytest.mark.asyncio
     async def test_detail(self, oa):
-        result = await oa.execute("openapi_detail", {"spec": self.SPEC, "path": "/pets/{id}", "method": "get"})
+        result = await oa.execute(
+            "openapi_detail", {"spec": self.SPEC, "path": "/pets/{id}", "method": "get"}
+        )
         assert "Get pet" in result
         assert "id" in result
         assert "200" in result
@@ -1907,6 +2101,7 @@ class TestKeychainSkill:
     @pytest.fixture
     def kc(self):
         from towel.skills.builtin.keychain_skill import KeychainSkill
+
         return KeychainSkill()
 
     def test_tools(self, kc):
@@ -1918,6 +2113,7 @@ class TestTypoSkill:
     @pytest.fixture
     def typo(self):
         from towel.skills.builtin.typo_skill import TypoSkill
+
         return TypoSkill()
 
     @pytest.mark.asyncio
@@ -1959,11 +2155,17 @@ class TestMakeSkill:
     @pytest.fixture
     def mk(self):
         from towel.skills.builtin.make_skill import MakeSkill
+
         return MakeSkill()
 
     @pytest.mark.asyncio
     async def test_targets(self, mk, tmp_path):
-        (tmp_path / "Makefile").write_text(".PHONY: test build\n\n# Run tests\ntest:\n\tpytest\n\n# Build project\nbuild:\n\tpython -m build\n\nclean:\n\trm -rf dist\n")
+        (tmp_path / "Makefile").write_text(
+            ".PHONY: test build\n\n# Run tests\n"
+            "test:\n\tpytest\n\n# Build project\n"
+            "build:\n\tpython -m build\n\n"
+            "clean:\n\trm -rf dist\n"
+        )
         result = await mk.execute("make_targets", {"path": str(tmp_path / "Makefile")})
         assert "test" in result
         assert "build" in result
@@ -1972,15 +2174,21 @@ class TestMakeSkill:
 
     @pytest.mark.asyncio
     async def test_recipe(self, mk, tmp_path):
-        (tmp_path / "Makefile").write_text("deploy: build test\n\trsync -av dist/ server:/app/\n\techo 'done'\n")
-        result = await mk.execute("make_recipe", {"target": "deploy", "path": str(tmp_path / "Makefile")})
+        (tmp_path / "Makefile").write_text(
+            "deploy: build test\n\trsync -av dist/ server:/app/\n\techo 'done'\n"
+        )
+        result = await mk.execute(
+            "make_recipe", {"target": "deploy", "path": str(tmp_path / "Makefile")}
+        )
         assert "rsync" in result
         assert "depends on: build test" in result
 
     @pytest.mark.asyncio
     async def test_recipe_not_found(self, mk, tmp_path):
         (tmp_path / "Makefile").write_text("test:\n\tpytest\n")
-        result = await mk.execute("make_recipe", {"target": "nonexistent", "path": str(tmp_path / "Makefile")})
+        result = await mk.execute(
+            "make_recipe", {"target": "nonexistent", "path": str(tmp_path / "Makefile")}
+        )
         assert "not found" in result.lower()
 
     @pytest.mark.asyncio
@@ -1993,6 +2201,7 @@ class TestManSkill:
     @pytest.fixture
     def man(self):
         from towel.skills.builtin.man_skill import ManSkill
+
         return ManSkill()
 
     def test_tools(self, man):
@@ -2013,30 +2222,35 @@ class TestManSkill:
 class TestWeatherSkill:
     def test_tools(self):
         from towel.skills.builtin.weather_skill import WeatherSkill
+
         assert {t.name for t in WeatherSkill().tools()} == {"weather_now", "weather_forecast"}
 
 
 class TestWikipediaSkill:
     def test_tools(self):
         from towel.skills.builtin.wikipedia_skill import WikipediaSkill
+
         assert {t.name for t in WikipediaSkill().tools()} == {"wiki_search", "wiki_summary"}
 
 
 class TestHackerNewsSkill2:
     def test_tools(self):
         from towel.skills.builtin.hackernews_skill import HackerNewsSkill
+
         assert {t.name for t in HackerNewsSkill().tools()} == {"hn_top"}
 
 
 class TestCurrencySkill:
     def test_tools(self):
         from towel.skills.builtin.currency_skill import CurrencySkill
+
         assert {t.name for t in CurrencySkill().tools()} == {"currency_convert", "currency_rates"}
 
 
 class TestGithubSkill:
     def test_tools(self):
         from towel.skills.builtin.github_skill import GithubSkill
+
         names = {t.name for t in GithubSkill().tools()}
         assert "github_repo" in names
         assert "github_search" in names
@@ -2046,18 +2260,21 @@ class TestGithubSkill:
 class TestRedditSkill:
     def test_tools(self):
         from towel.skills.builtin.reddit_skill import RedditSkill
+
         assert {t.name for t in RedditSkill().tools()} == {"reddit_hot", "reddit_search"}
 
 
 class TestStackOverflowSkill2:
     def test_tools(self):
         from towel.skills.builtin.stackoverflow_skill import StackOverflowSkill
+
         assert {t.name for t in StackOverflowSkill().tools()} == {"so_search"}
 
 
 class TestPypiSkill:
     def test_tools(self):
         from towel.skills.builtin.pypi_skill import PypiSkill
+
         assert {t.name for t in PypiSkill().tools()} == {"pypi_info", "pypi_search"}
 
 
@@ -2065,6 +2282,7 @@ class TestDnsSkill:
     @pytest.mark.asyncio
     async def test_resolve_localhost(self):
         from towel.skills.builtin.dns_skill import DnsSkill
+
         result = await DnsSkill().execute("dns_resolve", {"domain": "localhost"})
         assert "127.0.0.1" in result or "::1" in result
 
@@ -2072,25 +2290,33 @@ class TestDnsSkill:
 class TestWhoisSkill2:
     def test_tools(self):
         from towel.skills.builtin.whois_skill import WhoisSkill
+
         assert {t.name for t in WhoisSkill().tools()} == {"whois_lookup"}
 
 
 class TestCertSkill:
     def test_tools(self):
         from towel.skills.builtin.cert_skill import CertSkill
+
         assert {t.name for t in CertSkill().tools()} == {"cert_check"}
 
 
 class TestUptimeSkill:
     def test_tools(self):
         from towel.skills.builtin.uptime_skill import UptimeSkill
-        assert {t.name for t in UptimeSkill().tools()} == {"uptime_check", "uptime_batch", "uptime_history"}
+
+        assert {t.name for t in UptimeSkill().tools()} == {
+            "uptime_check",
+            "uptime_batch",
+            "uptime_history",
+        }
 
 
 class TestRandomSkill:
     @pytest.fixture
     def rnd(self):
         from towel.skills.builtin.random_skill import RandomSkill
+
         return RandomSkill()
 
     @pytest.mark.asyncio
@@ -2114,11 +2340,13 @@ class TestPomodoroSkill:
     @pytest.fixture(autouse=True)
     def reset(self):
         from towel.skills.builtin.pomodoro_skill import _active
+
         _active.clear()
 
     @pytest.mark.asyncio
     async def test_start_and_status(self):
         from towel.skills.builtin.pomodoro_skill import PomodoroSkill
+
         p = PomodoroSkill()
         result = await p.execute("pomo_start", {"minutes": 25, "task": "Code"})
         assert "started" in result.lower()
@@ -2130,7 +2358,10 @@ class TestUrlSkill:
     @pytest.mark.asyncio
     async def test_parse(self):
         from towel.skills.builtin.url_skill import UrlSkill
-        result = await UrlSkill().execute("url_parse", {"url": "https://example.com:8080/path?q=1#frag"})
+
+        result = await UrlSkill().execute(
+            "url_parse", {"url": "https://example.com:8080/path?q=1#frag"}
+        )
         assert "example.com" in result
         assert "8080" in result
         assert "frag" in result
@@ -2140,6 +2371,7 @@ class TestEmojiSkill:
     @pytest.mark.asyncio
     async def test_search(self):
         from towel.skills.builtin.emoji_skill import EmojiSkill
+
         result = await EmojiSkill().execute("emoji_search", {"query": "fire"})
         assert "🔥" in result
 
@@ -2147,6 +2379,7 @@ class TestEmojiSkill:
 class TestCountrySkill2:
     def test_tools(self):
         from towel.skills.builtin.country_skill import CountrySkill
+
         assert {t.name for t in CountrySkill().tools()} == {"country_info"}
 
 
@@ -2154,6 +2387,7 @@ class TestBaseConvertSkill:
     @pytest.mark.asyncio
     async def test_all_bases(self):
         from towel.skills.builtin.base_convert_skill import BaseConvertSkill
+
         result = await BaseConvertSkill().execute("show_all_bases", {"number": "255"})
         assert "0xff" in result
         assert "0b11111111" in result
@@ -2164,6 +2398,7 @@ class TestXmlSkill:
     @pytest.mark.asyncio
     async def test_to_json(self):
         from towel.skills.builtin.xml_skill import XmlSkill
+
         result = await XmlSkill().execute("xml_to_json", {"xml": "<root><name>Alice</name></root>"})
         assert "Alice" in result
 
@@ -2171,6 +2406,7 @@ class TestXmlSkill:
 class TestRssSkill:
     def test_tools(self):
         from towel.skills.builtin.rss_skill import RssSkill
+
         assert {t.name for t in RssSkill().tools()} == {"rss_read"}
 
 
@@ -2178,13 +2414,17 @@ class TestTimezoneSkill:
     @pytest.mark.asyncio
     async def test_convert(self):
         from towel.skills.builtin.tz_skill import TimezoneSkill
-        result = await TimezoneSkill().execute("tz_convert", {"time": "09:00", "from_tz": "PST", "to_tz": "EST"})
+
+        result = await TimezoneSkill().execute(
+            "tz_convert", {"time": "09:00", "from_tz": "PST", "to_tz": "EST"}
+        )
         assert "12:00" in result
 
 
 class TestPortScannerSkill:
     def test_tools(self):
         from towel.skills.builtin.port_scanner_skill import PortScannerSkill
+
         assert {t.name for t in PortScannerSkill().tools()} == {"scan_ports"}
 
 
@@ -2192,6 +2432,7 @@ class TestQuoteSkill:
     @pytest.mark.asyncio
     async def test_random(self):
         from towel.skills.builtin.quote_skill import QuoteSkill
+
         result = await QuoteSkill().execute("random_quote", {})
         assert "—" in result
 
@@ -2200,6 +2441,7 @@ class TestMimeSkill:
     @pytest.mark.asyncio
     async def test_json(self):
         from towel.skills.builtin.mime_skill import MimeSkill
+
         result = await MimeSkill().execute("mime_type", {"path": ".json"})
         assert "application/json" in result
 
@@ -2207,4 +2449,5 @@ class TestMimeSkill:
 class TestCheatSkill:
     def test_tools(self):
         from towel.skills.builtin.cheat_skill import CheatSkill
+
         assert {t.name for t in CheatSkill().tools()} == {"cheat_sheet"}

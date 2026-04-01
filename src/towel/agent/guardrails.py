@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 @dataclass
 class GuardrailResult:
     """Result of a guardrail check."""
+
     passed: bool = True
     violations: list[str] = field(default_factory=list)
 
@@ -29,7 +30,10 @@ _INJECTION_PATTERNS = [
     (r"ignore\s+(all\s+)?previous\s+instructions", "prompt injection: ignore instructions"),
     (r"ignore\s+.*?system\s+prompt", "prompt injection: ignore system prompt"),
     (r"you\s+are\s+now\s+(?:DAN|jailbreak|unrestricted)", "prompt injection: role override"),
-    (r"pretend\s+you\s+(?:are|have)\s+no\s+(?:rules|restrictions|limits)", "prompt injection: remove restrictions"),
+    (
+        r"pretend\s+you\s+(?:are|have)\s+no\s+(?:rules|restrictions|limits)",
+        "prompt injection: remove restrictions",
+    ),
     (r"output\s+your\s+(?:system|initial)\s+prompt", "prompt injection: extract system prompt"),
     (r"repeat\s+(?:everything|all)\s+(?:above|before)", "prompt injection: extract context"),
     (r"\[system\]|\[INST\]|<<SYS>>", "prompt injection: format injection"),

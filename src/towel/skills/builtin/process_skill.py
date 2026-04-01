@@ -69,7 +69,9 @@ class ProcessSkill(Skill):
     async def _run(self, cmd: list[str]) -> str:
         try:
             proc = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
             return stdout.decode("utf-8", errors="replace").strip()
@@ -78,6 +80,7 @@ class ProcessSkill(Skill):
 
     async def _find(self, name: str) -> str:
         import platform
+
         if platform.system() == "Darwin":
             output = await self._run(["pgrep", "-fl", name])
         else:
@@ -86,14 +89,21 @@ class ProcessSkill(Skill):
         if not output:
             return f"No processes matching '{name}'"
         lines = output.splitlines()
-        return f"Found {len(lines)} process(es) matching '{name}':\n" + "\n".join(f"  {l}" for l in lines[:20])
+        return f"Found {len(lines)} process(es) matching '{name}':\n" + "\n".join(
+            f"  {line}" for line in lines[:20]
+        )
 
     async def _info(self, pid: int) -> str:
         import platform
+
         if platform.system() == "Darwin":
-            output = await self._run(["ps", "-p", str(pid), "-o", "pid,ppid,%cpu,%mem,rss,start,command"])
+            output = await self._run(
+                ["ps", "-p", str(pid), "-o", "pid,ppid,%cpu,%mem,rss,start,command"]
+            )
         else:
-            output = await self._run(["ps", "-p", str(pid), "-o", "pid,ppid,%cpu,%mem,rss,lstart,cmd"])
+            output = await self._run(
+                ["ps", "-p", str(pid), "-o", "pid,ppid,%cpu,%mem,rss,lstart,cmd"]
+            )
 
         if not output or len(output.splitlines()) < 2:
             return f"Process {pid} not found"
@@ -101,6 +111,7 @@ class ProcessSkill(Skill):
 
     async def _tree(self) -> str:
         import platform
+
         if platform.system() == "Darwin":
             output = await self._run(["pstree", "-w"])
             if "(error:" in output:
@@ -113,6 +124,7 @@ class ProcessSkill(Skill):
 
     async def _ports(self) -> str:
         import platform
+
         if platform.system() == "Darwin":
             output = await self._run(["lsof", "-iTCP", "-sTCP:LISTEN", "-P", "-n"])
         else:

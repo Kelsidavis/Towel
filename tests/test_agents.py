@@ -1,8 +1,14 @@
 """Tests for autonomous agents."""
+
 import pytest
+
 from towel.agent.agents import (
-    AutonomousAgent, create_agent, delete_agent, list_agents,
-    get_agent, log_agent_action, AGENTS_FILE,
+    AutonomousAgent,
+    create_agent,
+    delete_agent,
+    get_agent,
+    list_agents,
+    log_agent_action,
 )
 
 

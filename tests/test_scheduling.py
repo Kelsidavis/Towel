@@ -1,8 +1,13 @@
 """Tests for scheduled tasks."""
+
 import pytest
+
 from towel.agent.scheduling import (
-    Schedule, add_schedule, remove_schedule, list_schedules, toggle_schedule,
-    _save_schedules, SCHEDULES_FILE,
+    Schedule,
+    add_schedule,
+    list_schedules,
+    remove_schedule,
+    toggle_schedule,
 )
 
 

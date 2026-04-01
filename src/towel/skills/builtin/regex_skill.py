@@ -21,26 +21,41 @@ class RegexSkill(Skill):
         return [
             ToolDefinition(
                 name="regex_test",
-                description="Test if a regex pattern matches a string. Returns match details or 'no match'.",
+                description=(
+                    "Test if a regex pattern matches a string. "
+                    "Returns match details or 'no match'."
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "pattern": {"type": "string", "description": "Regular expression pattern"},
                         "text": {"type": "string", "description": "Text to test against"},
-                        "flags": {"type": "string", "description": "Flags: i=ignorecase, m=multiline, s=dotall (e.g., 'im')"},
+                        "flags": {
+                            "type": "string",
+                            "description": (
+                                "Flags: i=ignorecase, m=multiline, "
+                                "s=dotall (e.g., 'im')"
+                            ),
+                        },
                     },
                     "required": ["pattern", "text"],
                 },
             ),
             ToolDefinition(
                 name="regex_findall",
-                description="Find all matches of a pattern in text. Returns list of matches with positions.",
+                description=(
+                    "Find all matches of a pattern in text. "
+                    "Returns list of matches with positions."
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "pattern": {"type": "string", "description": "Regular expression pattern"},
                         "text": {"type": "string", "description": "Text to search"},
-                        "flags": {"type": "string", "description": "Flags: i=ignorecase, m=multiline, s=dotall"},
+                        "flags": {
+                            "type": "string",
+                            "description": "Flags: i=ignorecase, m=multiline, s=dotall",
+                        },
                     },
                     "required": ["pattern", "text"],
                 },
@@ -52,9 +67,15 @@ class RegexSkill(Skill):
                     "type": "object",
                     "properties": {
                         "pattern": {"type": "string", "description": "Regular expression pattern"},
-                        "replacement": {"type": "string", "description": "Replacement string (supports \\1, \\2 backreferences)"},
+                        "replacement": {
+                            "type": "string",
+                            "description": "Replacement string (supports \\1, \\2 backreferences)",
+                        },
                         "text": {"type": "string", "description": "Text to transform"},
-                        "flags": {"type": "string", "description": "Flags: i=ignorecase, m=multiline, s=dotall"},
+                        "flags": {
+                            "type": "string",
+                            "description": "Flags: i=ignorecase, m=multiline, s=dotall",
+                        },
                     },
                     "required": ["pattern", "replacement", "text"],
                 },
@@ -67,7 +88,10 @@ class RegexSkill(Skill):
                     "properties": {
                         "pattern": {"type": "string", "description": "Delimiter pattern"},
                         "text": {"type": "string", "description": "Text to split"},
-                        "maxsplit": {"type": "integer", "description": "Max splits (0=unlimited, default)"},
+                        "maxsplit": {
+                            "type": "integer",
+                            "description": "Max splits (0=unlimited, default)",
+                        },
                     },
                     "required": ["pattern", "text"],
                 },
@@ -77,22 +101,36 @@ class RegexSkill(Skill):
     async def execute(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         match tool_name:
             case "regex_test":
-                return self._test(arguments["pattern"], arguments["text"], arguments.get("flags", ""))
+                return self._test(
+                    arguments["pattern"], arguments["text"], arguments.get("flags", "")
+                )
             case "regex_findall":
-                return self._findall(arguments["pattern"], arguments["text"], arguments.get("flags", ""))
+                return self._findall(
+                    arguments["pattern"], arguments["text"], arguments.get("flags", "")
+                )
             case "regex_replace":
-                return self._replace(arguments["pattern"], arguments["replacement"], arguments["text"], arguments.get("flags", ""))
+                return self._replace(
+                    arguments["pattern"],
+                    arguments["replacement"],
+                    arguments["text"],
+                    arguments.get("flags", ""),
+                )
             case "regex_split":
-                return self._split(arguments["pattern"], arguments["text"], arguments.get("maxsplit", 0))
+                return self._split(
+                    arguments["pattern"], arguments["text"], arguments.get("maxsplit", 0)
+                )
             case _:
                 return f"Unknown tool: {tool_name}"
 
     def _parse_flags(self, flags_str: str) -> int:
         f = 0
         for c in flags_str.lower():
-            if c == "i": f |= re.IGNORECASE
-            elif c == "m": f |= re.MULTILINE
-            elif c == "s": f |= re.DOTALL
+            if c == "i":
+                f |= re.IGNORECASE
+            elif c == "m":
+                f |= re.MULTILINE
+            elif c == "s":
+                f |= re.DOTALL
         return f
 
     def _test(self, pattern: str, text: str, flags: str) -> str:
@@ -126,7 +164,7 @@ class RegexSkill(Skill):
 
         lines = [f"Found {len(matches)} match(es):"]
         for i, m in enumerate(matches[:50]):
-            lines.append(f"  {i+1}. '{m.group()}' at {m.start()}-{m.end()}")
+            lines.append(f"  {i + 1}. '{m.group()}' at {m.start()}-{m.end()}")
         if len(matches) > 50:
             lines.append(f"  ... and {len(matches) - 50} more")
         return "\n".join(lines)
@@ -154,5 +192,5 @@ class RegexSkill(Skill):
             preview = p[:100].replace("\n", "\\n")
             if len(p) > 100:
                 preview += "..."
-            lines.append(f"  {i+1}. '{preview}'")
+            lines.append(f"  {i + 1}. '{preview}'")
         return "\n".join(lines)

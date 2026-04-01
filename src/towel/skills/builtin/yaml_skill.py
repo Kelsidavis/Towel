@@ -12,71 +12,113 @@ try:
 except ImportError:
     _toml = None
 
+
 # Minimal YAML parser (no PyYAML dependency) for simple cases
 def _simple_yaml_parse(text: str) -> dict | list | str:
     """Parse simple YAML (flat key-value, lists). Falls back to raw text."""
     lines = text.strip().splitlines()
-    if not lines: return {}
+    if not lines:
+        return {}
 
     # Check if it's a simple list
-    if all(l.strip().startswith("- ") for l in lines if l.strip()):
-        return [l.strip()[2:] for l in lines if l.strip()]
+    if all(line.strip().startswith("- ") for line in lines if line.strip()):
+        return [line.strip()[2:] for line in lines if line.strip()]
 
     # Try key-value pairs
     result: dict[str, Any] = {}
     for line in lines:
         line = line.strip()
-        if not line or line.startswith("#"): continue
+        if not line or line.startswith("#"):
+            continue
         if ": " in line:
             key, _, val = line.partition(": ")
             key = key.strip()
             val = val.strip()
-            if val.lower() in ("true","yes"): val = True
-            elif val.lower() in ("false","no"): val = False
-            elif val.replace(".","",1).lstrip("-").isdigit():
+            if val.lower() in ("true", "yes"):
+                val = True
+            elif val.lower() in ("false", "no"):
+                val = False
+            elif val.replace(".", "", 1).lstrip("-").isdigit():
                 val = float(val) if "." in val else int(val)
             elif val.startswith("[") and val.endswith("]"):
                 val = [v.strip().strip("'\"") for v in val[1:-1].split(",")]
             elif val.startswith("'") or val.startswith('"'):
                 val = val.strip("'\"")
             result[key] = val
-        elif line.endswith(":"): result[line[:-1].strip()] = {}
+        elif line.endswith(":"):
+            result[line[:-1].strip()] = {}
     return result if result else text
 
 
 class YamlSkill(Skill):
     @property
-    def name(self) -> str: return "yaml"
+    def name(self) -> str:
+        return "yaml"
+
     @property
-    def description(self) -> str: return "Parse YAML, convert between YAML/JSON/TOML"
+    def description(self) -> str:
+        return "Parse YAML, convert between YAML/JSON/TOML"
 
     def tools(self) -> list[ToolDefinition]:
         return [
-            ToolDefinition(name="yaml_parse", description="Parse YAML text and return as structured JSON",
-                parameters={"type":"object","properties":{
-                    "text":{"type":"string","description":"YAML text to parse"},
-                },"required":["text"]}),
-            ToolDefinition(name="yaml_to_json", description="Convert YAML to JSON",
-                parameters={"type":"object","properties":{
-                    "text":{"type":"string","description":"YAML text"},
-                },"required":["text"]}),
-            ToolDefinition(name="json_to_yaml", description="Convert JSON to YAML-like format",
-                parameters={"type":"object","properties":{
-                    "text":{"type":"string","description":"JSON text"},
-                },"required":["text"]}),
-            ToolDefinition(name="yaml_validate", description="Check if YAML text is valid",
-                parameters={"type":"object","properties":{
-                    "text":{"type":"string","description":"YAML text to validate"},
-                },"required":["text"]}),
+            ToolDefinition(
+                name="yaml_parse",
+                description="Parse YAML text and return as structured JSON",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string", "description": "YAML text to parse"},
+                    },
+                    "required": ["text"],
+                },
+            ),
+            ToolDefinition(
+                name="yaml_to_json",
+                description="Convert YAML to JSON",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string", "description": "YAML text"},
+                    },
+                    "required": ["text"],
+                },
+            ),
+            ToolDefinition(
+                name="json_to_yaml",
+                description="Convert JSON to YAML-like format",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string", "description": "JSON text"},
+                    },
+                    "required": ["text"],
+                },
+            ),
+            ToolDefinition(
+                name="yaml_validate",
+                description="Check if YAML text is valid",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string", "description": "YAML text to validate"},
+                    },
+                    "required": ["text"],
+                },
+            ),
         ]
 
     async def execute(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         match tool_name:
-            case "yaml_parse": return self._parse(arguments["text"])
-            case "yaml_to_json": return self._to_json(arguments["text"])
-            case "json_to_yaml": return self._to_yaml(arguments["text"])
-            case "yaml_validate": return self._validate(arguments["text"])
-            case _: return f"Unknown tool: {tool_name}"
+            case "yaml_parse":
+                return self._parse(arguments["text"])
+            case "yaml_to_json":
+                return self._to_json(arguments["text"])
+            case "json_to_yaml":
+                return self._to_yaml(arguments["text"])
+            case "yaml_validate":
+                return self._validate(arguments["text"])
+            case _:
+                return f"Unknown tool: {tool_name}"
 
     def _parse(self, text: str) -> str:
         result = _simple_yaml_parse(text)

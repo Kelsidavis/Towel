@@ -2,7 +2,7 @@
 
 import pytest
 
-from towel.memory.store import MemoryStore, MemoryEntry
+from towel.memory.store import MemoryEntry, MemoryStore
 
 
 @pytest.fixture

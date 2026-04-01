@@ -22,6 +22,7 @@ from typing import Any
 @dataclass
 class RAGChunk:
     """A chunk of indexed text."""
+
     doc_id: str
     text: str
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -30,6 +31,7 @@ class RAGChunk:
 @dataclass
 class RAGResult:
     """A search result."""
+
     doc_id: str
     text: str
     score: float
@@ -38,7 +40,7 @@ class RAGResult:
 
 def _tokenize(text: str) -> list[str]:
     """Simple word tokenizer."""
-    return re.findall(r'\b\w{2,}\b', text.lower())
+    return re.findall(r"\b\w{2,}\b", text.lower())
 
 
 class RAGIndex:
@@ -76,6 +78,7 @@ class RAGIndex:
     def add_file(self, path: str, metadata: dict[str, Any] | None = None) -> int:
         """Index a file."""
         from pathlib import Path
+
         p = Path(path).expanduser()
         if not p.is_file():
             return 0
@@ -113,12 +116,14 @@ class RAGIndex:
         results = []
         for idx, score in scores[:top_k]:
             chunk = self._chunks[idx]
-            results.append(RAGResult(
-                doc_id=chunk.doc_id,
-                text=chunk.text,
-                score=round(score, 4),
-                metadata=chunk.metadata,
-            ))
+            results.append(
+                RAGResult(
+                    doc_id=chunk.doc_id,
+                    text=chunk.text,
+                    score=round(score, 4),
+                    metadata=chunk.metadata,
+                )
+            )
         return results
 
     def clear(self) -> None:

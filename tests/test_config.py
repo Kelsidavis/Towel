@@ -1,6 +1,6 @@
 """Tests for configuration management."""
 
-from towel.config import TowelConfig, ModelConfig, GatewayConfig
+from towel.config import GatewayConfig, ModelConfig, TowelConfig
 
 
 def test_default_config():

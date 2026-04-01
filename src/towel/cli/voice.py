@@ -25,7 +25,8 @@ console = Console()
 def check_voice_deps() -> str | None:
     """Check if voice dependencies are available. Returns error message or None."""
     try:
-        import mlx_whisper
+        import mlx_whisper  # noqa: F401
+
         return None
     except ImportError:
         return "mlx-whisper not installed. Run: pip install towel-ai[voice]"
@@ -43,11 +44,16 @@ def record_audio(duration: float = 10.0, sample_rate: int = 16000) -> bytes | st
         console.print(f"[green]Listening...[/green] (up to {duration:.0f}s, press Ctrl+C to stop)")
 
         try:
-            audio = sd.rec(int(duration * sample_rate), samplerate=sample_rate,
-                          channels=1, dtype="int16", blocking=True)
+            audio = sd.rec(
+                int(duration * sample_rate),
+                samplerate=sample_rate,
+                channels=1,
+                dtype="int16",
+                blocking=True,
+            )
         except KeyboardInterrupt:
             sd.stop()
-            frames = sd.get_status().input_underflow
+            _frames = sd.get_status().input_underflow
             console.print("[dim]Stopped.[/dim]")
             audio = sd.rec(0, samplerate=sample_rate, channels=1, dtype="int16")
 
@@ -55,7 +61,7 @@ def record_audio(duration: float = 10.0, sample_rate: int = 16000) -> bytes | st
         threshold = np.max(np.abs(audio)) * 0.01
         nonsilent = np.where(np.abs(audio.flatten()) > threshold)[0]
         if len(nonsilent) > 0:
-            audio = audio[:nonsilent[-1] + sample_rate]  # keep 1s after last sound
+            audio = audio[: nonsilent[-1] + sample_rate]  # keep 1s after last sound
 
         # Convert to WAV bytes
         buf = io.BytesIO()

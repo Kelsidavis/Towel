@@ -92,17 +92,17 @@ def list_cached_models() -> list[CachedModel]:
 
         # Calculate size
         try:
-            total_size = sum(
-                f.stat().st_size for f in entry.rglob("*") if f.is_file()
-            )
+            total_size = sum(f.stat().st_size for f in entry.rglob("*") if f.is_file())
         except OSError:
             total_size = 0
 
-        models.append(CachedModel(
-            name=name,
-            path=entry,
-            size_bytes=total_size,
-        ))
+        models.append(
+            CachedModel(
+                name=name,
+                path=entry,
+                size_bytes=total_size,
+            )
+        )
 
     return models
 
@@ -134,8 +134,8 @@ class CachedModel:
 
     @property
     def size_display(self) -> str:
-        gb = self.size_bytes / (1024 ** 3)
+        gb = self.size_bytes / (1024**3)
         if gb >= 1:
             return f"{gb:.1f} GB"
-        mb = self.size_bytes / (1024 ** 2)
+        mb = self.size_bytes / (1024**2)
         return f"{mb:.0f} MB"

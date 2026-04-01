@@ -1,6 +1,5 @@
 """Tests for deployment generator."""
-import pytest
-from pathlib import Path
+
 from towel.cli.deploy import generate_deploy
 
 
@@ -39,4 +38,5 @@ class TestDeploy:
 
     def test_cli_registered(self):
         from towel.cli.main import cli
+
         assert "deploy" in [c.name for c in cli.commands.values()]

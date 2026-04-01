@@ -3,10 +3,12 @@
 import pytest
 
 from towel.cli.agent_mgr import (
-    create_agent, delete_agent, clone_agent,
-    load_user_agents, save_user_agents, AGENTS_FILE,
+    clone_agent,
+    create_agent,
+    delete_agent,
+    load_user_agents,
 )
-from towel.config import TowelConfig, AgentProfile
+from towel.config import TowelConfig
 
 
 @pytest.fixture(autouse=True)
@@ -85,7 +87,9 @@ class TestCloneAgent:
 class TestCLICommands:
     def test_agents_list(self):
         from click.testing import CliRunner
+
         from towel.cli.main import cli
+
         runner = CliRunner()
         result = runner.invoke(cli, ["agents"])
         assert result.exit_code == 0
@@ -93,21 +97,33 @@ class TestCLICommands:
 
     def test_agents_create(self):
         from click.testing import CliRunner
+
         from towel.cli.main import cli
+
         runner = CliRunner()
-        result = runner.invoke(cli, [
-            "agents", "create", "mybot",
-            "-m", "mlx-community/test",
-            "-i", "You are mybot.",
-            "-d", "My custom bot",
-        ])
+        result = runner.invoke(
+            cli,
+            [
+                "agents",
+                "create",
+                "mybot",
+                "-m",
+                "mlx-community/test",
+                "-i",
+                "You are mybot.",
+                "-d",
+                "My custom bot",
+            ],
+        )
         assert result.exit_code == 0
         assert "Created" in result.output
         assert "mybot" in result.output
 
     def test_agents_clone(self):
         from click.testing import CliRunner
+
         from towel.cli.main import cli
+
         runner = CliRunner()
         result = runner.invoke(cli, ["agents", "clone", "coder", "my-coder"])
         assert result.exit_code == 0
@@ -115,7 +131,9 @@ class TestCLICommands:
 
     def test_agents_delete(self):
         from click.testing import CliRunner
+
         from towel.cli.main import cli
+
         runner = CliRunner()
         # Create then delete
         runner.invoke(cli, ["agents", "create", "temp", "-m", "m", "-i", "i"])
@@ -125,14 +143,18 @@ class TestCLICommands:
 
     def test_cannot_delete_builtin(self):
         from click.testing import CliRunner
+
         from towel.cli.main import cli
+
         runner = CliRunner()
         result = runner.invoke(cli, ["agents", "delete", "coder"])
         assert "Cannot delete" in result.output
 
     def test_agents_help(self):
         from click.testing import CliRunner
+
         from towel.cli.main import cli
+
         runner = CliRunner()
         result = runner.invoke(cli, ["agents", "--help"])
         assert "create" in result.output

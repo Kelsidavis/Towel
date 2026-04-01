@@ -1,10 +1,15 @@
 """Tests for agent middleware system."""
 
 import pytest
+
 from towel.agent.middleware import (
-    MiddlewareContext, MiddlewareStack,
-    rate_limiter, content_logger, cost_tracker,
-    _rate_limiter_state, _cost_state,
+    MiddlewareContext,
+    MiddlewareStack,
+    _cost_state,
+    _rate_limiter_state,
+    content_logger,
+    cost_tracker,
+    rate_limiter,
 )
 
 
@@ -24,10 +29,14 @@ class TestMiddlewareStack:
     @pytest.mark.asyncio
     async def test_pre_runs_in_order(self):
         order = []
+
         async def a(ctx):
-            order.append("a"); return ctx
+            order.append("a")
+            return ctx
+
         async def b(ctx):
-            order.append("b"); return ctx
+            order.append("b")
+            return ctx
 
         stack = MiddlewareStack()
         stack.add_pre("a", a)
@@ -43,6 +52,7 @@ class TestMiddlewareStack:
             ctx.blocked = True
             ctx.block_reason = "nope"
             return ctx
+
         async def should_not_run(ctx):
             raise RuntimeError("should not reach")
 
@@ -58,8 +68,10 @@ class TestMiddlewareStack:
     @pytest.mark.asyncio
     async def test_post_runs(self):
         ran = []
+
         async def logger(ctx):
-            ran.append(True); return ctx
+            ran.append(True)
+            return ctx
 
         stack = MiddlewareStack()
         stack.add_post("logger", logger)
@@ -70,7 +82,10 @@ class TestMiddlewareStack:
 
     def test_list_middleware(self):
         stack = MiddlewareStack()
-        async def noop(ctx): return ctx
+
+        async def noop(ctx):
+            return ctx
+
         stack.add_pre("a", noop)
         stack.add_post("b", noop)
         listing = stack.list_middleware()
@@ -88,6 +103,7 @@ class TestBuiltinMiddleware:
     @pytest.mark.asyncio
     async def test_rate_limiter_blocks(self):
         import time
+
         _rate_limiter_state.clear()
         _rate_limiter_state["times"] = [time.time()] * 30
         ctx = MiddlewareContext(user_message="hi")

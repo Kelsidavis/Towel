@@ -1,6 +1,7 @@
 """Tests for the search skill."""
 
 import pytest
+
 from towel.skills.builtin.search import SearchSkill
 
 
@@ -42,7 +43,9 @@ class TestSearchFiles:
     async def test_glob_filter(self, skill, tmp_path):
         (tmp_path / "a.py").write_text("target\n")
         (tmp_path / "b.txt").write_text("target\n")
-        result = await skill.execute("search_files", {"pattern": "target", "path": str(tmp_path), "glob": "*.py"})
+        result = await skill.execute(
+            "search_files", {"pattern": "target", "path": str(tmp_path), "glob": "*.py"}
+        )
         assert "a.py" in result
         assert "b.txt" not in result
 

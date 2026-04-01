@@ -10,11 +10,42 @@ from towel.skills.base import Skill, ToolDefinition
 
 MAX_RESULTS = 50
 MAX_LINE_LEN = 300
-BINARY_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2",
-                     ".ttf", ".eot", ".zip", ".tar", ".gz", ".bin", ".exe",
-                     ".pyc", ".pyo", ".so", ".dylib", ".o", ".class"}
-SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".tox",
-             "dist", "build", ".eggs", ".mypy_cache", ".ruff_cache", ".pytest_cache"}
+BINARY_EXTENSIONS = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".ico",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".eot",
+    ".zip",
+    ".tar",
+    ".gz",
+    ".bin",
+    ".exe",
+    ".pyc",
+    ".pyo",
+    ".so",
+    ".dylib",
+    ".o",
+    ".class",
+}
+SKIP_DIRS = {
+    ".git",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".tox",
+    "dist",
+    "build",
+    ".eggs",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".pytest_cache",
+}
 
 
 class SearchSkill(Skill):
@@ -30,15 +61,33 @@ class SearchSkill(Skill):
         return [
             ToolDefinition(
                 name="search_files",
-                description="Search for a pattern across files in a directory. Returns matching lines with context.",
+                description=(
+                    "Search for a pattern across files in a "
+                    "directory. Returns matching lines with context."
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
-                        "pattern": {"type": "string", "description": "Search pattern (regex supported)"},
-                        "path": {"type": "string", "description": "Directory to search (default: cwd)"},
-                        "glob": {"type": "string", "description": "File glob filter (e.g., '*.py', '*.ts')"},
-                        "context": {"type": "integer", "description": "Lines of context around matches (default: 2)"},
-                        "case_sensitive": {"type": "boolean", "description": "Case sensitive (default: false)"},
+                        "pattern": {
+                            "type": "string",
+                            "description": "Search pattern (regex supported)",
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "Directory to search (default: cwd)",
+                        },
+                        "glob": {
+                            "type": "string",
+                            "description": "File glob filter (e.g., '*.py', '*.ts')",
+                        },
+                        "context": {
+                            "type": "integer",
+                            "description": "Lines of context around matches (default: 2)",
+                        },
+                        "case_sensitive": {
+                            "type": "boolean",
+                            "description": "Case sensitive (default: false)",
+                        },
                     },
                     "required": ["pattern"],
                 },
@@ -49,8 +98,14 @@ class SearchSkill(Skill):
                 parameters={
                     "type": "object",
                     "properties": {
-                        "pattern": {"type": "string", "description": "Glob pattern (e.g., '*.py', 'test_*.py', '**/*.tsx')"},
-                        "path": {"type": "string", "description": "Directory to search (default: cwd)"},
+                        "pattern": {
+                            "type": "string",
+                            "description": "Glob pattern (e.g., '*.py', 'test_*.py', '**/*.tsx')",
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "Directory to search (default: cwd)",
+                        },
                     },
                     "required": ["pattern"],
                 },
@@ -73,8 +128,12 @@ class SearchSkill(Skill):
                 return f"Unknown tool: {tool_name}"
 
     async def _search(
-        self, pattern: str, path: str, file_glob: str | None,
-        context: int, case_sensitive: bool,
+        self,
+        pattern: str,
+        path: str,
+        file_glob: str | None,
+        context: int,
+        case_sensitive: bool,
     ) -> str:
         flags = 0 if case_sensitive else re.IGNORECASE
         try:
@@ -107,7 +166,7 @@ class SearchSkill(Skill):
                     for j in range(start, end):
                         prefix = ">>" if j == i else "  "
                         text = lines[j][:MAX_LINE_LEN]
-                        file_matches.append(f"  {prefix} {j+1}: {text}")
+                        file_matches.append(f"  {prefix} {j + 1}: {text}")
                     if context > 0:
                         file_matches.append("")
                     match_count += 1

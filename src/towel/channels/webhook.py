@@ -82,19 +82,23 @@ class WebhookChannel(Channel):
 
             try:
                 resp = await self.send_to_gateway(text, session=session)
-                return JSONResponse({
-                    "response": resp.get("content", ""),
-                    "session": session,
-                    "tokens": resp.get("metadata", {}).get("tokens", 0),
-                })
+                return JSONResponse(
+                    {
+                        "response": resp.get("content", ""),
+                        "session": session,
+                        "tokens": resp.get("metadata", {}).get("tokens", 0),
+                    }
+                )
             except Exception as e:
                 log.error(f"Webhook error: {e}")
                 return JSONResponse({"error": str(e)}, status_code=500)
 
-        app = Starlette(routes=[
-            Route("/health", health, methods=["GET"]),
-            Route("/message", message, methods=["POST"]),
-        ])
+        app = Starlette(
+            routes=[
+                Route("/health", health, methods=["GET"]),
+                Route("/message", message, methods=["POST"]),
+            ]
+        )
 
         log.info(f"Webhook channel listening on http://{self.host}:{self.port}")
         config = uvicorn.Config(app, host=self.host, port=self.port, log_level="warning")

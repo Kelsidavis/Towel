@@ -64,7 +64,7 @@ def run_repl(skills_registry: Any) -> None:
                 continue
             for t in skill.tools():
                 params = t.parameters.get("properties", {})
-                param_str = ", ".join(f"{k}:{v.get('type','?')}" for k, v in params.items())
+                param_str = ", ".join(f"{k}:{v.get('type', '?')}" for k, v in params.items())
                 console.print(f"  [green]{t.name}[/green]({param_str})")
                 console.print(f"    [dim]{t.description}[/dim]")
             continue

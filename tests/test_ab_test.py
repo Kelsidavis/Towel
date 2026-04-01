@@ -1,5 +1,5 @@
 """Tests for A/B testing."""
-import pytest
+
 from towel.agent.ab_test import ABResult, ABTestResult
 
 
@@ -28,4 +28,5 @@ class TestABTestResult:
 
     def test_cli_registered(self):
         from towel.cli.main import cli
+
         assert "ab-test" in [c.name for c in cli.commands.values()]

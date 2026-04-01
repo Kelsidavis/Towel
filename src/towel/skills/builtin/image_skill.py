@@ -10,30 +10,30 @@ from towel.skills.base import Skill, ToolDefinition
 
 
 def _read_png_size(data: bytes) -> tuple[int, int] | None:
-    if data[:8] != b'\x89PNG\r\n\x1a\n':
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
         return None
     if len(data) < 24:
         return None
-    w, h = struct.unpack('>II', data[16:24])
+    w, h = struct.unpack(">II", data[16:24])
     return w, h
 
 
 def _read_jpeg_size(data: bytes) -> tuple[int, int] | None:
-    if data[:2] != b'\xff\xd8':
+    if data[:2] != b"\xff\xd8":
         return None
     i = 2
     while i < len(data) - 1:
-        if data[i] != 0xff:
+        if data[i] != 0xFF:
             break
         marker = data[i + 1]
-        if marker == 0xc0 or marker == 0xc2:  # SOF0 or SOF2
+        if marker == 0xC0 or marker == 0xC2:  # SOF0 or SOF2
             if i + 9 < len(data):
-                h, w = struct.unpack('>HH', data[i+5:i+9])
+                h, w = struct.unpack(">HH", data[i + 5 : i + 9])
                 return w, h
-        if marker == 0xd9:
+        if marker == 0xD9:
             break
         if i + 3 < len(data):
-            length = struct.unpack('>H', data[i+2:i+4])[0]
+            length = struct.unpack(">H", data[i + 2 : i + 4])[0]
             i += 2 + length
         else:
             break
@@ -41,11 +41,11 @@ def _read_jpeg_size(data: bytes) -> tuple[int, int] | None:
 
 
 def _read_gif_size(data: bytes) -> tuple[int, int] | None:
-    if data[:4] not in (b'GIF8', b'GIF9'):
+    if data[:4] not in (b"GIF8", b"GIF9"):
         return None
     if len(data) < 10:
         return None
-    w, h = struct.unpack('<HH', data[6:10])
+    w, h = struct.unpack("<HH", data[6:10])
     return w, h
 
 
@@ -88,15 +88,22 @@ class ImageSkill(Skill):
             dims = _read_png_size(data) or _read_jpeg_size(data) or _read_gif_size(data)
 
             ext = p.suffix.lower()
-            fmt_map = {".png": "PNG", ".jpg": "JPEG", ".jpeg": "JPEG", ".gif": "GIF",
-                       ".webp": "WebP", ".bmp": "BMP", ".svg": "SVG"}
+            fmt_map = {
+                ".png": "PNG",
+                ".jpg": "JPEG",
+                ".jpeg": "JPEG",
+                ".gif": "GIF",
+                ".webp": "WebP",
+                ".bmp": "BMP",
+                ".svg": "SVG",
+            }
             fmt = fmt_map.get(ext, ext.upper())
 
             lines = [f"Image: {p.name}"]
             lines.append(f"  Format: {fmt}")
             if dims:
                 lines.append(f"  Dimensions: {dims[0]}x{dims[1]} pixels")
-            lines.append(f"  File size: {size:,} bytes ({size/1024:.1f} KB)")
+            lines.append(f"  File size: {size:,} bytes ({size / 1024:.1f} KB)")
 
             return "\n".join(lines)
         except Exception as e:

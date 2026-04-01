@@ -54,7 +54,7 @@ def export_markdown(conv: Conversation, include_metadata: bool = False) -> str:
                 if content.startswith("[") and "]" in content:
                     bracket_end = content.index("]")
                     tool_name = content[1:bracket_end]
-                    result = content[bracket_end + 2:]
+                    result = content[bracket_end + 2 :]
                     lines.append(f"<summary>Tool: {tool_name}</summary>")
                     lines.append("")
                     lines.append("```")
@@ -143,9 +143,11 @@ def _html_escape(text: str) -> str:
     escaped = html.escape(text)
     # Convert ```lang\n...\n``` to <pre><code>
     import re
+
     def _code_block(m: re.Match) -> str:
         code = m.group(2)
         return f"<pre><code>{code}</code></pre>"
+
     escaped = re.sub(r"```(\w*)\n(.*?)```", _code_block, escaped, flags=re.DOTALL)
     # Convert inline `code` to <code>
     escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
@@ -181,7 +183,7 @@ def export_html(conv: Conversation, include_metadata: bool = True) -> str:
         parts.append(f'<div class="role {css_class}">')
 
         label = {"user": "You", "assistant": "Towel", "tool": "Tool", "system": "System"}
-        parts.append(f'{label.get(role, role)}')
+        parts.append(f"{label.get(role, role)}")
         if include_metadata:
             parts.append(f'<span class="ts">{ts}</span>')
         parts.append("</div>")
@@ -191,7 +193,7 @@ def export_html(conv: Conversation, include_metadata: bool = True) -> str:
             if content.startswith("[") and "]" in content:
                 bracket_end = content.index("]")
                 tool_name = content[1:bracket_end]
-                result = content[bracket_end + 2:]
+                result = content[bracket_end + 2 :]
                 parts.append(f"<div><strong>{html.escape(tool_name)}</strong></div>")
                 parts.append(f"<pre><code>{html.escape(result)}</code></pre>")
             else:
@@ -203,7 +205,9 @@ def export_html(conv: Conversation, include_metadata: bool = True) -> str:
 
     # Footer
     parts.append('<div class="footer">')
-    parts.append('Exported from <a href="https://github.com/towel-ai/towel">Towel</a> &mdash; Don\'t Panic.')
+    parts.append(
+        'Exported from <a href="https://github.com/towel-ai/towel">Towel</a> &mdash; Don\'t Panic.'
+    )
     parts.append("</div>")
     parts.append("</body></html>")
 

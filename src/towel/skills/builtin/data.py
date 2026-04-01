@@ -25,12 +25,21 @@ class DataSkill(Skill):
         return [
             ToolDefinition(
                 name="parse_json",
-                description="Parse a JSON string and extract data using a key path (e.g., 'users.0.name' or 'items.*.id')",
+                description=(
+                    "Parse a JSON string and extract data using a "
+                    "key path (e.g., 'users.0.name' or 'items.*.id')"
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "data": {"type": "string", "description": "JSON string to parse"},
-                        "path": {"type": "string", "description": "Dot-separated key path (optional). Use * for array wildcard."},
+                        "path": {
+                            "type": "string",
+                            "description": (
+                                "Dot-separated key path (optional). "
+                                "Use * for array wildcard."
+                            ),
+                        },
                     },
                     "required": ["data"],
                 },
@@ -42,8 +51,14 @@ class DataSkill(Skill):
                     "type": "object",
                     "properties": {
                         "data": {"type": "string", "description": "CSV string to parse"},
-                        "delimiter": {"type": "string", "description": "Field delimiter (default: comma)"},
-                        "limit": {"type": "integer", "description": "Max rows to return (default: 50)"},
+                        "delimiter": {
+                            "type": "string",
+                            "description": "Field delimiter (default: comma)",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max rows to return (default: 50)",
+                        },
                     },
                     "required": ["data"],
                 },
@@ -55,18 +70,28 @@ class DataSkill(Skill):
                     "type": "object",
                     "properties": {
                         "data": {"type": "string", "description": "JSON string"},
-                        "compact": {"type": "boolean", "description": "Compact output (default: false, pretty-print)"},
+                        "compact": {
+                            "type": "boolean",
+                            "description": "Compact output (default: false, pretty-print)",
+                        },
                     },
                     "required": ["data"],
                 },
             ),
             ToolDefinition(
                 name="calculate",
-                description="Evaluate a mathematical expression safely. Supports +, -, *, /, **, %, abs, round, min, max, sum, len.",
+                description=(
+                    "Evaluate a mathematical expression safely. "
+                    "Supports +, -, *, /, **, %, abs, round, "
+                    "min, max, sum, len."
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
-                        "expression": {"type": "string", "description": "Math expression to evaluate"},
+                        "expression": {
+                            "type": "string",
+                            "description": "Math expression to evaluate",
+                        },
                     },
                     "required": ["expression"],
                 },
@@ -108,7 +133,7 @@ class DataSkill(Skill):
         current = obj
         for key in keys:
             if key == "*" and isinstance(current, list):
-                remaining = keys[keys.index(key) + 1:]
+                remaining = keys[keys.index(key) + 1 :]
                 return [self._query_path(item, remaining) for item in current]
             elif isinstance(current, dict):
                 current = current.get(key)
@@ -158,8 +183,14 @@ class DataSkill(Skill):
     def _calculate(self, expression: str) -> str:
         """Safely evaluate a math expression."""
         allowed_names = {
-            "abs": abs, "round": round, "min": min, "max": max,
-            "sum": sum, "len": len, "int": int, "float": float,
+            "abs": abs,
+            "round": round,
+            "min": min,
+            "max": max,
+            "sum": sum,
+            "len": len,
+            "int": int,
+            "float": float,
             "pow": pow,
         }
         try:

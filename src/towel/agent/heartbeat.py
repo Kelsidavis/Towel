@@ -21,6 +21,7 @@ log = logging.getLogger("towel.agent.heartbeat")
 @dataclass
 class HealthStatus:
     """Snapshot of agent health."""
+
     alive: bool = True
     last_heartbeat: float = 0.0
     last_generation: float = 0.0
@@ -40,9 +41,9 @@ class HealthStatus:
             "consecutive_errors": self.consecutive_errors,
             "model_loaded": self.model_loaded,
             "is_generating": self.is_generating,
-            "last_heartbeat": datetime.fromtimestamp(
-                self.last_heartbeat, tz=UTC
-            ).isoformat() if self.last_heartbeat else None,
+            "last_heartbeat": datetime.fromtimestamp(self.last_heartbeat, tz=UTC).isoformat()
+            if self.last_heartbeat
+            else None,
         }
 
 
@@ -116,10 +117,7 @@ class Heartbeat:
 
             if self._health.consecutive_errors >= self.max_consecutive_errors:
                 self._health.alive = False
-                log.error(
-                    f"Agent unhealthy: {self._health.consecutive_errors} "
-                    f"consecutive errors"
-                )
+                log.error(f"Agent unhealthy: {self._health.consecutive_errors} consecutive errors")
                 if self.on_unhealthy:
                     self.on_unhealthy(self._health)
 

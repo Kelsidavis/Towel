@@ -8,11 +8,24 @@ from typing import Any
 from towel.skills.base import Skill, ToolDefinition
 
 _FIELD_NAMES = ["minute", "hour", "day-of-month", "month", "day-of-week"]
-_MONTH_NAMES = {1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"May",6:"Jun",7:"Jul",8:"Aug",9:"Sep",10:"Oct",11:"Nov",12:"Dec"}
-_DOW_NAMES = {0:"Sun",1:"Mon",2:"Tue",3:"Wed",4:"Thu",5:"Fri",6:"Sat",7:"Sun"}
+_MONTH_NAMES = {
+    1: "Jan",
+    2: "Feb",
+    3: "Mar",
+    4: "Apr",
+    5: "May",
+    6: "Jun",
+    7: "Jul",
+    8: "Aug",
+    9: "Sep",
+    10: "Oct",
+    11: "Nov",
+    12: "Dec",
+}
+_DOW_NAMES = {0: "Sun", 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat", 7: "Sun"}
 
 
-def _explain_field(field: str, name: str, names: dict|None = None) -> str:
+def _explain_field(field: str, name: str, names: dict | None = None) -> str:
     if field == "*":
         return f"every {name}"
     if field.startswith("*/"):
@@ -85,8 +98,13 @@ def next_runs(expr: str, count: int = 5) -> list[str]:
         m, h, d, mo, wd = t.minute, t.hour, t.day, t.month, t.weekday()
         wd_cron = (wd + 1) % 7  # Python: Mon=0, Cron: Sun=0
 
-        if (_match(minute, m) and _match(hour, h) and
-            _match(dom, d) and _match(month, mo) and _match(dow, wd_cron)):
+        if (
+            _match(minute, m)
+            and _match(hour, h)
+            and _match(dom, d)
+            and _match(month, mo)
+            and _match(dow, wd_cron)
+        ):
             results.append(t.strftime("%Y-%m-%d %H:%M"))
         t += timedelta(minutes=1)
 
@@ -126,7 +144,10 @@ class CronSkill(Skill):
                 parameters={
                     "type": "object",
                     "properties": {
-                        "expression": {"type": "string", "description": "Cron expression (5 fields)"},
+                        "expression": {
+                            "type": "string",
+                            "description": "Cron expression (5 fields)",
+                        },
                     },
                     "required": ["expression"],
                 },
@@ -138,7 +159,10 @@ class CronSkill(Skill):
                     "type": "object",
                     "properties": {
                         "expression": {"type": "string", "description": "Cron expression"},
-                        "count": {"type": "integer", "description": "Number of runs to show (default: 5)"},
+                        "count": {
+                            "type": "integer",
+                            "description": "Number of runs to show (default: 5)",
+                        },
                     },
                     "required": ["expression"],
                 },
@@ -149,7 +173,13 @@ class CronSkill(Skill):
                 parameters={
                     "type": "object",
                     "properties": {
-                        "description": {"type": "string", "description": "When to run (e.g., 'every 5 minutes', 'daily at 9am', 'weekdays at noon')"},
+                        "description": {
+                            "type": "string",
+                            "description": (
+                                "When to run (e.g., 'every 5 minutes',"
+                                " 'daily at 9am', 'weekdays at noon')"
+                            ),
+                        },
                     },
                     "required": ["description"],
                 },
@@ -184,22 +214,28 @@ class CronSkill(Skill):
             return "0 * * * *  (every hour at :00)"
         if "weekday" in d:
             import re
+
             m = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)?", d)
             h, mi = 9, 0
             if m:
                 h = int(m.group(1))
                 mi = int(m.group(2) or 0)
-                if m.group(3) == "pm" and h < 12: h += 12
-            if "noon" in d: h, mi = 12, 0
+                if m.group(3) == "pm" and h < 12:
+                    h += 12
+            if "noon" in d:
+                h, mi = 12, 0
             return f"{mi} {h} * * 1-5  (weekdays at {h}:{mi:02d})"
         if "daily at" in d or "every day at" in d:
             import re
+
             m = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)?", d)
             if m:
                 h = int(m.group(1))
                 mi = int(m.group(2) or 0)
-                if m.group(3) == "pm" and h < 12: h += 12
-                if m.group(3) == "am" and h == 12: h = 0
+                if m.group(3) == "pm" and h < 12:
+                    h += 12
+                if m.group(3) == "am" and h == 12:
+                    h = 0
                 return f"{mi} {h} * * *  (daily at {h}:{mi:02d})"
         if "midnight" in d:
             return "0 0 * * *  (daily at midnight)"
@@ -207,15 +243,19 @@ class CronSkill(Skill):
             return "0 12 * * *  (daily at noon)"
         if "weekday" in d:
             import re
+
             m = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)?", d)
             h, mi = 9, 0
             if m:
                 h = int(m.group(1))
                 mi = int(m.group(2) or 0)
-                if m.group(3) == "pm" and h < 12: h += 12
+                if m.group(3) == "pm" and h < 12:
+                    h += 12
             return f"{mi} {h} * * 1-5  (weekdays at {h}:{mi:02d})"
         if "weekly" in d or "every week" in d:
             return "0 0 * * 0  (weekly on Sunday at midnight)"
         if "monthly" in d or "every month" in d:
             return "0 0 1 * *  (monthly on the 1st at midnight)"
-        return f"Could not parse: '{desc}'. Try: 'every 5 minutes', 'daily at 9am', 'weekdays at noon'"
+        return (
+            f"Could not parse: '{desc}'. Try: 'every 5 minutes', 'daily at 9am', 'weekdays at noon'"
+        )

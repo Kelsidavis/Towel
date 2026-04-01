@@ -37,7 +37,9 @@ class GatewayServer:
 
     config: TowelConfig
     agent: AgentRuntime
-    sessions: SessionManager = field(default_factory=lambda: SessionManager(store=ConversationStore()))
+    sessions: SessionManager = field(
+        default_factory=lambda: SessionManager(store=ConversationStore())
+    )
     _ws_server: Server | None = None
     _connections: dict[str, ServerConnection] = field(default_factory=dict)
     _active_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
@@ -78,11 +80,15 @@ class GatewayServer:
                 if msg_type == "register":
                     conn_id = msg.get("id", ws.id.hex[:12])
                     self._connections[conn_id] = ws
-                    await ws.send(json.dumps({
-                        "type": "registered",
-                        "id": conn_id,
-                        "motto": "Don't Panic.",
-                    }))
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "type": "registered",
+                                "id": conn_id,
+                                "motto": "Don't Panic.",
+                            }
+                        )
+                    )
                     continue
 
                 if msg_type == "cancel":
@@ -106,36 +112,48 @@ class GatewayServer:
 
                     if stream:
                         # Run streaming in a task so cancel messages can be received
-                        task = asyncio.create_task(
-                            self._stream_response(ws, session_id, session)
-                        )
+                        task = asyncio.create_task(self._stream_response(ws, session_id, session))
                         self._active_tasks[session_id] = task
                         try:
                             await task
                         except asyncio.CancelledError:
-                            await ws.send(json.dumps({
-                                "type": "cancelled",
-                                "session": session_id,
-                                "content": "",
-                                "metadata": {"reason": "user_cancelled"},
-                            }))
+                            await ws.send(
+                                json.dumps(
+                                    {
+                                        "type": "cancelled",
+                                        "session": session_id,
+                                        "content": "",
+                                        "metadata": {"reason": "user_cancelled"},
+                                    }
+                                )
+                            )
                         finally:
                             self._active_tasks.pop(session_id, None)
                     else:
                         response = await self.agent.step(session.conversation)
                         session.conversation.messages.append(response)
-                        await ws.send(json.dumps({
-                            "type": "response",
-                            "session": session_id,
-                            "content": response.content,
-                            "metadata": response.metadata,
-                        }))
+                        await ws.send(
+                            json.dumps(
+                                {
+                                    "type": "response",
+                                    "session": session_id,
+                                    "content": response.content,
+                                    "metadata": response.metadata,
+                                }
+                            )
+                        )
 
                     # Auto-title after first exchange
                     if not session.conversation.title and len(session.conversation) >= 2:
                         from towel.agent.titler import generate_title
+
                         first_user = next(
-                            (m.content for m in session.conversation.messages if m.role == Role.USER), ""
+                            (
+                                m.content
+                                for m in session.conversation.messages
+                                if m.role == Role.USER
+                            ),
+                            "",
                         )
                         title = generate_title(first_user)
                         if title:
@@ -154,9 +172,7 @@ class GatewayServer:
                 if not task.done():
                     task.cancel()
 
-    async def _stream_response(
-        self, ws: ServerConnection, session_id: str, session: Any
-    ) -> None:
+    async def _stream_response(self, ws: ServerConnection, session_id: str, session: Any) -> None:
         """Stream agent response events to the WebSocket."""
         async for event in self.agent.step_streaming(session.conversation):
             await ws.send(json.dumps(event.to_ws_message(session_id)))
@@ -166,26 +182,30 @@ class GatewayServer:
         web_dir = Path(__file__).parent.parent / "web"
 
         async def health(_request: Any) -> JSONResponse:
-            return JSONResponse({
-                "status": "hoopy",
-                "version": "0.1.0",
-                "motto": "Don't Panic.",
-                "connections": len(self._connections),
-                "sessions": len(self.sessions),
-            })
+            return JSONResponse(
+                {
+                    "status": "hoopy",
+                    "version": "0.1.0",
+                    "motto": "Don't Panic.",
+                    "connections": len(self._connections),
+                    "sessions": len(self.sessions),
+                }
+            )
 
         async def sessions_list(_request: Any) -> JSONResponse:
-            return JSONResponse({
-                "sessions": [
-                    {
-                        "id": s.id,
-                        "channel": s.conversation.channel,
-                        "messages": len(s.conversation),
-                        "created_at": s.conversation.created_at.isoformat(),
-                    }
-                    for s in self.sessions.all()
-                ]
-            })
+            return JSONResponse(
+                {
+                    "sessions": [
+                        {
+                            "id": s.id,
+                            "channel": s.conversation.channel,
+                            "messages": len(s.conversation),
+                            "created_at": s.conversation.created_at.isoformat(),
+                        }
+                        for s in self.sessions.all()
+                    ]
+                }
+            )
 
         async def webchat(_request: Any) -> HTMLResponse | FileResponse:
             index = web_dir / "index.html"
@@ -202,27 +222,29 @@ class GatewayServer:
             if not store:
                 return JSONResponse({"results": []})
             results = store.search(query, limit=limit)
-            return JSONResponse({
-                "query": query,
-                "results": [
-                    {
-                        "conversation_id": r.conversation_id,
-                        "channel": r.channel,
-                        "created_at": r.created_at,
-                        "summary": r.summary,
-                        "match_count": len(r.matches),
-                        "matches": [
-                            {
-                                "role": m.role,
-                                "snippet": m.snippet,
-                                "timestamp": m.timestamp,
-                            }
-                            for m in r.matches[:5]
-                        ],
-                    }
-                    for r in results
-                ],
-            })
+            return JSONResponse(
+                {
+                    "query": query,
+                    "results": [
+                        {
+                            "conversation_id": r.conversation_id,
+                            "channel": r.channel,
+                            "created_at": r.created_at,
+                            "summary": r.summary,
+                            "match_count": len(r.matches),
+                            "matches": [
+                                {
+                                    "role": m.role,
+                                    "snippet": m.snippet,
+                                    "timestamp": m.timestamp,
+                                }
+                                for m in r.matches[:5]
+                            ],
+                        }
+                        for r in results
+                    ],
+                }
+            )
 
         async def conversations_list(request: Request) -> JSONResponse:
             """List all persisted conversations (not just active ones)."""
@@ -231,19 +253,21 @@ class GatewayServer:
             if not store:
                 return JSONResponse({"conversations": []})
             summaries = store.list_conversations(limit=limit)
-            return JSONResponse({
-                "conversations": [
-                    {
-                        "id": s.id,
-                        "title": s.title,
-                        "channel": s.channel,
-                        "created_at": s.created_at,
-                        "message_count": s.message_count,
-                        "summary": s.summary,
-                    }
-                    for s in summaries
-                ]
-            })
+            return JSONResponse(
+                {
+                    "conversations": [
+                        {
+                            "id": s.id,
+                            "title": s.title,
+                            "channel": s.channel,
+                            "created_at": s.created_at,
+                            "message_count": s.message_count,
+                            "summary": s.summary,
+                        }
+                        for s in summaries
+                    ]
+                }
+            )
 
         async def conversation_detail(request: Request) -> JSONResponse:
             """Load a full conversation by ID."""
@@ -352,12 +376,14 @@ class GatewayServer:
                 response = await self.agent.step(session.conversation)
                 self.sessions.save(session_id)
 
-                return JSONResponse({
-                    "response": response.content,
-                    "session": session_id,
-                    "tokens": response.metadata.get("tokens", 0),
-                    "tps": round(response.metadata.get("tps", 0), 1),
-                })
+                return JSONResponse(
+                    {
+                        "response": response.content,
+                        "session": session_id,
+                        "tokens": response.metadata.get("tokens", 0),
+                        "tps": round(response.metadata.get("tps", 0), 1),
+                    }
+                )
             except Exception as e:
                 return JSONResponse({"error": str(e)}, status_code=500)
             finally:
@@ -374,13 +400,17 @@ class GatewayServer:
             items = []
             for s in summaries:
                 item: dict[str, Any] = {
-                    "id": s.id, "title": s.title, "channel": s.channel,
-                    "created_at": s.created_at, "message_count": s.message_count,
+                    "id": s.id,
+                    "title": s.title,
+                    "channel": s.channel,
+                    "created_at": s.created_at,
+                    "message_count": s.message_count,
                     "summary": s.summary,
                 }
                 # Load tags
                 try:
                     import json as _json
+
                     data = _json.loads(store._path_for(s.id).read_text(encoding="utf-8"))
                     item["tags"] = data.get("tags", [])
                 except Exception:
@@ -390,9 +420,11 @@ class GatewayServer:
 
         # OpenAI-compatible API routes
         from towel.gateway.openai_compat import build_openai_routes
+
         openai_routes = build_openai_routes(self.agent, self.config)
 
         from towel.agent.streaming_protocol import build_sse_routes
+
         sse_routes = build_sse_routes(self.agent, self.config)
 
         routes: list[Route | Mount] = [

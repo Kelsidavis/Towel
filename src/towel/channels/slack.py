@@ -121,7 +121,7 @@ class SlackChannel(Channel):
         import httpx
 
         # Slack message limit is ~40000 chars but keep it reasonable
-        chunks = [text[i:i+3900] for i in range(0, len(text), 3900)]
+        chunks = [text[i : i + 3900] for i in range(0, len(text), 3900)]
 
         async with httpx.AsyncClient() as client:
             for chunk in chunks:

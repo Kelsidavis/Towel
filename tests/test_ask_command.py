@@ -1,11 +1,12 @@
 """Tests for the towel ask command."""
 
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
 from click.testing import CliRunner
 
-from towel.cli.main import cli
-from towel.agent.events import AgentEvent, EventType
 from towel.agent.conversation import Message, Role
+from towel.agent.events import AgentEvent
+from towel.cli.main import cli
 
 
 class TestAskCommand:
@@ -84,7 +85,7 @@ class TestAskCommandIntegration:
         mock_build_skills.return_value = MagicMock()
 
         runner = CliRunner()
-        result = runner.invoke(cli, ["ask", "--no-stream", "what is life"])
+        _result = runner.invoke(cli, ["ask", "--no-stream", "what is life"])
         # Should not crash — model loading will fail but that's ok
         # We're testing the command plumbing, not the model
 
@@ -96,4 +97,4 @@ class TestAskCommandIntegration:
         mock_build_skills.return_value = MagicMock()
 
         runner = CliRunner()
-        result = runner.invoke(cli, ["ask", "--raw", "--no-stream", "test"])
+        _result = runner.invoke(cli, ["ask", "--raw", "--no-stream", "test"])

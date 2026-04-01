@@ -1,14 +1,14 @@
 """Tests for the tool call parser."""
 
-from towel.agent.tool_parser import parse_tool_calls, ToolCall
+from towel.agent.tool_parser import ToolCall, parse_tool_calls
 
 
 def test_json_block_tool_call():
-    text = '''Here's what I'll do:
+    text = """Here's what I'll do:
 ```json
 {"tool": "read_file", "arguments": {"path": "/tmp/test.txt"}}
 ```
-Let me read that for you.'''
+Let me read that for you."""
     calls, remaining = parse_tool_calls(text)
     assert len(calls) == 1
     assert calls[0].name == "read_file"
@@ -48,14 +48,14 @@ def test_no_tool_calls():
 
 
 def test_multiple_tool_calls():
-    text = '''I'll check both:
+    text = """I'll check both:
 ```json
 {"tool": "read_file", "arguments": {"path": "a.txt"}}
 ```
 and
 ```json
 {"tool": "read_file", "arguments": {"path": "b.txt"}}
-```'''
+```"""
     calls, remaining = parse_tool_calls(text)
     assert len(calls) == 2
     assert calls[0].arguments["path"] == "a.txt"
@@ -70,7 +70,7 @@ def test_parameters_alias():
 
 
 def test_qwen_hermes_single():
-    text = "I'll read that file.\n✿FUNCTION✿read_file\n✿ARGS✿{\"path\": \"/tmp/test.txt\"}\n✿RESULT✿"
+    text = 'I\'ll read that file.\n✿FUNCTION✿read_file\n✿ARGS✿{"path": "/tmp/test.txt"}\n✿RESULT✿'
     calls, remaining = parse_tool_calls(text)
     assert len(calls) == 1
     assert calls[0].name == "read_file"
@@ -82,8 +82,8 @@ def test_qwen_hermes_single():
 def test_qwen_hermes_multiple():
     text = (
         "Let me check both.\n"
-        "✿FUNCTION✿read_file\n✿ARGS✿{\"path\": \"a.txt\"}\n✿RESULT✿\n"
-        "✿FUNCTION✿read_file\n✿ARGS✿{\"path\": \"b.txt\"}\n✿RESULT✿"
+        '✿FUNCTION✿read_file\n✿ARGS✿{"path": "a.txt"}\n✿RESULT✿\n'
+        '✿FUNCTION✿read_file\n✿ARGS✿{"path": "b.txt"}\n✿RESULT✿'
     )
     calls, remaining = parse_tool_calls(text)
     assert len(calls) == 2
@@ -93,7 +93,7 @@ def test_qwen_hermes_multiple():
 
 def test_qwen_hermes_no_result_terminator():
     """Qwen sometimes omits ✿RESULT✿ at end of output."""
-    text = "✿FUNCTION✿run_command\n✿ARGS✿{\"command\": \"ls\"}"
+    text = '✿FUNCTION✿run_command\n✿ARGS✿{"command": "ls"}'
     calls, remaining = parse_tool_calls(text)
     assert len(calls) == 1
     assert calls[0].name == "run_command"
@@ -101,7 +101,10 @@ def test_qwen_hermes_no_result_terminator():
 
 
 def test_qwen_chatml_tool_calls_array():
-    text = '{"tool_calls": [{"function": {"name": "read_file", "arguments": "{\\\"path\\\": \\\"/tmp/test.txt\\\"}"}}]}'
+    text = (
+        '{"tool_calls": [{"function": {"name": "read_file",'
+        ' "arguments": "{\\"path\\": \\"/tmp/test.txt\\"}"}}]}'
+    )
     calls, remaining = parse_tool_calls(text)
     assert len(calls) == 1
     assert calls[0].name == "read_file"
@@ -109,7 +112,12 @@ def test_qwen_chatml_tool_calls_array():
 
 
 def test_qwen_chatml_multiple_tool_calls():
-    text = '{"tool_calls": [{"function": {"name": "read_file", "arguments": "{\\\"path\\\": \\\"a.txt\\\"}"}}, {"function": {"name": "run_command", "arguments": "{\\\"command\\\": \\\"ls\\\"}"}}]}'
+    text = (
+        '{"tool_calls": [{"function": {"name": "read_file",'
+        ' "arguments": "{\\"path\\": \\"a.txt\\"}"}}, {"function":'
+        ' {"name": "run_command",'
+        ' "arguments": "{\\"command\\": \\"ls\\"}"}}]}'
+    )
     calls, remaining = parse_tool_calls(text)
     assert len(calls) == 2
     assert calls[0].name == "read_file"

@@ -44,15 +44,18 @@ def _read_oauth_token() -> str:
         {"claudeAiOauth": {"accessToken": "sk-ant-oat01-...", ...}}
     """
     import os
+
     username = os.environ.get("USER") or os.getlogin()
 
     result = subprocess.run(
         ["security", "find-generic-password", "-a", username, "-w", "-s", _KEYCHAIN_SERVICE],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if result.returncode != 0:
         # Fallback: try plaintext credentials file
         from pathlib import Path
+
         creds_path = Path.home() / ".claude" / ".credentials.json"
         if creds_path.exists():
             data = json.loads(creds_path.read_text())
@@ -226,7 +229,9 @@ class ClaudeCodeRuntime:
                 messages.append({"role": "assistant", "content": msg.content})
             elif msg.role == Role.TOOL:
                 # Tool results go back as user messages for the next turn
-                messages.append({"role": "user", "content": f"<tool_result>\n{msg.content}\n</tool_result>"})
+                messages.append(
+                    {"role": "user", "content": f"<tool_result>\n{msg.content}\n</tool_result>"}
+                )
         return messages
 
     async def generate(self, conversation: Conversation) -> ClaudeGenerationResult:
@@ -288,7 +293,9 @@ class ClaudeCodeRuntime:
                 log.info(f"Tool call: {tc.name}({tc.arguments})")
                 try:
                     tool_result = await self.skills.execute_tool(tc.name, tc.arguments)
-                    result_str = str(tool_result) if not isinstance(tool_result, str) else tool_result
+                    result_str = (
+                        str(tool_result) if not isinstance(tool_result, str) else tool_result
+                    )
                 except Exception as e:
                     result_str = f"Error executing {tc.name}: {e}"
                     log.error(result_str)
@@ -350,7 +357,9 @@ class ClaudeCodeRuntime:
 
                 try:
                     tool_result = await self.skills.execute_tool(tc.name, tc.arguments)
-                    result_str = str(tool_result) if not isinstance(tool_result, str) else tool_result
+                    result_str = (
+                        str(tool_result) if not isinstance(tool_result, str) else tool_result
+                    )
                 except Exception as e:
                     result_str = f"Error executing {tc.name}: {e}"
                     log.error(result_str)

@@ -94,4 +94,8 @@ def load_project_context(start_dir: Path | None = None) -> str:
         return ""
 
     combined = "\n\n---\n\n".join(sections)
-    return f"\n\n## Project Context\nThe following context describes the project you're working in:\n\n{combined}"
+    return (
+        "\n\n## Project Context\n"
+        "The following context describes the project "
+        f"you're working in:\n\n{combined}"
+    )

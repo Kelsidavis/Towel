@@ -100,11 +100,10 @@ def check_environment() -> Check:
 
     # Memory (macOS)
     try:
-        import resource
         # Get available memory via os.sysconf on macOS/Linux
         pages = os.sysconf("SC_PHYS_PAGES")
         page_size = os.sysconf("SC_PAGE_SIZE")
-        total_gb = (pages * page_size) / (1024 ** 3)
+        total_gb = (pages * page_size) / (1024**3)
         c.ok(f"{total_gb:.0f} GB system memory")
         if total_gb < 8:
             c.warn("Less than 8 GB RAM — larger models may not fit")
@@ -114,7 +113,7 @@ def check_environment() -> Check:
     # Disk space for ~/.towel
     try:
         usage = shutil.disk_usage(TOWEL_HOME.parent)
-        free_gb = usage.free / (1024 ** 3)
+        free_gb = usage.free / (1024**3)
         c.ok(f"{free_gb:.1f} GB free disk space")
         if free_gb < 5:
             c.warn("Less than 5 GB free — model downloads may fail")
@@ -139,14 +138,18 @@ def check_config(config: TowelConfig) -> Check:
     c.ok(f"Context window: {config.model.context_window} tokens")
     c.ok(f"Max output: {config.model.max_tokens} tokens")
     if config.model.turboquant:
-        c.ok(f"KV cache: TurboQuant {config.model.turboquant_bits}-bit (QJL ratio {config.model.turboquant_qjl_ratio})")
+        c.ok(
+            f"KV cache: TurboQuant {config.model.turboquant_bits}-bit "
+            f"(QJL ratio {config.model.turboquant_qjl_ratio})"
+        )
     else:
         c.ok("KV cache: float16 (standard)")
     c.ok(f"Gateway: {config.gateway.host}:{config.gateway.port}")
 
     if config.model.context_window <= config.model.max_tokens:
         c.fail(
-            f"context_window ({config.model.context_window}) must be larger than max_tokens ({config.model.max_tokens})",
+            f"context_window ({config.model.context_window}) must be "
+            f"larger than max_tokens ({config.model.max_tokens})",
             "Increase context_window in config.toml",
         )
 
@@ -169,6 +172,7 @@ def check_mlx() -> Check:
     try:
         import mlx
         import mlx.core as mx
+
         version = getattr(mlx, "__version__", None) or getattr(mx, "__version__", None)
         c.ok(f"mlx {version or '(version unknown)'}")
     except ImportError:
@@ -180,6 +184,7 @@ def check_mlx() -> Check:
     # mlx_lm
     try:
         import mlx_lm
+
         version = getattr(mlx_lm, "__version__", "(version unknown)")
         c.ok(f"mlx-lm {version}")
     except ImportError:
@@ -188,6 +193,7 @@ def check_mlx() -> Check:
     # Transformers (needed for tokenizers)
     try:
         import transformers
+
         c.ok(f"transformers {transformers.__version__}")
     except ImportError:
         c.fail("transformers not installed", "Run: pip install transformers")
@@ -224,21 +230,21 @@ def check_model(config: TowelConfig) -> Check:
         c.ok("Model is cached locally")
         # Check approximate size
         try:
-            total_size = sum(
-                f.stat().st_size for f in hf_model_dir.rglob("*") if f.is_file()
-            )
-            size_gb = total_size / (1024 ** 3)
+            total_size = sum(f.stat().st_size for f in hf_model_dir.rglob("*") if f.is_file())
+            size_gb = total_size / (1024**3)
             c.ok(f"Cache size: {size_gb:.1f} GB")
         except OSError:
             pass
     else:
         c.warn("Model not cached locally — first run will download it")
-        c.suggestions.append(f"Pre-download: python -c \"from mlx_lm import load; load('{model_name}')\"")
+        c.suggestions.append(
+            f"Pre-download: python -c \"from mlx_lm import load; load('{model_name}')\""
+        )
 
     # Suggest smaller alternatives if relevant
-    small_models = [m for m in cached_models if any(
-        q in m.lower() for q in ["4bit", "8bit", "3b", "7b", "1b"]
-    )]
+    small_models = [
+        m for m in cached_models if any(q in m.lower() for q in ["4bit", "8bit", "3b", "7b", "1b"])
+    ]
     if small_models and not hf_model_dir.exists():
         c.ok(f"Locally cached models: {len(cached_models)}")
         for m in small_models[:5]:
@@ -261,7 +267,11 @@ def check_skills(config: TowelConfig) -> Check:
     try:
         register_builtins(registry)
         builtin_names = registry.list_skills()
-        c.ok(f"Built-in skills: {', '.join(builtin_names)} ({len(builtin_names)} skills, {len(registry.tool_definitions())} tools)")
+        c.ok(
+            f"Built-in skills: {', '.join(builtin_names)} "
+            f"({len(builtin_names)} skills, "
+            f"{len(registry.tool_definitions())} tools)"
+        )
     except Exception as e:
         c.fail(f"Failed to load built-in skills: {e}")
 
@@ -289,6 +299,7 @@ def check_gateway(config: TowelConfig) -> Check:
     # Check if gateway is already running
     try:
         import httpx
+
         resp = httpx.get(f"http://{host}:{http_port}/health", timeout=2)
         data = resp.json()
         c.ok(f"Gateway is running ({data.get('status', 'unknown')})")

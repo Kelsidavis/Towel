@@ -95,7 +95,7 @@ class SystemSkill(Skill):
             lines.append(f"CPU: {model}")
             lines.append(f"Cores: {cores}")
             try:
-                mem_gb = int(memsize) / (1024 ** 3)
+                mem_gb = int(memsize) / (1024**3)
                 lines.append(f"Total memory: {mem_gb:.1f} GB")
             except (ValueError, TypeError):
                 lines.append(f"Total memory: {memsize}")

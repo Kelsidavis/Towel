@@ -109,11 +109,13 @@ def parse_tool_calls(text: str) -> tuple[list[ToolCall], str]:
                 for tc in tool_calls_arr:
                     parsed = _normalize_chatml_tool_call(tc)
                     if parsed:
-                        calls.append(ToolCall(
-                            name=parsed["name"],
-                            arguments=parsed["arguments"],
-                            raw=chatml_match.group(0),
-                        ))
+                        calls.append(
+                            ToolCall(
+                                name=parsed["name"],
+                                arguments=parsed["arguments"],
+                                raw=chatml_match.group(0),
+                            )
+                        )
                 if calls:
                     remaining = remaining.replace(chatml_match.group(0), "")
                     return calls, remaining.strip()
@@ -141,11 +143,13 @@ def parse_tool_calls(text: str) -> tuple[list[ToolCall], str]:
             try:
                 parsed = _normalize_tool_json(json.loads(raw_json))
                 if parsed:
-                    calls.append(ToolCall(
-                        name=parsed["name"],
-                        arguments=parsed["arguments"],
-                        raw=match.group(0),
-                    ))
+                    calls.append(
+                        ToolCall(
+                            name=parsed["name"],
+                            arguments=parsed["arguments"],
+                            raw=match.group(0),
+                        )
+                    )
                     remaining = remaining.replace(match.group(0), "")
             except (json.JSONDecodeError, KeyError, TypeError):
                 continue
@@ -162,11 +166,7 @@ def _normalize_tool_json(obj: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     arguments = (
-        obj.get("arguments")
-        or obj.get("parameters")
-        or obj.get("params")
-        or obj.get("args")
-        or {}
+        obj.get("arguments") or obj.get("parameters") or obj.get("params") or obj.get("args") or {}
     )
     if isinstance(arguments, str):
         try:

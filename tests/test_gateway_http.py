@@ -3,9 +3,9 @@
 import pytest
 from starlette.testclient import TestClient
 
-from towel.config import TowelConfig
-from towel.agent.runtime import AgentRuntime
 from towel.agent.conversation import Conversation, Role
+from towel.agent.runtime import AgentRuntime
+from towel.config import TowelConfig
 from towel.gateway.server import GatewayServer
 from towel.gateway.sessions import SessionManager
 from towel.persistence.store import ConversationStore
@@ -231,12 +231,14 @@ class TestSimpleAskAPI:
         assert resp.status_code == 400
 
     def test_ask_invalid_json(self, client):
-        resp = client.post("/api/ask", content=b"not json", headers={"content-type": "application/json"})
+        resp = client.post(
+            "/api/ask", content=b"not json", headers={"content-type": "application/json"}
+        )
         assert resp.status_code == 400
 
     def test_ask_creates_session(self, gateway, client):
         # The actual model call will fail (no model loaded), but we test the session creation
-        resp = client.post("/api/ask", json={"message": "hello", "session": "test-ask"})
+        _resp = client.post("/api/ask", json={"message": "hello", "session": "test-ask"})
         # Will be 500 (model not loaded) but session should exist
         session = gateway.sessions.get_or_create("test-ask")
         assert len(session.conversation) >= 1  # at least the user message

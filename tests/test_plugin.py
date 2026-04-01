@@ -1,9 +1,10 @@
 """Tests for the plugin system."""
 
-import pytest
-from pathlib import Path
 from towel.skills.plugin import (
-    PluginManifest, discover_plugins, validate_plugin, create_plugin_scaffold,
+    PluginManifest,
+    create_plugin_scaffold,
+    discover_plugins,
+    validate_plugin,
 )
 
 

@@ -1,8 +1,10 @@
 """Tests for the multi-agent orchestrator."""
 
-import pytest
 from towel.agent.orchestrator import (
-    AgentTask, OrchestratorResult, Orchestrator, ROLE_PROMPTS,
+    ROLE_PROMPTS,
+    AgentTask,
+    Orchestrator,
+    OrchestratorResult,
 )
 
 
@@ -14,7 +16,13 @@ class TestAgentTask:
         assert t.depends_on == []
 
     def test_to_dict(self):
-        t = AgentTask(role="reviewer", prompt="check code", status="completed", elapsed=2.5, result="looks good")
+        t = AgentTask(
+            role="reviewer",
+            prompt="check code",
+            status="completed",
+            elapsed=2.5,
+            result="looks good",
+        )
         d = t.to_dict()
         assert d["role"] == "reviewer"
         assert d["status"] == "completed"
@@ -51,7 +59,16 @@ class TestOrchestratorResult:
 
 class TestRolePrompts:
     def test_all_roles_have_prompts(self):
-        expected = {"coder", "researcher", "reviewer", "writer", "architect", "tester", "debugger", "default"}
+        expected = {
+            "coder",
+            "researcher",
+            "reviewer",
+            "writer",
+            "architect",
+            "tester",
+            "debugger",
+            "default",
+        }
         assert expected.issubset(set(ROLE_PROMPTS.keys()))
 
     def test_prompts_are_nonempty(self):
@@ -62,6 +79,7 @@ class TestRolePrompts:
 class TestOrchestrator:
     def test_instantiation(self):
         from towel.config import TowelConfig
+
         config = TowelConfig()
         orch = Orchestrator(config)
         assert orch is not None

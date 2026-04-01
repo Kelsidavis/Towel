@@ -33,7 +33,10 @@ class ShellSkill(Skill):
                     "type": "object",
                     "properties": {
                         "command": {"type": "string", "description": "The shell command to run"},
-                        "timeout": {"type": "integer", "description": "Timeout in seconds (default 30, max 120)"},
+                        "timeout": {
+                            "type": "integer",
+                            "description": "Timeout in seconds (default 30, max 120)",
+                        },
                     },
                     "required": ["command"],
                 },

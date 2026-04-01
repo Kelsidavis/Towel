@@ -1,8 +1,10 @@
 """Tests for the skill marketplace."""
 
-import pytest
 from towel.skills.marketplace import (
-    COMMUNITY_SKILLS, search_marketplace, list_installed, remove_skill,
+    COMMUNITY_SKILLS,
+    list_installed,
+    remove_skill,
+    search_marketplace,
 )
 
 

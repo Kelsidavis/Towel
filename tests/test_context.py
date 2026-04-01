@@ -1,6 +1,6 @@
 """Tests for context window management."""
 
-from towel.agent.context import fit_messages, ContextBudget, count_tokens_fallback
+from towel.agent.context import ContextBudget, count_tokens_fallback, fit_messages
 
 
 def _msg(role: str, content: str) -> dict[str, str]:
@@ -98,7 +98,9 @@ class TestFitMessages:
         for i in range(len(fitted) - 1):
             # Messages should be in order
             idx_a = next(j for j, m in enumerate(messages) if m["content"] == fitted[i]["content"])
-            idx_b = next(j for j, m in enumerate(messages) if m["content"] == fitted[i + 1]["content"])
+            idx_b = next(
+                j for j, m in enumerate(messages) if m["content"] == fitted[i + 1]["content"]
+            )
             assert idx_a < idx_b
 
     def test_budget_stats_correct(self):

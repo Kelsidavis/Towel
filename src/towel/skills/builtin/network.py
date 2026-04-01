@@ -39,7 +39,10 @@ class NetworkSkill(Skill):
                     "properties": {
                         "host": {"type": "string", "description": "Hostname or IP"},
                         "port": {"type": "integer", "description": "Port number"},
-                        "timeout": {"type": "number", "description": "Timeout in seconds (default: 3)"},
+                        "timeout": {
+                            "type": "number",
+                            "description": "Timeout in seconds (default: 3)",
+                        },
                     },
                     "required": ["host", "port"],
                 },
@@ -50,8 +53,14 @@ class NetworkSkill(Skill):
                 parameters={
                     "type": "object",
                     "properties": {
-                        "url": {"type": "string", "description": "URL to ping (e.g., https://example.com)"},
-                        "timeout": {"type": "number", "description": "Timeout in seconds (default: 5)"},
+                        "url": {
+                            "type": "string",
+                            "description": "URL to ping (e.g., https://example.com)",
+                        },
+                        "timeout": {
+                            "type": "number",
+                            "description": "Timeout in seconds (default: 5)",
+                        },
                     },
                     "required": ["url"],
                 },
@@ -75,12 +84,14 @@ class NetworkSkill(Skill):
                 return await self._dns_lookup(arguments["hostname"])
             case "port_check":
                 return await self._port_check(
-                    arguments["host"], arguments["port"],
+                    arguments["host"],
+                    arguments["port"],
                     arguments.get("timeout", 3),
                 )
             case "http_ping":
                 return await self._http_ping(
-                    arguments["url"], arguments.get("timeout", 5),
+                    arguments["url"],
+                    arguments.get("timeout", 5),
                 )
             case "whois_lookup":
                 return await self._whois(arguments["target"])
@@ -91,7 +102,8 @@ class NetworkSkill(Skill):
         loop = asyncio.get_event_loop()
         try:
             results = await loop.run_in_executor(
-                None, lambda: socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+                None,
+                lambda: socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM),
             )
         except socket.gaierror as e:
             return f"DNS lookup failed for {hostname}: {e}"
@@ -137,6 +149,7 @@ class NetworkSkill(Skill):
 
     async def _http_ping(self, url: str, timeout: float) -> str:
         import time
+
         try:
             import httpx
         except ImportError:
@@ -199,9 +212,13 @@ class NetworkSkill(Skill):
 
             lines = [f"IP info for {target} ({ip}):"]
             for key, label in [
-                ("org", "Org"), ("isp", "ISP"), ("city", "City"),
-                ("regionName", "Region"), ("country", "Country"),
-                ("timezone", "Timezone"), ("as", "AS"),
+                ("org", "Org"),
+                ("isp", "ISP"),
+                ("city", "City"),
+                ("regionName", "Region"),
+                ("country", "Country"),
+                ("timezone", "Timezone"),
+                ("as", "AS"),
             ]:
                 val = data.get(key)
                 if val:

@@ -113,7 +113,9 @@ def fit_messages(
             if i == len(messages) - 1 and not selected_indices:
                 selected_indices.append(i)
                 tokens_used += min(cost, budget.remaining - pinned_cost)
-                log.debug(f"Truncating current message to fit ({cost} -> {budget.remaining} tokens)")
+                log.debug(
+                    f"Truncating current message to fit ({cost} -> {budget.remaining} tokens)"
+                )
             break
 
         selected_indices.append(i)

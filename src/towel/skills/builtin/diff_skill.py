@@ -28,7 +28,10 @@ class DiffSkill(Skill):
                     "properties": {
                         "file_a": {"type": "string", "description": "Path to first file"},
                         "file_b": {"type": "string", "description": "Path to second file"},
-                        "context": {"type": "integer", "description": "Lines of context (default: 3)"},
+                        "context": {
+                            "type": "integer",
+                            "description": "Lines of context (default: 3)",
+                        },
                     },
                     "required": ["file_a", "file_b"],
                 },
@@ -41,15 +44,24 @@ class DiffSkill(Skill):
                     "properties": {
                         "text_a": {"type": "string", "description": "First text"},
                         "text_b": {"type": "string", "description": "Second text"},
-                        "label_a": {"type": "string", "description": "Label for first text (default: 'a')"},
-                        "label_b": {"type": "string", "description": "Label for second text (default: 'b')"},
+                        "label_a": {
+                            "type": "string",
+                            "description": "Label for first text (default: 'a')",
+                        },
+                        "label_b": {
+                            "type": "string",
+                            "description": "Label for second text (default: 'b')",
+                        },
                     },
                     "required": ["text_a", "text_b"],
                 },
             ),
             ToolDefinition(
                 name="diff_stats",
-                description="Get statistics about differences between two files (additions, deletions, changed lines)",
+                description=(
+                    "Get statistics about differences between "
+                    "two files (additions, deletions, changed lines)"
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
@@ -65,13 +77,16 @@ class DiffSkill(Skill):
         match tool_name:
             case "diff_files":
                 return self._diff_files(
-                    arguments["file_a"], arguments["file_b"],
+                    arguments["file_a"],
+                    arguments["file_b"],
                     arguments.get("context", 3),
                 )
             case "diff_text":
                 return self._diff_text(
-                    arguments["text_a"], arguments["text_b"],
-                    arguments.get("label_a", "a"), arguments.get("label_b", "b"),
+                    arguments["text_a"],
+                    arguments["text_b"],
+                    arguments.get("label_a", "a"),
+                    arguments.get("label_b", "b"),
                 )
             case "diff_stats":
                 return self._diff_stats(arguments["file_a"], arguments["file_b"])
@@ -89,15 +104,21 @@ class DiffSkill(Skill):
 
     def _diff_files(self, file_a: str, file_b: str, context: int) -> str:
         lines_a = self._read(file_a)
-        if isinstance(lines_a, str): return lines_a
+        if isinstance(lines_a, str):
+            return lines_a
         lines_b = self._read(file_b)
-        if isinstance(lines_b, str): return lines_b
+        if isinstance(lines_b, str):
+            return lines_b
 
-        diff = list(difflib.unified_diff(
-            lines_a, lines_b,
-            fromfile=file_a, tofile=file_b,
-            n=context,
-        ))
+        diff = list(
+            difflib.unified_diff(
+                lines_a,
+                lines_b,
+                fromfile=file_a,
+                tofile=file_b,
+                n=context,
+            )
+        )
         if not diff:
             return "Files are identical."
         return "".join(diff[:500])
@@ -112,15 +133,19 @@ class DiffSkill(Skill):
 
     def _diff_stats(self, file_a: str, file_b: str) -> str:
         lines_a = self._read(file_a)
-        if isinstance(lines_a, str): return lines_a
+        if isinstance(lines_a, str):
+            return lines_a
         lines_b = self._read(file_b)
-        if isinstance(lines_b, str): return lines_b
+        if isinstance(lines_b, str):
+            return lines_b
 
         sm = difflib.SequenceMatcher(None, lines_a, lines_b)
         adds = dels = changes = 0
         for tag, i1, i2, j1, j2 in sm.get_opcodes():
-            if tag == "insert": adds += j2 - j1
-            elif tag == "delete": dels += i2 - i1
+            if tag == "insert":
+                adds += j2 - j1
+            elif tag == "delete":
+                dels += i2 - i1
             elif tag == "replace":
                 changes += max(i2 - i1, j2 - j1)
 

@@ -19,7 +19,9 @@ class TestGenerateTitle:
         assert "database" in lower
 
     def test_code_question(self):
-        title = generate_title("What does this function do? def factorial(n): return n * factorial(n-1)")
+        title = generate_title(
+            "What does this function do? def factorial(n): return n * factorial(n-1)"
+        )
         assert title
         assert len(title) > 0
 
@@ -59,10 +61,7 @@ class TestGenerateTitle:
             assert w[0].isupper(), f"'{w}' should be capitalized"
 
     def test_with_assistant_message(self):
-        title = generate_title(
-            "What is Docker?",
-            "Docker is a containerization platform..."
-        )
+        title = generate_title("What is Docker?", "Docker is a containerization platform...")
         assert title
         assert "docker" in title.lower()
 
@@ -77,4 +76,6 @@ class TestGenerateTitle:
         for prompt, expected_word in cases:
             title = generate_title(prompt)
             assert title, f"No title for: {prompt}"
-            assert expected_word in title.lower(), f"'{expected_word}' not in title '{title}' for: {prompt}"
+            assert expected_word in title.lower(), (
+                f"'{expected_word}' not in title '{title}' for: {prompt}"
+            )

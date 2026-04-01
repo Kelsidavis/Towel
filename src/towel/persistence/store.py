@@ -65,20 +65,24 @@ class ConversationStore:
     def list_conversations(self, limit: int = 50) -> list[ConversationSummary]:
         """List saved conversations, most recent first."""
         summaries: list[ConversationSummary] = []
-        json_files = sorted(self.store_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        json_files = sorted(
+            self.store_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
+        )
 
         for path in json_files[:limit]:
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 conv = Conversation.from_dict(data)
-                summaries.append(ConversationSummary(
-                    id=conv.id,
-                    title=conv.title,
-                    channel=conv.channel,
-                    created_at=conv.created_at.isoformat(),
-                    message_count=len(conv),
-                    summary=conv.display_title,
-                ))
+                summaries.append(
+                    ConversationSummary(
+                        id=conv.id,
+                        title=conv.title,
+                        channel=conv.channel,
+                        created_at=conv.created_at.isoformat(),
+                        message_count=len(conv),
+                        summary=conv.display_title,
+                    )
+                )
             except (json.JSONDecodeError, KeyError, ValueError):
                 log.warning(f"Skipping corrupt conversation file: {path.name}")
                 continue
@@ -101,7 +105,6 @@ class ConversationStore:
     def count(self) -> int:
         """Number of stored conversations."""
         return len(list(self.store_dir.glob("*.json")))
-
 
     def search(
         self,
@@ -151,21 +154,25 @@ class ConversationStore:
                 if pattern.search(msg.content):
                     # Extract a snippet around the match
                     snippet = _extract_snippet(msg.content, pattern)
-                    matches.append(SearchMatch(
-                        message_id=msg.id,
-                        role=msg.role.value,
-                        snippet=snippet,
-                        timestamp=msg.timestamp.isoformat(),
-                    ))
+                    matches.append(
+                        SearchMatch(
+                            message_id=msg.id,
+                            role=msg.role.value,
+                            snippet=snippet,
+                            timestamp=msg.timestamp.isoformat(),
+                        )
+                    )
 
             if matches:
-                results.append(SearchResult(
-                    conversation_id=conv.id,
-                    channel=conv.channel,
-                    created_at=conv.created_at.isoformat(),
-                    summary=conv.summary,
-                    matches=matches,
-                ))
+                results.append(
+                    SearchResult(
+                        conversation_id=conv.id,
+                        channel=conv.channel,
+                        created_at=conv.created_at.isoformat(),
+                        summary=conv.summary,
+                        matches=matches,
+                    )
+                )
 
             if len(results) >= limit:
                 break

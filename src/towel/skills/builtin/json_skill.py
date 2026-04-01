@@ -38,7 +38,10 @@ class JsonSkill(Skill):
                     "type": "object",
                     "properties": {
                         "data": {"type": "string", "description": "JSON string to flatten"},
-                        "separator": {"type": "string", "description": "Key separator (default: '.')"},
+                        "separator": {
+                            "type": "string",
+                            "description": "Key separator (default: '.')",
+                        },
                     },
                     "required": ["data"],
                 },
@@ -49,7 +52,10 @@ class JsonSkill(Skill):
                 parameters={
                     "type": "object",
                     "properties": {
-                        "data": {"type": "string", "description": "Sample JSON to generate schema from"},
+                        "data": {
+                            "type": "string",
+                            "description": "Sample JSON to generate schema from",
+                        },
                     },
                     "required": ["data"],
                 },
@@ -101,7 +107,7 @@ class JsonSkill(Skill):
         return f"{len(changes)} difference(s):\n" + "\n".join(changes[:50])
 
     def _compare(self, path: str, a: Any, b: Any, changes: list[str]) -> None:
-        if type(a) != type(b):
+        if type(a) is not type(b):
             changes.append(f"  ~ {path}: type changed {type(a).__name__} -> {type(b).__name__}")
             return
         if isinstance(a, dict):

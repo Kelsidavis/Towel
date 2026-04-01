@@ -1,7 +1,7 @@
 """Tests for conversation persistence."""
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -57,7 +57,12 @@ class TestConversationSerialization:
         assert restored.tags == ["project", "important"]
 
     def test_tags_absent_defaults_empty(self):
-        data = {"id": "x", "channel": "cli", "created_at": datetime.now(timezone.utc).isoformat(), "messages": []}
+        data = {
+            "id": "x",
+            "channel": "cli",
+            "created_at": datetime.now(UTC).isoformat(),
+            "messages": [],
+        }
         conv = Conversation.from_dict(data)
         assert conv.tags == []
 
@@ -193,10 +198,9 @@ class TestLogTimeline:
     """Test the data that powers towel log."""
 
     def test_conversations_sorted_by_recent_activity(self, store):
-        from datetime import timedelta
 
         old = _make_conversation("old")
-        old.created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        old.created_at = datetime(2026, 1, 1, tzinfo=UTC)
         store.save(old)
 
         new = _make_conversation("new")
@@ -210,13 +214,13 @@ class TestLogTimeline:
         from datetime import timedelta
 
         old = _make_conversation("ancient")
-        old.created_at = datetime(2020, 6, 15, tzinfo=timezone.utc)
+        old.created_at = datetime(2020, 6, 15, tzinfo=UTC)
         store.save(old)
 
         recent = _make_conversation("fresh")
         store.save(recent)
 
-        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+        cutoff = datetime.now(UTC) - timedelta(days=30)
 
         # Only fresh should pass the filter
         results = []
@@ -243,7 +247,7 @@ class TestGarbageCollection:
 
     def test_old_conversation_detected(self, store):
         old = _make_conversation("old-conv")
-        old.created_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        old.created_at = datetime(2020, 1, 1, tzinfo=UTC)
         store.save(old)
 
         recent = _make_conversation("new-conv")
@@ -251,7 +255,8 @@ class TestGarbageCollection:
 
         # Simulate what gc does: find files older than cutoff
         from datetime import timedelta
-        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+
+        cutoff = datetime.now(UTC) - timedelta(days=30)
 
         old_ids = []
         for path in store.store_dir.glob("*.json"):
@@ -265,7 +270,7 @@ class TestGarbageCollection:
 
     def test_delete_old_conversations(self, store):
         old = _make_conversation("old-conv")
-        old.created_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        old.created_at = datetime(2020, 1, 1, tzinfo=UTC)
         store.save(old)
         recent = _make_conversation("new-conv")
         store.save(recent)
@@ -281,7 +286,8 @@ class TestGarbageCollection:
             store.save(_make_conversation(f"recent-{i}"))
 
         from datetime import timedelta
-        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+
+        cutoff = datetime.now(UTC) - timedelta(days=30)
         old_count = 0
         for path in store.store_dir.glob("*.json"):
             data = json.loads(path.read_text())

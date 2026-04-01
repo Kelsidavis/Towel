@@ -24,6 +24,7 @@ log = logging.getLogger("towel.agent.middleware")
 @dataclass
 class MiddlewareContext:
     """Data flowing through the middleware chain."""
+
     user_message: str
     response: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -89,6 +90,7 @@ class MiddlewareStack:
 
 # ── Built-in middleware ──
 
+
 async def rate_limiter(ctx: MiddlewareContext) -> MiddlewareContext:
     """Block if too many requests in a short window."""
     _rate_limiter_state.setdefault("times", [])
@@ -106,6 +108,7 @@ async def rate_limiter(ctx: MiddlewareContext) -> MiddlewareContext:
 
     times.append(now)
     return ctx
+
 
 _rate_limiter_state: dict[str, Any] = {}
 
@@ -134,5 +137,6 @@ async def cost_tracker(ctx: MiddlewareContext) -> MiddlewareContext:
         ctx.metadata["cumulative_tokens"] = _cost_state["total_tokens"]
         ctx.metadata["cumulative_requests"] = _cost_state["total_requests"]
     return ctx
+
 
 _cost_state: dict[str, int] = {}

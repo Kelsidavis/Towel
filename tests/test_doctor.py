@@ -1,20 +1,16 @@
 """Tests for towel doctor diagnostics."""
 
-import socket
-
-import pytest
-
-from towel.config import TowelConfig
 from towel.cli.doctor import (
     Check,
-    check_environment,
     check_config,
+    check_environment,
+    check_gateway,
     check_mlx,
     check_skills,
-    check_gateway,
     check_storage,
     run_doctor,
 )
+from towel.config import TowelConfig
 
 
 class TestCheck:

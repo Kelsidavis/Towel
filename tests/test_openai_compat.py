@@ -5,8 +5,8 @@ import json
 import pytest
 from starlette.testclient import TestClient
 
-from towel.config import TowelConfig
 from towel.agent.runtime import AgentRuntime
+from towel.config import TowelConfig
 from towel.gateway.server import GatewayServer
 from towel.gateway.sessions import SessionManager
 from towel.persistence.store import ConversationStore
@@ -71,7 +71,9 @@ class TestChatCompletionsEndpoint:
         """Verify messages are required and validated."""
         # No messages field -> 400
         from pathlib import Path
+
         from starlette.testclient import TestClient
+
         store = ConversationStore(store_dir=Path("/tmp/towel-test-oai"))
         config = TowelConfig()
         agent = AgentRuntime(config)
@@ -81,14 +83,22 @@ class TestChatCompletionsEndpoint:
         # Missing messages -> 400
         assert c.post("/v1/chat/completions", json={"model": "x"}).status_code == 400
         # Empty messages -> 400
-        assert c.post("/v1/chat/completions", json={"model": "x", "messages": []}).status_code == 400
+        assert (
+            c.post("/v1/chat/completions", json={"model": "x", "messages": []}).status_code == 400
+        )
         # Invalid body -> 400
-        assert c.post("/v1/chat/completions", content="bad", headers={"content-type": "application/json"}).status_code == 400
+        assert (
+            c.post(
+                "/v1/chat/completions", content="bad", headers={"content-type": "application/json"}
+            ).status_code
+            == 400
+        )
 
 
 class TestResponseFormat:
     def test_completion_format(self):
         from towel.gateway.openai_compat import _format_completion
+
         result = _format_completion("id-1", 1234567890, "test-model", "Hello!", 10)
         assert result["id"] == "id-1"
         assert result["object"] == "chat.completion"
@@ -102,6 +112,7 @@ class TestResponseFormat:
 
     def test_completion_has_required_fields(self):
         from towel.gateway.openai_compat import _format_completion
+
         result = _format_completion("id", 0, "m", "content", 5)
         # All fields required by the OpenAI spec
         assert "id" in result
@@ -120,10 +131,11 @@ class TestSSEFormat:
     @pytest.mark.asyncio
     async def test_sse_stream_format(self):
         """Test the SSE generator produces valid format."""
-        from towel.gateway.openai_compat import _stream_sse
+        from unittest.mock import MagicMock
+
         from towel.agent.conversation import Conversation, Role
-        from towel.agent.events import AgentEvent, EventType
-        from unittest.mock import AsyncMock, MagicMock
+        from towel.agent.events import AgentEvent
+        from towel.gateway.openai_compat import _stream_sse
 
         # Mock agent that yields token events
         agent = MagicMock()

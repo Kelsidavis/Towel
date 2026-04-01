@@ -2,15 +2,12 @@
 
 from pathlib import Path
 
-import pytest
-
 from towel.cli.models import (
-    list_cached_models,
-    is_model_cached,
-    get_model_usage,
-    get_hf_cache_dir,
-    CachedModel,
     RECOMMENDED_MODELS,
+    CachedModel,
+    get_model_usage,
+    is_model_cached,
+    list_cached_models,
 )
 from towel.config import TowelConfig
 
@@ -99,14 +96,18 @@ class TestRecommendedModels:
 class TestModelsCLI:
     def test_list_command_exists(self):
         from click.testing import CliRunner
+
         from towel.cli.main import cli
+
         runner = CliRunner()
         result = runner.invoke(cli, ["models", "list"])
         assert result.exit_code == 0
 
     def test_recommended_command(self):
         from click.testing import CliRunner
+
         from towel.cli.main import cli
+
         runner = CliRunner()
         result = runner.invoke(cli, ["models", "recommended"])
         assert result.exit_code == 0
@@ -114,7 +115,9 @@ class TestModelsCLI:
 
     def test_active_command(self):
         from click.testing import CliRunner
+
         from towel.cli.main import cli
+
         runner = CliRunner()
         result = runner.invoke(cli, ["models", "active"])
         assert result.exit_code == 0
@@ -122,7 +125,9 @@ class TestModelsCLI:
 
     def test_models_help(self):
         from click.testing import CliRunner
+
         from towel.cli.main import cli
+
         runner = CliRunner()
         result = runner.invoke(cli, ["models", "--help"])
         assert result.exit_code == 0

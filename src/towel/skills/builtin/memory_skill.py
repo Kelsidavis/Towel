@@ -26,13 +26,30 @@ class MemorySkill(Skill):
         return [
             ToolDefinition(
                 name="remember",
-                description="Store a fact in persistent memory. Use for user preferences, project details, or anything worth remembering across sessions.",
+                description=(
+                    "Store a fact in persistent memory. Use for "
+                    "user preferences, project details, or "
+                    "anything worth remembering across sessions."
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
-                        "key": {"type": "string", "description": "Short identifier (e.g., 'user_name', 'preferred_language')"},
+                        "key": {
+                            "type": "string",
+                            "description": (
+                                "Short identifier (e.g., "
+                                "'user_name', 'preferred_language')"
+                            ),
+                        },
                         "content": {"type": "string", "description": "The fact to remember"},
-                        "type": {"type": "string", "description": f"Memory type: {', '.join(MEMORY_TYPES)} (default: fact)"},
+                        "type": {
+                            "type": "string",
+                            "description": (
+                                "Memory type: "
+                                f"{', '.join(MEMORY_TYPES)} "
+                                "(default: fact)"
+                            ),
+                        },
                     },
                     "required": ["key", "content"],
                 },
@@ -50,11 +67,17 @@ class MemorySkill(Skill):
             ),
             ToolDefinition(
                 name="recall",
-                description="Search your memories. Use when the user references something from a past session.",
+                description=(
+                    "Search your memories. Use when the user "
+                    "references something from a past session."
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Search term (searches keys and content)"},
+                        "query": {
+                            "type": "string",
+                            "description": "Search term (searches keys and content)",
+                        },
                     },
                     "required": ["query"],
                 },

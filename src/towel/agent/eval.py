@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 @dataclass
 class EvalCase:
     """A single evaluation test case."""
+
     prompt: str
     expected_keywords: list[str] = field(default_factory=list)
     expected_tools: list[str] = field(default_factory=list)
@@ -31,17 +32,20 @@ class EvalCase:
 @dataclass
 class EvalResult:
     """Results from an eval run."""
+
     cases: list[EvalCase]
     total_elapsed: float = 0.0
 
     @property
     def pass_rate(self) -> float:
-        if not self.cases: return 0.0
+        if not self.cases:
+            return 0.0
         return sum(1 for c in self.cases if c.passed) / len(self.cases)
 
     @property
     def avg_score(self) -> float:
-        if not self.cases: return 0.0
+        if not self.cases:
+            return 0.0
         return sum(c.score for c in self.cases) / len(self.cases)
 
     def summary(self) -> str:
@@ -52,7 +56,7 @@ class EvalResult:
         ]
         for i, c in enumerate(self.cases):
             icon = "✓" if c.passed else "✗"
-            lines.append(f"  [{icon}] {i+1}. {c.prompt[:50]}...")
+            lines.append(f"  [{icon}] {i + 1}. {c.prompt[:50]}...")
             lines.append(f"       Score: {c.score:.2f} · {c.elapsed:.1f}s · {c.notes}")
         return "\n".join(lines)
 
@@ -60,15 +64,31 @@ class EvalResult:
 # Built-in eval suite
 BUILTIN_EVALS: list[dict] = [
     {"prompt": "What is 2 + 2?", "expected_keywords": ["4"]},
-    {"prompt": "What day of the week is it?",
-     "expected_keywords": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]},
+    {
+        "prompt": "What day of the week is it?",
+        "expected_keywords": [
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+            "Sunday",
+        ],
+    },
     {"prompt": "Generate a UUID for me", "expected_tools": ["generate_uuid"]},
-    {"prompt": "What's the SHA256 hash of 'hello'?",
-     "expected_keywords": ["2cf24dba"], "expected_tools": ["hash_text"]},
+    {
+        "prompt": "What's the SHA256 hash of 'hello'?",
+        "expected_keywords": ["2cf24dba"],
+        "expected_tools": ["hash_text"],
+    },
     {"prompt": "Roll 2d6", "expected_tools": ["roll_dice"], "expected_keywords": ["Rolling"]},
     {"prompt": "Convert 100 USD to EUR", "expected_tools": ["currency_convert"]},
     {"prompt": "What is my current working directory?", "expected_keywords": ["/"]},
-    {"prompt": "List the files in the current directory", "expected_tools": ["list_directory", "run_command"]},
+    {
+        "prompt": "List the files in the current directory",
+        "expected_tools": ["list_directory", "run_command"],
+    },
 ]
 
 
@@ -107,7 +127,9 @@ def score_case(case: EvalCase) -> None:
 
     # Notes
     notes = []
-    if case.expected_keywords and not any(k.lower() in case.response.lower() for k in case.expected_keywords):
+    if case.expected_keywords and not any(
+        k.lower() in case.response.lower() for k in case.expected_keywords
+    ):
         notes.append("missing keywords")
     if case.expected_tools and not any(t in case.tools_called for t in case.expected_tools):
         notes.append(f"expected tools: {case.expected_tools}")

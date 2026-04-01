@@ -10,15 +10,38 @@ from towel.skills.base import Skill, ToolDefinition
 
 # Common timezone offsets (no pytz dependency needed)
 _TIMEZONE_OFFSETS: dict[str, int] = {
-    "UTC": 0, "GMT": 0,
-    "EST": -5, "EDT": -4, "CST": -6, "CDT": -5,
-    "MST": -7, "MDT": -6, "PST": -8, "PDT": -7,
-    "CET": 1, "CEST": 2, "EET": 2, "EEST": 3,
-    "JST": 9, "KST": 9, "CST_CN": 8, "IST": 5,
-    "AEST": 10, "AEDT": 11, "NZST": 12, "NZDT": 13,
-    "HST": -10, "AKST": -9, "AKDT": -8,
-    "BRT": -3, "ART": -3, "CLT": -4,
-    "WAT": 1, "CAT": 2, "EAT": 3, "SAST": 2,
+    "UTC": 0,
+    "GMT": 0,
+    "EST": -5,
+    "EDT": -4,
+    "CST": -6,
+    "CDT": -5,
+    "MST": -7,
+    "MDT": -6,
+    "PST": -8,
+    "PDT": -7,
+    "CET": 1,
+    "CEST": 2,
+    "EET": 2,
+    "EEST": 3,
+    "JST": 9,
+    "KST": 9,
+    "CST_CN": 8,
+    "IST": 5,
+    "AEST": 10,
+    "AEDT": 11,
+    "NZST": 12,
+    "NZDT": 13,
+    "HST": -10,
+    "AKST": -9,
+    "AKDT": -8,
+    "BRT": -3,
+    "ART": -3,
+    "CLT": -4,
+    "WAT": 1,
+    "CAT": 2,
+    "EAT": 3,
+    "SAST": 2,
 }
 
 
@@ -41,7 +64,11 @@ class TimeSkill(Skill):
                     "properties": {
                         "timezone": {
                             "type": "string",
-                            "description": "Timezone abbreviation (e.g., UTC, PST, EST, JST). Default: local time",
+                            "description": (
+                                "Timezone abbreviation "
+                                "(e.g., UTC, PST, EST, JST). "
+                                "Default: local time"
+                            ),
                         },
                     },
                 },
@@ -66,7 +93,11 @@ class TimeSkill(Skill):
                     "properties": {
                         "timestamp": {
                             "type": "number",
-                            "description": "Unix timestamp to convert to human-readable. Omit to get current timestamp.",
+                            "description": (
+                                "Unix timestamp to convert to "
+                                "human-readable. Omit to get "
+                                "current timestamp."
+                            ),
                         },
                     },
                 },

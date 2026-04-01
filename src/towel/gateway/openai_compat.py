@@ -29,6 +29,7 @@ from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
 if TYPE_CHECKING:
+    from towel.agent.conversation import Conversation
     from towel.agent.runtime import AgentRuntime
     from towel.config import TowelConfig
 
@@ -40,14 +41,20 @@ def build_openai_routes(agent: AgentRuntime, config: TowelConfig) -> list[Route]
         try:
             body = await request.json()
         except Exception:
-            return JSONResponse({"error": {"message": "Invalid JSON", "type": "invalid_request_error"}}, status_code=400)
+            return JSONResponse(
+                {"error": {"message": "Invalid JSON", "type": "invalid_request_error"}},
+                status_code=400,
+            )
 
         messages = body.get("messages", [])
         stream = body.get("stream", False)
         model_name = body.get("model", config.model.name)
 
         if not messages:
-            return JSONResponse({"error": {"message": "messages is required", "type": "invalid_request_error"}}, status_code=400)
+            return JSONResponse(
+                {"error": {"message": "messages is required", "type": "invalid_request_error"}},
+                status_code=400,
+            )
 
         # Build a temporary conversation from the messages
         from towel.agent.conversation import Conversation, Role
@@ -74,10 +81,15 @@ def build_openai_routes(agent: AgentRuntime, config: TowelConfig) -> list[Route]
                 )
             else:
                 response = await agent.step(conv)
-                return JSONResponse(_format_completion(
-                    request_id, created, model_name, response.content,
-                    response.metadata.get("tokens", 0),
-                ))
+                return JSONResponse(
+                    _format_completion(
+                        request_id,
+                        created,
+                        model_name,
+                        response.content,
+                        response.metadata.get("tokens", 0),
+                    )
+                )
         except Exception as e:
             return JSONResponse(
                 {"error": {"message": str(e), "type": "server_error"}},
@@ -114,11 +126,13 @@ async def _stream_sse(
                 "object": "chat.completion.chunk",
                 "created": created,
                 "model": model,
-                "choices": [{
-                    "index": 0,
-                    "delta": {"content": event.data["content"]},
-                    "finish_reason": None,
-                }],
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"content": event.data["content"]},
+                        "finish_reason": None,
+                    }
+                ],
             }
             yield f"data: {json.dumps(chunk)}\n\n"
 
@@ -129,11 +143,13 @@ async def _stream_sse(
                 "object": "chat.completion.chunk",
                 "created": created,
                 "model": model,
-                "choices": [{
-                    "index": 0,
-                    "delta": {},
-                    "finish_reason": "stop",
-                }],
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop",
+                    }
+                ],
             }
             yield f"data: {json.dumps(chunk)}\n\n"
             yield "data: [DONE]\n\n"
@@ -145,11 +161,13 @@ async def _stream_sse(
                 "object": "chat.completion.chunk",
                 "created": created,
                 "model": model,
-                "choices": [{
-                    "index": 0,
-                    "delta": {},
-                    "finish_reason": "stop",
-                }],
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop",
+                    }
+                ],
             }
             yield f"data: {json.dumps(chunk)}\n\n"
             yield "data: [DONE]\n\n"
@@ -173,11 +191,13 @@ def _format_completion(
         "object": "chat.completion",
         "created": created,
         "model": model,
-        "choices": [{
-            "index": 0,
-            "message": {"role": "assistant", "content": content},
-            "finish_reason": "stop",
-        }],
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop",
+            }
+        ],
         "usage": {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": total_tokens,

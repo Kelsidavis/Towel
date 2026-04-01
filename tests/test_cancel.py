@@ -1,9 +1,5 @@
 """Tests for generation cancellation."""
 
-import asyncio
-
-import pytest
-
 from towel.agent.events import AgentEvent, EventType
 from towel.agent.runtime import AgentRuntime
 from towel.config import TowelConfig
@@ -46,22 +42,26 @@ class TestWebUICancel:
 
     def test_stop_button_exists(self):
         from pathlib import Path
+
         html = (Path(__file__).parent.parent / "src" / "towel" / "web" / "index.html").read_text()
         assert "stop-btn" in html
         assert "stopGeneration" in html
 
     def test_escape_key_handler(self):
         from pathlib import Path
+
         html = (Path(__file__).parent.parent / "src" / "towel" / "web" / "index.html").read_text()
         assert "Escape" in html
 
     def test_cancel_message_sent(self):
         from pathlib import Path
+
         html = (Path(__file__).parent.parent / "src" / "towel" / "web" / "index.html").read_text()
         assert "'cancel'" in html
 
     def test_cancelled_event_handled(self):
         from pathlib import Path
+
         html = (Path(__file__).parent.parent / "src" / "towel" / "web" / "index.html").read_text()
         assert "'cancelled'" in html
         assert "generation stopped" in html
@@ -71,15 +71,18 @@ class TestGatewayCancel:
     """Test that the gateway handles cancel messages."""
 
     def test_gateway_has_cancel_handler(self):
-        from towel.gateway.server import GatewayServer
         import inspect
+
+        from towel.gateway.server import GatewayServer
+
         source = inspect.getsource(GatewayServer._handle_ws)
         assert "cancel" in source
 
     def test_gateway_tracks_active_tasks(self):
         from towel.gateway.server import GatewayServer
+
         config = TowelConfig()
         agent = AgentRuntime(config)
         gw = GatewayServer(config=config, agent=agent)
-        assert hasattr(gw, '_active_tasks')
+        assert hasattr(gw, "_active_tasks")
         assert isinstance(gw._active_tasks, dict)

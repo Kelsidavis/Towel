@@ -16,11 +16,10 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Optional
+from typing import Any
 
 import mlx.core as mx
 import numpy as np
-
 from mlx_lm.models.cache import _BaseCache, create_attention_mask
 
 log = logging.getLogger("towel.turboquant")
@@ -34,7 +33,7 @@ log = logging.getLogger("towel.turboquant")
 def _random_orthogonal(d: int, seed: int) -> mx.array:
     """Random orthogonal matrix via QR decomposition of Gaussian matrix."""
     rng = np.random.RandomState(seed)
-    Q, _ = np.linalg.qr(rng.randn(d, d).astype(np.float32))
+    Q, _ = np.linalg.qr(rng.randn(d, d).astype(np.float32))  # noqa: N806
     return mx.array(Q)
 
 
@@ -59,15 +58,13 @@ def _pack_bits(values: mx.array, bits: int) -> mx.array:
     Returns:
         uint32 array, shape (..., ceil(D * bits / 32))
     """
-    *batch, D = values.shape
+    *batch, D = values.shape  # noqa: N806
     vals_per_word = 32 // bits
     pad = (-D) % vals_per_word
     if pad:
-        values = mx.concatenate(
-            [values, mx.zeros((*batch, pad), dtype=values.dtype)], axis=-1
-        )
+        values = mx.concatenate([values, mx.zeros((*batch, pad), dtype=values.dtype)], axis=-1)
 
-    D_padded = D + pad
+    D_padded = D + pad  # noqa: N806
     n_words = D_padded // vals_per_word
     values = values.reshape(*batch, n_words, vals_per_word).astype(mx.uint32)
 
@@ -76,7 +73,7 @@ def _pack_bits(values: mx.array, bits: int) -> mx.array:
     return packed
 
 
-def _unpack_bits(packed: mx.array, bits: int, D: int) -> mx.array:
+def _unpack_bits(packed: mx.array, bits: int, D: int) -> mx.array:  # noqa: N803
     """Unpack uint32 words to low-bit integer values.
 
     Args:
@@ -133,17 +130,17 @@ class TurboQuantKVCache(_BaseCache):
         # Lazily initialised on first update_and_fetch
         self._head_dim: int = 0
         self._qjl_dim: int = 0
-        self._R: Optional[mx.array] = None
-        self._J: Optional[mx.array] = None
+        self._R: mx.array | None = None
+        self._J: mx.array | None = None
         self._quant_range: float = 0.0
 
         # Compressed storage (None until first write)
-        self._key_radii: Optional[mx.array] = None
-        self._key_packed: Optional[mx.array] = None
-        self._key_signs: Optional[mx.array] = None
-        self._val_radii: Optional[mx.array] = None
-        self._val_packed: Optional[mx.array] = None
-        self._val_signs: Optional[mx.array] = None
+        self._key_radii: mx.array | None = None
+        self._key_packed: mx.array | None = None
+        self._key_signs: mx.array | None = None
+        self._val_radii: mx.array | None = None
+        self._val_packed: mx.array | None = None
+        self._val_signs: mx.array | None = None
 
         self.offset = 0
 
@@ -162,7 +159,7 @@ class TurboQuantKVCache(_BaseCache):
 
     def _compress(self, x: mx.array):
         """Compress [B, H, S, D] → (radii, packed_quant, packed_signs)."""
-        d = self._head_dim
+        _d = self._head_dim
         n_levels = (1 << self.kv_bits) - 1  # 7 for 3-bit, 15 for 4-bit
         qr = self._quant_range
 
@@ -210,7 +207,7 @@ class TurboQuantKVCache(_BaseCache):
     # -- cache interface (matches KVCache) -----------------------------------
 
     def update_and_fetch(self, keys: mx.array, values: mx.array):
-        B, n_kv_heads, num_steps, head_dim = keys.shape
+        B, n_kv_heads, num_steps, head_dim = keys.shape  # noqa: N806
 
         if self._R is None:
             self._init_matrices(head_dim)
@@ -226,7 +223,7 @@ class TurboQuantKVCache(_BaseCache):
         if need_alloc:
             n_alloc = ((self.step + num_steps - 1) // self.step) * self.step
 
-            def _grow(existing: Optional[mx.array], template: mx.array, last_dim: int):
+            def _grow(existing: mx.array | None, template: mx.array, last_dim: int):
                 buf = mx.zeros((B, n_kv_heads, n_alloc, last_dim), dtype=template.dtype)
                 if existing is not None:
                     trimmed = existing[..., :prev, :] if prev % self.step != 0 else existing
@@ -289,16 +286,29 @@ class TurboQuantKVCache(_BaseCache):
         if not v:
             return
         (
-            self._key_radii, self._key_packed, self._key_signs,
-            self._val_radii, self._val_packed, self._val_signs,
+            self._key_radii,
+            self._key_packed,
+            self._key_signs,
+            self._val_radii,
+            self._val_packed,
+            self._val_signs,
         ) = v
         self.offset = self._key_radii.shape[2]
 
     @property
     def meta_state(self):
         return tuple(
-            map(str, (self.offset, self.kv_bits, self.qjl_ratio, self.seed,
-                      self._head_dim, self._qjl_dim))
+            map(
+                str,
+                (
+                    self.offset,
+                    self.kv_bits,
+                    self.qjl_ratio,
+                    self.seed,
+                    self._head_dim,
+                    self._qjl_dim,
+                ),
+            )
         )
 
     @meta_state.setter
@@ -334,8 +344,12 @@ class TurboQuantKVCache(_BaseCache):
         return sum(
             a[..., : self.offset, :].nbytes
             for a in (
-                self._key_radii, self._key_packed, self._key_signs,
-                self._val_radii, self._val_packed, self._val_signs,
+                self._key_radii,
+                self._key_packed,
+                self._key_signs,
+                self._val_radii,
+                self._val_packed,
+                self._val_signs,
             )
         )
 
@@ -343,7 +357,7 @@ class TurboQuantKVCache(_BaseCache):
     def uncompressed_nbytes(self):
         if not self._head_dim:
             return 0
-        B, H = self._key_radii.shape[:2]
+        B, H = self._key_radii.shape[:2]  # noqa: N806
         return 2 * B * H * self.offset * self._head_dim * 2
 
     @property
@@ -379,15 +393,16 @@ def make_turboquant_cache(
     result = []
     for i, c in enumerate(base_cache):
         if isinstance(c, _KVCache):
-            result.append(
-                TurboQuantKVCache(kv_bits=kv_bits, qjl_ratio=qjl_ratio, seed=42 + i)
-            )
+            result.append(TurboQuantKVCache(kv_bits=kv_bits, qjl_ratio=qjl_ratio, seed=42 + i))
             replaced += 1
         else:
             result.append(c)
 
     log.info(
         "TurboQuant KV cache: %d/%d layers replaced, %d-bit PolarQuant, QJL ratio %.1f",
-        replaced, len(result), kv_bits, qjl_ratio,
+        replaced,
+        len(result),
+        kv_bits,
+        qjl_ratio,
     )
     return result

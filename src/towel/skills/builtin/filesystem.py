@@ -79,7 +79,9 @@ class FileSystemSkill(Skill):
                 for entry in entries[:100]:  # cap at 100 entries
                     prefix = "d " if entry.is_dir() else "f "
                     size = entry.stat().st_size if entry.is_file() else 0
-                    lines.append(f"{prefix}{entry.name}  ({size}B)" if size else f"{prefix}{entry.name}/")
+                    lines.append(
+                        f"{prefix}{entry.name}  ({size}B)" if size else f"{prefix}{entry.name}/"
+                    )
                 if len(entries) > 100:
                     lines.append(f"... and {len(entries) - 100} more")
                 return "\n".join(lines)

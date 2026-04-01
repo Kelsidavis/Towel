@@ -13,15 +13,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-DOCKERFILE = '''FROM python:3.13-slim
+DOCKERFILE = """FROM python:3.13-slim
 WORKDIR /app
 RUN pip install --no-cache-dir towel-ai
 COPY .env* ./
 EXPOSE 18742 18743
 CMD ["towel", "serve"]
-'''
+"""
 
-COMPOSE = '''version: "3.8"
+COMPOSE = """version: "3.8"
 services:
   towel:
     build: .
@@ -36,9 +36,9 @@ services:
 
 volumes:
   towel-data:
-'''
+"""
 
-SYSTEMD = '''[Unit]
+SYSTEMD = """[Unit]
 Description=Towel AI Assistant
 After=network.target
 
@@ -53,11 +53,11 @@ EnvironmentFile=/home/{user}/.towel/.env
 
 [Install]
 WantedBy=multi-user.target
-'''
+"""
 
-PROCFILE = 'web: towel serve --host 0.0.0.0 --port $PORT\n'
+PROCFILE = "web: towel serve --host 0.0.0.0 --port $PORT\n"
 
-FLY_TOML = '''app = "towel-ai"
+FLY_TOML = """app = "towel-ai"
 primary_region = "sjc"
 
 [build]
@@ -75,9 +75,9 @@ primary_region = "sjc"
   protocol = "tcp"
   [[services.ports]]
     port = 18742
-'''
+"""
 
-ENV_TEMPLATE = '''# Towel configuration
+ENV_TEMPLATE = """# Towel configuration
 # Copy to .env and fill in values
 
 # Model (default: Llama 3.3 70B 4-bit)
@@ -91,10 +91,14 @@ ENV_TEMPLATE = '''# Towel configuration
 
 # Webhook auth
 # WEBHOOK_TOKEN=your-secret-token
-'''
+"""
 
 TARGETS = {
-    "docker": [("Dockerfile", DOCKERFILE), ("docker-compose.yml", COMPOSE), (".env.example", ENV_TEMPLATE)],
+    "docker": [
+        ("Dockerfile", DOCKERFILE),
+        ("docker-compose.yml", COMPOSE),
+        (".env.example", ENV_TEMPLATE),
+    ],
     "systemd": [("towel.service", SYSTEMD), (".env.example", ENV_TEMPLATE)],
     "heroku": [("Procfile", PROCFILE), (".env.example", ENV_TEMPLATE)],
     "fly": [("fly.toml", FLY_TOML), ("Dockerfile", DOCKERFILE), (".env.example", ENV_TEMPLATE)],

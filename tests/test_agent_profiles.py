@@ -1,6 +1,6 @@
 """Tests for agent profiles and model switching."""
 
-from towel.config import TowelConfig, AgentProfile, ModelConfig, DEFAULT_AGENTS
+from towel.config import DEFAULT_AGENTS, AgentProfile, ModelConfig, TowelConfig
 
 
 class TestAgentProfile:

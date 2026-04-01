@@ -63,6 +63,7 @@ hooks = HookRegistry()
 
 # ── Built-in hook helpers ──
 
+
 async def log_hook(**kwargs: Any) -> None:
     """Simple logging hook — logs all events."""
     event = kwargs.pop("_event", "unknown")

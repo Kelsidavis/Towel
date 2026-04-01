@@ -1,11 +1,11 @@
 """Tests for conversation search."""
 
+import re
+
 import pytest
 
 from towel.agent.conversation import Conversation, Role
 from towel.persistence.store import ConversationStore, _extract_snippet
-
-import re
 
 
 @pytest.fixture
@@ -24,14 +24,22 @@ def _save_conv(store, conv_id, messages):
 
 class TestSearch:
     def test_basic_search(self, store):
-        _save_conv(store, "c1", [
-            (Role.USER, "how do I make pancakes"),
-            (Role.ASSISTANT, "here is a pancake recipe"),
-        ])
-        _save_conv(store, "c2", [
-            (Role.USER, "tell me about waffles"),
-            (Role.ASSISTANT, "waffles are great"),
-        ])
+        _save_conv(
+            store,
+            "c1",
+            [
+                (Role.USER, "how do I make pancakes"),
+                (Role.ASSISTANT, "here is a pancake recipe"),
+            ],
+        )
+        _save_conv(
+            store,
+            "c2",
+            [
+                (Role.USER, "tell me about waffles"),
+                (Role.ASSISTANT, "waffles are great"),
+            ],
+        )
 
         results = store.search("pancake")
         assert len(results) == 1
@@ -49,11 +57,15 @@ class TestSearch:
         assert len(results) == 0
 
     def test_multiple_matches_in_one_conversation(self, store):
-        _save_conv(store, "c1", [
-            (Role.USER, "tell me about Python"),
-            (Role.ASSISTANT, "Python is a programming language"),
-            (Role.USER, "what about Python 3.12"),
-        ])
+        _save_conv(
+            store,
+            "c1",
+            [
+                (Role.USER, "tell me about Python"),
+                (Role.ASSISTANT, "Python is a programming language"),
+                (Role.USER, "what about Python 3.12"),
+            ],
+        )
         results = store.search("Python")
         assert len(results) == 1
         assert len(results[0].matches) == 3
@@ -69,10 +81,14 @@ class TestSearch:
         assert ids == {"c1", "c2"}
 
     def test_role_filter(self, store):
-        _save_conv(store, "c1", [
-            (Role.USER, "tell me about cats"),
-            (Role.ASSISTANT, "cats are wonderful animals"),
-        ])
+        _save_conv(
+            store,
+            "c1",
+            [
+                (Role.USER, "tell me about cats"),
+                (Role.ASSISTANT, "cats are wonderful animals"),
+            ],
+        )
         # Search only user messages
         results = store.search("cats", role_filter=Role.USER)
         assert len(results) == 1
@@ -103,14 +119,22 @@ class TestSearch:
         assert len(results) == 3
 
     def test_sorted_by_match_count(self, store):
-        _save_conv(store, "few", [
-            (Role.USER, "one mention of towel"),
-        ])
-        _save_conv(store, "many", [
-            (Role.USER, "towel towel towel"),
-            (Role.ASSISTANT, "here is your towel"),
-            (Role.USER, "another towel please"),
-        ])
+        _save_conv(
+            store,
+            "few",
+            [
+                (Role.USER, "one mention of towel"),
+            ],
+        )
+        _save_conv(
+            store,
+            "many",
+            [
+                (Role.USER, "towel towel towel"),
+                (Role.ASSISTANT, "here is your towel"),
+                (Role.USER, "another towel please"),
+            ],
+        )
 
         results = store.search("towel")
         assert len(results) == 2
@@ -118,9 +142,13 @@ class TestSearch:
         assert results[0].conversation_id == "many"
 
     def test_search_result_has_snippets(self, store):
-        _save_conv(store, "c1", [
-            (Role.USER, "I need help with the deployment pipeline that keeps failing"),
-        ])
+        _save_conv(
+            store,
+            "c1",
+            [
+                (Role.USER, "I need help with the deployment pipeline that keeps failing"),
+            ],
+        )
         results = store.search("deployment")
         assert len(results) == 1
         assert "deployment" in results[0].matches[0].snippet.lower()

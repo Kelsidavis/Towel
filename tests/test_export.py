@@ -1,11 +1,11 @@
 """Tests for conversation export."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
-from towel.agent.conversation import Conversation, Message, Role
-from towel.persistence.export import export_markdown, export_text, export_json, export_html
+from towel.agent.conversation import Conversation, Role
+from towel.persistence.export import export_html, export_json, export_markdown, export_text
 
 
 @pytest.fixture
@@ -13,10 +13,15 @@ def conv():
     c = Conversation(
         id="test-export-123",
         channel="cli",
-        created_at=datetime(2026, 3, 15, 10, 30, 0, tzinfo=timezone.utc),
+        created_at=datetime(2026, 3, 15, 10, 30, 0, tzinfo=UTC),
     )
     c.add(Role.USER, "How do I make pancakes?")
-    c.add(Role.ASSISTANT, "Here's a simple pancake recipe:\n\n1. Mix flour, eggs, and milk\n2. Heat a pan\n3. Pour batter and flip")
+    c.add(
+        Role.ASSISTANT,
+        "Here's a simple pancake recipe:\n\n"
+        "1. Mix flour, eggs, and milk\n"
+        "2. Heat a pan\n3. Pour batter and flip",
+    )
     c.add(Role.USER, "What about toppings?")
     c.add(Role.ASSISTANT, "Try maple syrup, blueberries, or whipped cream.")
     return c
@@ -100,17 +105,20 @@ class TestTextExport:
 class TestJsonExport:
     def test_valid_json(self, conv):
         import json
+
         result = export_json(conv)
         data = json.loads(result)
         assert data["id"] == "test-export-123"
 
     def test_messages_preserved(self, conv):
         import json
+
         data = json.loads(export_json(conv))
         assert len(data["messages"]) == 4
 
     def test_roundtrip(self, conv):
         import json
+
         exported = export_json(conv)
         restored = Conversation.from_dict(json.loads(exported))
         assert restored.id == conv.id
