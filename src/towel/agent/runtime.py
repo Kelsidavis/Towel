@@ -31,7 +31,7 @@ def mlx_tokenizer_config() -> dict[str, Any]:
     affected converted tokenizers and applies the corrected tokenizer behavior.
     Transformers ignores this for unaffected tokenizers.
     """
-    return {"fix_mistral_regex": True}
+    return {"fix_mistral_regex": False}
 
 
 _TOOL_ERROR_PATTERNS = (

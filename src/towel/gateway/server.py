@@ -83,6 +83,20 @@ class GatewayServer:
 
     async def start(self) -> None:
         """Start the gateway (WebSocket + HTTP), advertise via mDNS."""
+        import os as _os
+        import signal as _signal
+        import sys as _sys
+
+        def _handle_sighup(*_: Any) -> None:
+            """Re-exec on SIGHUP — reload config and restart cleanly."""
+            log.info("SIGHUP received — restarting...")
+            _os.execv(_sys.executable, [_sys.executable] + _sys.argv)
+
+        try:
+            _signal.signal(_signal.SIGHUP, _handle_sighup)
+        except (OSError, ValueError):
+            pass  # SIGHUP not available on Windows
+
         gw = self.config.gateway
 
         # Start WebSocket server
@@ -409,21 +423,26 @@ class GatewayServer:
         return sum(count_tokens_fallback(m.content) for m in session.conversation.messages)
 
     def _desired_worker_capabilities(self) -> dict[str, Any]:
-        """Describe the worker shape that best matches this controller runtime."""
+        """Describe the worker shape that best matches this controller runtime.
+
+        Backend and mode are returned as soft hints for scoring only — they
+        are not hard filters.  This allows heterogeneous fleets (e.g. an MLX
+        coordinator with a llama/ollama worker) to route correctly.
+        """
         cls = self.agent.__class__.__name__
         if cls == "ClaudeCodeRuntime":
-            backend = "claude"
-            mode = "anthropic_messages"
+            preferred_backend = "claude"
+            preferred_mode = "anthropic_messages"
         elif cls == "OllamaRuntime":
-            backend = "ollama"
-            mode = "ollama_chat"
+            preferred_backend = "ollama"
+            preferred_mode = "ollama_chat"
         else:
-            backend = "mlx"
-            mode = "mlx_prompt"
+            preferred_backend = "mlx"
+            preferred_mode = "mlx_prompt"
         return {
-            "backend": backend,
+            "preferred_backend": preferred_backend,
+            "preferred_mode": preferred_mode,
             "model": getattr(self.config.model, "name", ""),
-            "mode": mode,
             "tools": False,
         }
 
@@ -448,12 +467,13 @@ class GatewayServer:
         stream: bool,
         client_ws: ServerConnection | None = None,
     ) -> dict[str, Any]:
-        """Run one inference pass on a remote worker from a controller-built payload."""
-        build_request = getattr(self.agent, "build_inference_request", None)
-        if not callable(build_request):
-            raise RuntimeError("Agent runtime does not support remote inference requests")
+        """Run one inference pass on a remote worker.
 
-        request = build_request(conversation)
+        Sends the full conversation via 'run' so the worker builds its own
+        inference request using its own runtime — this handles heterogeneous
+        backends (mlx/llama/ollama) without the coordinator needing to know
+        the worker's prompt format.
+        """
         job_id = uuid.uuid4().hex[:12]
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._job_queues[job_id] = queue
@@ -469,27 +489,38 @@ class GatewayServer:
         await worker.ws.send(
             json.dumps(
                 {
-                    "type": "infer",
+                    "type": "run",
                     "job_id": job_id,
                     "session": session_id,
                     "stream": stream,
-                    "request": request,
+                    "conversation": conversation.to_dict(),
                 }
             )
         )
 
+        accumulated_text = ""
         try:
             while True:
                 msg = await queue.get()
                 msg_type = msg.get("type")
                 if msg_type == "job_event":
                     event = msg.get("event", {})
+                    # Accumulate token text for callers that need the full response
+                    if event.get("type") == "token":
+                        accumulated_text += event.get("text", "")
                     if client_ws is not None:
                         await client_ws.send(json.dumps(event))
                 elif msg_type == "job_done":
-                    # Advance the sync cursor after successful job
                     self._context_sync.advance_cursor(worker.id, session_id, conversation)
-                    return msg.get("result", {})
+                    # "run" job_done carries response/conversation, not result
+                    result = msg.get("result") or {}
+                    if not result.get("text") and accumulated_text:
+                        result = {"text": accumulated_text, "metadata": {}}
+                    elif not result.get("text"):
+                        # Non-streaming: extract last assistant message
+                        resp = msg.get("response", {})
+                        result = {"text": resp.get("content", ""), "metadata": resp.get("metadata", {})}
+                    return result
                 elif msg_type == "job_error":
                     raise RuntimeError(msg.get("message", "Remote worker failed"))
         finally:
@@ -752,6 +783,13 @@ class GatewayServer:
         web_dir = Path(__file__).parent.parent / "web"
 
         async def health(_request: Any) -> JSONResponse:
+            import socket as _socket
+            model_name = getattr(self.config.model, "name", "")
+            backend = getattr(self.config, "_backend", None) or (
+                "claude" if "claude" in model_name.lower() else
+                "ollama" if "ollama" in model_name.lower() else
+                "mlx"
+            )
             return JSONResponse(
                 {
                     "status": "hoopy",
@@ -760,6 +798,15 @@ class GatewayServer:
                     "connections": len(self._connections),
                     "sessions": len(self.sessions),
                     "workers": self._workers.stats(),
+                    "coordinator": {
+                        "hostname": _socket.gethostname(),
+                        "model": model_name,
+                        "backend": backend,
+                        "context_window": getattr(self.config.model, "context_window", 0),
+                        "max_tokens": getattr(self.config.model, "max_tokens", 0),
+                        "gateway_ws": f"ws://{self.config.gateway.host}:{self.config.gateway.port}",
+                        "gateway_http": f"http://{self.config.gateway.host}:{self.config.gateway.port + 1}",
+                    },
                 }
             )
 
@@ -1075,6 +1122,19 @@ class GatewayServer:
                 items.append(item)
             return JSONResponse({"sessions": items})
 
+        async def admin_restart(_request: Any) -> JSONResponse:
+            """POST /admin/restart — gracefully re-exec this process."""
+            import asyncio as _asyncio
+            import os as _os
+            import sys as _sys
+
+            async def _do_restart() -> None:
+                await _asyncio.sleep(0.3)  # let the HTTP response flush
+                _os.execv(_sys.executable, [_sys.executable] + _sys.argv)
+
+            _asyncio.create_task(_do_restart())
+            return JSONResponse({"status": "restarting"})
+
         # OpenAI-compatible API routes
         from towel.gateway.openai_compat import build_openai_routes
 
@@ -1099,6 +1159,7 @@ class GatewayServer:
             Route("/conversations/{conv_id}/rename", conversation_rename, methods=["POST"]),
             Route("/conversations/{conv_id}/export", conversation_export),
             Route("/search", search_conversations),
+            Route("/admin/restart", admin_restart, methods=["POST"]),
             Route("/api/ask", simple_ask, methods=["POST"]),
             Route("/api/sessions", api_sessions, methods=["GET"]),
             *openai_routes,

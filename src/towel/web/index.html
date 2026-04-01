@@ -282,11 +282,16 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       </div>
       <div id="fleet-actions">
         <button class="tb-btn" id="fleet-refresh-btn" title="Refresh fleet state">refresh</button>
+        <button class="tb-btn" id="fleet-restart-btn" title="Restart coordinator (reloads config)" style="color:var(--yellow)">restart</button>
         <button class="tb-btn" id="fleet-close-btn" title="Close fleet panel">close</button>
       </div>
     </div>
     <div id="fleet-body">
       <div class="fleet-col">
+        <div class="fleet-section">
+          <h3>Coordinator</h3>
+          <div class="fleet-list" id="fleet-coordinator"></div>
+        </div>
         <div class="fleet-section">
           <h3>Workers</h3>
           <div class="fleet-summary" id="fleet-summary"></div>
@@ -359,7 +364,9 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   const tbDelete = document.getElementById('tb-delete');
   const fleetOverlay = document.getElementById('fleet-overlay');
   const fleetRefreshBtn = document.getElementById('fleet-refresh-btn');
+  const fleetRestartBtn = document.getElementById('fleet-restart-btn');
   const fleetCloseBtn = document.getElementById('fleet-close-btn');
+  const fleetCoordinatorEl = document.getElementById('fleet-coordinator');
   const fleetSummaryEl = document.getElementById('fleet-summary');
   const fleetWorkersListEl = document.getElementById('fleet-workers-list');
   const fleetRoutesListEl = document.getElementById('fleet-routes-list');
@@ -367,7 +374,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   let ws = null, isStreaming = false;
   let currentAssistantEl = null, currentContentEl = null;
   let reconnectDelay = 1000, allConversations = [];
-  let fleetState = { workers: [], sessions: [], requirements: {}, pins: {}, workerStats: {} };
+  let fleetState = { workers: [], sessions: [], requirements: {}, pins: {}, workerStats: {}, coordinator: null };
 
   // ── Themes ──
   const THEMES = ['deep-space', 'frost', 'matrix', 'solarized'];
@@ -417,7 +424,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         sessions: sessions.sessions || [],
         requirements: workers.requirements || {},
         pins: workers.pins || {},
-        workerStats: health.workers || {}
+        workerStats: health.workers || {},
+        coordinator: health.coordinator || null
       };
       renderFleet();
     } catch (e) {
@@ -428,6 +436,30 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   }
 
   function renderFleet() {
+    const coord = fleetState.coordinator;
+    if (coord) {
+      const modelShort = String(coord.model || 'unknown').split('/').pop();
+      fleetCoordinatorEl.innerHTML = `
+        <div class="fleet-card">
+          <div class="fleet-card-head">
+            <div class="fleet-card-title">${escHtml(coord.hostname || 'coordinator')}</div>
+            <div class="fleet-badge ok">controller</div>
+          </div>
+          <div class="fleet-badges">
+            <span class="fleet-badge">${escHtml(coord.backend || 'mlx')}</span>
+            <span class="fleet-badge">${escHtml(modelShort)}</span>
+          </div>
+          <div class="fleet-meta">
+            <span>context: ${escHtml(String(coord.context_window || '-'))}</span>
+            <span>max out: ${escHtml(String(coord.max_tokens || '-'))}</span>
+            <span>ws: ${escHtml(coord.gateway_ws || '-')}</span>
+            <span>http: ${escHtml(coord.gateway_http || '-')}</span>
+          </div>
+        </div>`;
+    } else {
+      fleetCoordinatorEl.innerHTML = '<div class="fleet-empty">Coordinator info unavailable.</div>';
+    }
+
     const stats = fleetState.workerStats || {};
     const statItems = [
       ['Workers', stats.total || 0],
@@ -883,6 +915,24 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   tbExport.addEventListener('click',exportConversation);
   tbDelete.addEventListener('click',deleteCurrentConversation);
   fleetRefreshBtn.addEventListener('click',loadFleetState);
+  fleetRestartBtn.addEventListener('click', async function() {
+    if (!confirm('Restart the coordinator? Workers will reconnect automatically.')) return;
+    fleetRestartBtn.textContent = 'restarting…';
+    fleetRestartBtn.disabled = true;
+    try {
+      await apiPost('/admin/restart', {});
+    } catch(e) { /* connection drops on restart — expected */ }
+    // Poll until back online
+    const poll = setInterval(async function() {
+      try {
+        await apiGet('/health');
+        clearInterval(poll);
+        fleetRestartBtn.textContent = 'restart';
+        fleetRestartBtn.disabled = false;
+        await loadFleetState();
+      } catch(e) { /* still restarting */ }
+    }, 1500);
+  });
   fleetCloseBtn.addEventListener('click',closeFleetPanel);
   fleetOverlay.addEventListener('click',function(e){ if(e.target===fleetOverlay) closeFleetPanel(); });
   inputEl.addEventListener('keydown',function(e){
