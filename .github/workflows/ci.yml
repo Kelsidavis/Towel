@@ -29,17 +29,8 @@ jobs:
       - name: Lint with ruff
         run: ruff check src/ tests/
 
-      - name: Run tests with coverage
-        run: |
-          pip install pytest-cov
-          pytest --cov=towel --cov-report=xml -q --no-header -p no:cacheprovider
-
-      - name: Upload coverage to Codecov
-        if: matrix.python-version == '3.13'
-        uses: codecov/codecov-action@v4
-        with:
-          file: ./coverage.xml
-          fail_ci_if_error: false
+      - name: Run tests
+        run: pytest -q --no-header -p no:cacheprovider
 
   lint:
     runs-on: ubuntu-latest
