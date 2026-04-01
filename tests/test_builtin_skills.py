@@ -445,6 +445,7 @@ class TestRegisterBuiltins:
         assert "env" in names
         assert "regex" in names
         assert "system" in names
+        assert "codex" in names
 
 
 class TestDiffSkill:
@@ -2451,3 +2452,45 @@ class TestCheatSkill:
         from towel.skills.builtin.cheat_skill import CheatSkill
 
         assert {t.name for t in CheatSkill().tools()} == {"cheat_sheet"}
+
+
+class TestCodexSkill:
+    @pytest.fixture
+    def codex(self):
+        from towel.skills.builtin.codex_skill import CodexSkill
+
+        return CodexSkill()
+
+    def test_tools(self, codex):
+        assert {t.name for t in codex.tools()} == {"codex_compact"}
+
+    @pytest.mark.asyncio
+    async def test_missing_codex_cli(self, codex, monkeypatch):
+        monkeypatch.setattr("towel.skills.builtin.codex_skill._codex_available", lambda: False)
+        result = await codex.execute("codex_compact", {"text": "hello"})
+        assert "Codex CLI not found" in result
+
+    @pytest.mark.asyncio
+    async def test_not_logged_in(self, codex, monkeypatch):
+        monkeypatch.setattr("towel.skills.builtin.codex_skill._codex_available", lambda: True)
+        monkeypatch.setattr("towel.skills.builtin.codex_skill._codex_logged_in", lambda: False)
+        result = await codex.execute("codex_compact", {"text": "hello"})
+        assert "Codex is not logged in" in result
+
+    @pytest.mark.asyncio
+    async def test_compact_success(self, codex, monkeypatch):
+        monkeypatch.setattr("towel.skills.builtin.codex_skill._codex_available", lambda: True)
+        monkeypatch.setattr("towel.skills.builtin.codex_skill._codex_logged_in", lambda: True)
+
+        def fake_run(prompt: str, model: str) -> str:
+            assert "long history" in prompt
+            assert "under about 120 words" in prompt
+            assert model
+            return "Compacted summary here"
+
+        monkeypatch.setattr("towel.skills.builtin.codex_skill._run_codex_exec", fake_run)
+        result = await codex.execute(
+            "codex_compact",
+            {"text": "long history", "max_words": 120},
+        )
+        assert result == "Compacted summary here"

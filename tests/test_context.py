@@ -1,6 +1,12 @@
 """Tests for context window management."""
 
-from towel.agent.context import ContextBudget, count_tokens_fallback, fit_messages
+from towel.agent.context import (
+    ContextBudget,
+    count_tokens_fallback,
+    fit_messages,
+    maybe_compact_conversation,
+)
+from towel.agent.conversation import Conversation, Role
 
 
 def _msg(role: str, content: str) -> dict[str, str]:
@@ -74,6 +80,38 @@ class TestFitMessages:
         )
         assert len(fitted) >= 1
         assert fitted[-1]["content"] == "current question"
+
+    def test_preserves_latest_user_even_if_last_message_is_assistant(self):
+        messages = [
+            _msg("user", "older context " * 40),
+            _msg("user", "real question"),
+            _msg("assistant", "very long answer " * 40),
+        ]
+        fitted, budget = fit_messages(
+            system_content="System.",
+            messages=messages,
+            context_window=120,
+            max_output_tokens=40,
+            token_counter=word_counter,
+        )
+        contents = [m["content"] for m in fitted]
+        assert "real question" in contents
+        assert fitted[-1]["role"] == "assistant"
+
+    def test_truncates_huge_latest_message_to_budget(self):
+        messages = [
+            _msg("user", "question"),
+            _msg("assistant", "very long answer " * 200),
+        ]
+        fitted, budget = fit_messages(
+            system_content="System.",
+            messages=messages,
+            context_window=90,
+            max_output_tokens=30,
+            token_counter=word_counter,
+        )
+        assert fitted[-1]["content"].startswith("...")
+        assert budget.message_tokens <= budget.input_budget - budget.system_tokens
 
     def test_empty_messages(self):
         fitted, budget = fit_messages(
@@ -149,6 +187,43 @@ class TestFitMessages:
         assert fitted[-1]["content"] == "now summarize it"
         assert budget.messages_included <= 5
 
+    def test_adds_compacted_summary_for_dropped_messages(self):
+        messages = []
+        for i in range(8):
+            messages.append(_msg("user", f"Question {i} with extra context"))
+            messages.append(_msg("assistant", f"Answer {i} with extra detail"))
+
+        fitted, budget = fit_messages(
+            system_content="System.",
+            messages=messages,
+            context_window=120,
+            max_output_tokens=40,
+            token_counter=word_counter,
+        )
+
+        assert fitted[0]["role"] == "system"
+        assert "Compacted summary" in fitted[0]["content"]
+        assert any("Question 0" in fitted[0]["content"] or "Answer 0" in fitted[0]["content"] for _ in [0])
+
+    def test_skips_large_old_tool_message_when_fitting_recent_context(self):
+        messages = [
+            _msg("user", "first question"),
+            _msg("tool", "[read_file] " + ("blob " * 200)),
+            _msg("assistant", "short answer"),
+            _msg("user", "follow-up"),
+        ]
+        fitted, budget = fit_messages(
+            system_content="System.",
+            messages=messages,
+            context_window=90,
+            max_output_tokens=30,
+            token_counter=word_counter,
+        )
+
+        contents = [m["content"] for m in fitted]
+        assert "follow-up" in contents
+        assert "short answer" in contents
+
 
 class TestFallbackTokenCounter:
     def test_basic(self):
@@ -158,3 +233,116 @@ class TestFallbackTokenCounter:
     def test_long_text(self):
         text = "a" * 4000
         assert count_tokens_fallback(text) == 1000
+
+
+class TestPersistentCompaction:
+    def test_compacts_over_budget_conversation(self):
+        conv = Conversation()
+        for i in range(12):
+            conv.add(Role.USER, f"Question {i} " * 8)
+            conv.add(Role.ASSISTANT, f"Answer {i} " * 8)
+
+        changed = maybe_compact_conversation(
+            conv,
+            system_content="System.",
+            context_window=140,
+            max_output_tokens=40,
+            token_counter=word_counter,
+            keep_recent=6,
+            max_summary_tokens=40,
+        )
+
+        assert changed is True
+        assert conv.messages[0].role == Role.SYSTEM
+        assert conv.messages[0].metadata["compacted"] is True
+        assert "Compacted summary" in conv.messages[0].content
+        assert len(conv.messages) <= 7
+
+    def test_keeps_recent_and_pinned_messages(self):
+        conv = Conversation()
+        conv.add(Role.USER, "old pinned question " * 6)
+        conv.messages[0].pinned = True
+        for i in range(10):
+            conv.add(Role.USER, f"Q{i} " * 6)
+            conv.add(Role.ASSISTANT, f"A{i} " * 6)
+
+        changed = maybe_compact_conversation(
+            conv,
+            system_content="System.",
+            context_window=140,
+            max_output_tokens=40,
+            token_counter=word_counter,
+            keep_recent=4,
+            max_summary_tokens=40,
+        )
+
+        assert changed is True
+        contents = [m.content for m in conv.messages]
+        assert any("old pinned question" in c for c in contents)
+        assert any("Q9" in c for c in contents)
+
+    def test_noop_when_conversation_fits(self):
+        conv = Conversation()
+        conv.add(Role.USER, "short question")
+        conv.add(Role.ASSISTANT, "short answer")
+
+        changed = maybe_compact_conversation(
+            conv,
+            system_content="System.",
+            context_window=500,
+            max_output_tokens=100,
+            token_counter=word_counter,
+        )
+
+        assert changed is False
+        assert len(conv.messages) == 2
+
+    def test_prefers_codex_external_compaction_when_available(self, monkeypatch):
+        conv = Conversation()
+        for i in range(12):
+            conv.add(Role.USER, f"Question {i} " * 8)
+            conv.add(Role.ASSISTANT, f"Answer {i} " * 8)
+
+        monkeypatch.setattr(
+            "towel.agent.context._maybe_external_compact_summary",
+            lambda text, max_words: "Dense external summary",
+        )
+
+        changed = maybe_compact_conversation(
+            conv,
+            system_content="System.",
+            context_window=140,
+            max_output_tokens=40,
+            token_counter=word_counter,
+            keep_recent=6,
+            max_summary_tokens=40,
+        )
+
+        assert changed is True
+        assert "via Codex" in conv.messages[0].content
+        assert "Dense external summary" in conv.messages[0].content
+
+    def test_falls_back_to_local_summary_when_external_unavailable(self, monkeypatch):
+        conv = Conversation()
+        for i in range(12):
+            conv.add(Role.USER, f"Question {i} " * 8)
+            conv.add(Role.ASSISTANT, f"Answer {i} " * 8)
+
+        monkeypatch.setattr(
+            "towel.agent.context._maybe_external_compact_summary",
+            lambda text, max_words: None,
+        )
+
+        changed = maybe_compact_conversation(
+            conv,
+            system_content="System.",
+            context_window=140,
+            max_output_tokens=40,
+            token_counter=word_counter,
+            keep_recent=6,
+            max_summary_tokens=40,
+        )
+
+        assert changed is True
+        assert "Compacted summary" in conv.messages[0].content
+        assert "via Codex" not in conv.messages[0].content

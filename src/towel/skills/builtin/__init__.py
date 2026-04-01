@@ -22,6 +22,7 @@ from towel.skills.builtin.clipboard_history_skill import ClipboardHistorySkill
 from towel.skills.builtin.color_skill import ColorSkill
 from towel.skills.builtin.convert_skill import ConvertSkill
 from towel.skills.builtin.country_skill import CountrySkill
+from towel.skills.builtin.codex_skill import CodexSkill
 from towel.skills.builtin.cron_skill import CronSkill
 from towel.skills.builtin.crontab_skill import CrontabSkill
 from towel.skills.builtin.csv_skill import CsvSkill
@@ -183,6 +184,7 @@ __all__ = [
     "CertSkill",
     "RandomSkill",
     "CountrySkill",
+    "CodexSkill",
     "JwtGenSkill",
     "CheatSkill",
     "MimeSkill",
@@ -293,6 +295,7 @@ def register_builtins(
     registry.register(CertSkill())
     registry.register(RandomSkill())
     registry.register(CountrySkill())
+    registry.register(CodexSkill())
     registry.register(JwtGenSkill())
     registry.register(CheatSkill())
     registry.register(MimeSkill())

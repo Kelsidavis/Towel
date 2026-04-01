@@ -16,7 +16,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from towel.agent.conversation import Conversation, Message, Role
+from towel.agent.context import maybe_compact_conversation
 from towel.agent.events import AgentEvent
+from towel.agent.instance_lock import acquire_runtime_lock
 from towel.agent.tool_parser import parse_tool_calls
 from towel.agent.runtime import format_tool_feedback, tool_result_is_error
 from towel.config import TowelConfig
@@ -141,6 +143,8 @@ class ClaudeCodeRuntime:
         if self._loaded:
             return
 
+        acquire_runtime_lock()
+
         import anthropic
 
         token = _read_oauth_token()
@@ -227,6 +231,12 @@ class ClaudeCodeRuntime:
 
     def _build_messages(self, conversation: Conversation) -> list[dict[str, str]]:
         """Convert towel conversation to Anthropic messages format."""
+        maybe_compact_conversation(
+            conversation,
+            system_content=self._build_system_prompt(),
+            context_window=self.config.model.context_window,
+            max_output_tokens=self.config.model.max_tokens,
+        )
         messages: list[dict[str, str]] = []
         for msg in conversation.messages:
             if msg.role == Role.USER:

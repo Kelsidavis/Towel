@@ -11,9 +11,10 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
-from towel.agent.context import fit_messages
+from towel.agent.context import fit_messages, maybe_compact_conversation
 from towel.agent.conversation import Conversation, Message, Role
 from towel.agent.events import AgentEvent
+from towel.agent.instance_lock import acquire_runtime_lock
 from towel.agent.tool_parser import parse_tool_calls
 from towel.config import TowelConfig
 from towel.skills.registry import SkillRegistry
@@ -115,6 +116,8 @@ class AgentRuntime:
         """Load the MLX model and tokenizer."""
         if self._loaded:
             return
+
+        acquire_runtime_lock()
 
         # Run in executor to avoid blocking the event loop
         loop = asyncio.get_event_loop()
@@ -460,6 +463,13 @@ class AgentRuntime:
         model's token budget, dropping oldest messages first.
         """
         system_content = self._build_system_content()
+        maybe_compact_conversation(
+            conversation,
+            system_content=system_content,
+            context_window=self.config.model.context_window,
+            max_output_tokens=self.config.model.max_tokens,
+            token_counter=self._token_count,
+        )
         all_messages = conversation.to_chat_messages()
 
         # Collect indices of pinned messages so they survive context eviction
