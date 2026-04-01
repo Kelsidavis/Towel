@@ -202,7 +202,8 @@ class WorkerRegistry:
         if preferred_id:
             preferred = self._workers.get(preferred_id)
             if preferred and preferred.enabled and not preferred.draining and not preferred.busy:
-                if requirements is None or self._score_worker(preferred, requirements, node_tracker)[0] >= 0:
+                score, *_ = self._score_worker(preferred, requirements, node_tracker)
+                if requirements is None or score >= 0:
                     return preferred
 
         idle = [

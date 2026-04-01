@@ -48,7 +48,9 @@ class RemoteWorkerClient:
                     resp = json.loads(raw)
                     if resp.get("type") != "registered":
                         raise RuntimeError("Worker registration was rejected")
-                    log.info("Registered worker %s with controller %s", self.worker_id, self.master_url)
+                    log.info(
+                        "Registered worker %s with controller %s", self.worker_id, self.master_url
+                    )
                     heartbeat = asyncio.create_task(self._heartbeat_loop(ws))
 
                     try:

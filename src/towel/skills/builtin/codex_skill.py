@@ -97,7 +97,9 @@ def codex_compact_available() -> bool:
     return _codex_available() and _codex_logged_in()
 
 
-def codex_compact_text(text: str, goal: str = "", max_words: int = 220, model: str | None = None) -> str:
+def codex_compact_text(
+    text: str, goal: str = "", max_words: int = 220, model: str | None = None
+) -> str:
     """Compact text using the local Codex subscription CLI."""
     if not _codex_available():
         return "Codex CLI not found. Install Codex to use subscription-backed compaction."

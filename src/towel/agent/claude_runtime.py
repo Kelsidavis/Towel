@@ -15,12 +15,12 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
-from towel.agent.conversation import Conversation, Message, Role
 from towel.agent.context import estimate_output_reserve, maybe_compact_conversation
+from towel.agent.conversation import Conversation, Message, Role
 from towel.agent.events import AgentEvent
 from towel.agent.instance_lock import acquire_runtime_lock
-from towel.agent.tool_parser import parse_tool_calls
 from towel.agent.runtime import format_tool_feedback, tool_result_is_error
+from towel.agent.tool_parser import parse_tool_calls
 from towel.config import TowelConfig
 from towel.skills.registry import SkillRegistry
 

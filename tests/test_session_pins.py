@@ -44,7 +44,9 @@ class TestGatewayPinPersistence:
             sessions=SessionManager(store=ConversationStore(store_dir=tmp_path / "conversations")),
             pin_store=pin_store,
         )
-        gateway._workers.register("desktop-1", object(), {"backend": "mlx", "modes": ["mlx_prompt"]})
+        gateway._workers.register(
+            "desktop-1", object(), {"backend": "mlx", "modes": ["mlx_prompt"]}
+        )
 
         assert gateway.pin_session_worker("chat-1", "desktop-1") is True
         assert pin_store.load() == {"chat-1": "desktop-1"}

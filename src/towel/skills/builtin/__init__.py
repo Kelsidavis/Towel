@@ -19,10 +19,10 @@ from towel.skills.builtin.cheat_skill import CheatSkill
 from towel.skills.builtin.claude_skill import ClaudeSkill
 from towel.skills.builtin.clipboard import ClipboardSkill
 from towel.skills.builtin.clipboard_history_skill import ClipboardHistorySkill
+from towel.skills.builtin.codex_skill import CodexSkill
 from towel.skills.builtin.color_skill import ColorSkill
 from towel.skills.builtin.convert_skill import ConvertSkill
 from towel.skills.builtin.country_skill import CountrySkill
-from towel.skills.builtin.codex_skill import CodexSkill
 from towel.skills.builtin.cron_skill import CronSkill
 from towel.skills.builtin.crontab_skill import CrontabSkill
 from towel.skills.builtin.csv_skill import CsvSkill

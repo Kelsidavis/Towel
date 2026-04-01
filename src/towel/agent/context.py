@@ -216,7 +216,9 @@ def maybe_compact_conversation(
     template_overhead_per_msg = 4
     input_budget = context_window - max_output_tokens
     system_tokens = count(system_content) + template_overhead_per_msg
-    message_tokens = sum(count(m.content) + template_overhead_per_msg for m in conversation.messages)
+    message_tokens = sum(
+        count(m.content) + template_overhead_per_msg for m in conversation.messages
+    )
 
     if system_tokens + message_tokens <= input_budget:
         return False
@@ -236,7 +238,9 @@ def maybe_compact_conversation(
         max_summary_tokens,
         max(32, input_budget - system_tokens - (keep_recent * template_overhead_per_msg)),
     )
-    summary_text = _maybe_external_compact_summary(local_summary_text, max_words=summary_token_budget)
+    summary_text = _maybe_external_compact_summary(
+        local_summary_text, max_words=summary_token_budget
+    )
     if summary_text:
         summary_text = "[Compacted summary of earlier messages via Codex]\n" + summary_text
     else:

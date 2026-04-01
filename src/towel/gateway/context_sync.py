@@ -141,7 +141,6 @@ class ContextSyncManager:
         in ways that can't be expressed as appends (compaction, edits).
         """
         cursor = self._cursors.get((worker_id, session_id))
-        conv_hash = _conversation_hash(conversation)
         metadata = {
             "id": conversation.id,
             "title": conversation.title,

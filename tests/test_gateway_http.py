@@ -107,7 +107,9 @@ class TestWorkersEndpoint:
 
 class TestWorkerStateEndpoint:
     def test_worker_state_update_sets_draining(self, gateway, client):
-        gateway._workers.register("desktop-1", object(), {"backend": "mlx", "modes": ["mlx_prompt"]})
+        gateway._workers.register(
+            "desktop-1", object(), {"backend": "mlx", "modes": ["mlx_prompt"]}
+        )
 
         resp = client.post("/workers/desktop-1/state", json={"draining": True})
 
@@ -116,7 +118,9 @@ class TestWorkerStateEndpoint:
         assert gateway._workers.get("desktop-1").draining is True
 
     def test_worker_state_update_sets_enabled(self, gateway, client):
-        gateway._workers.register("desktop-1", object(), {"backend": "mlx", "modes": ["mlx_prompt"]})
+        gateway._workers.register(
+            "desktop-1", object(), {"backend": "mlx", "modes": ["mlx_prompt"]}
+        )
 
         resp = client.post("/workers/desktop-1/state", json={"enabled": False})
 
@@ -132,7 +136,9 @@ class TestWorkerStateEndpoint:
 
 class TestWorkerPinEndpoint:
     def test_pin_worker_sets_session_pin(self, gateway, client):
-        gateway._workers.register("desktop-1", object(), {"backend": "mlx", "modes": ["mlx_prompt"]})
+        gateway._workers.register(
+            "desktop-1", object(), {"backend": "mlx", "modes": ["mlx_prompt"]}
+        )
 
         resp = client.post("/sessions/chat-1/pin-worker", json={"worker_id": "desktop-1"})
 

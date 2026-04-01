@@ -15,11 +15,11 @@ from typing import Any
 
 import httpx
 
-from towel.agent.conversation import Conversation, Message, Role
 from towel.agent.context import estimate_output_reserve, maybe_compact_conversation
+from towel.agent.conversation import Conversation, Message, Role
 from towel.agent.events import AgentEvent
-from towel.agent.tool_parser import parse_tool_calls
 from towel.agent.runtime import format_tool_feedback, tool_result_is_error
+from towel.agent.tool_parser import parse_tool_calls
 from towel.config import TowelConfig
 from towel.skills.registry import SkillRegistry
 
@@ -134,7 +134,8 @@ class OllamaRuntime:
                 "\n\n# Tools\n\n"
                 "You may call one or more functions to assist with the user query.\n\n"
                 "Available tools:\n" + "\n".join(tool_lines) + "\n\n"
-                "For each function call, return a json object within <tool_call></tool_call> tags:\n"
+                "For each function call, return a json object within "
+                "<tool_call></tool_call> tags:\n"
                 "<tool_call>\n"
                 '{"name": <function-name>, "arguments": <args-json-object>}\n'
                 "</tool_call>\n\n"
@@ -196,7 +197,8 @@ class OllamaRuntime:
         model = request.get("model") or self.config.model.name
         system = request.get("system", "")
         raw_messages = request.get("messages", [])
-        messages = [{"role": "system", "content": system}] + raw_messages if system else raw_messages
+        sys_msg = [{"role": "system", "content": system}]
+        messages = sys_msg + raw_messages if system else raw_messages
 
         payload = {
             "model": model,
@@ -238,7 +240,8 @@ class OllamaRuntime:
         model = request.get("model") or self.config.model.name
         system = request.get("system", "")
         raw_messages = request.get("messages", [])
-        messages = [{"role": "system", "content": system}] + raw_messages if system else raw_messages
+        sys_msg = [{"role": "system", "content": system}]
+        messages = sys_msg + raw_messages if system else raw_messages
 
         payload = {
             "model": model,

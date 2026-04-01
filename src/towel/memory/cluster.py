@@ -17,7 +17,6 @@ after a partition, but the controller's version is always authoritative.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -56,7 +55,11 @@ class MemoryMutation:
             key=data["key"],
             content=data.get("content", ""),
             memory_type=data.get("memory_type", "fact"),
-            timestamp=datetime.fromisoformat(data["timestamp"]) if "timestamp" in data else datetime.now(UTC),
+            timestamp=(
+                datetime.fromisoformat(data["timestamp"])
+                if "timestamp" in data
+                else datetime.now(UTC)
+            ),
             origin_worker_id=data.get("origin_worker_id", ""),
         )
 
@@ -125,7 +128,9 @@ class ClusterMemorySync:
         if mutation.action == "remember":
             self.store.remember(mutation.key, mutation.content, mutation.memory_type)
             self._version += 1
-            log.debug("Applied remote remember: %s from %s", mutation.key, mutation.origin_worker_id)
+            log.debug(
+                "Applied remote remember: %s from %s", mutation.key, mutation.origin_worker_id
+            )
             return True
         elif mutation.action == "forget":
             removed = self.store.forget(mutation.key)

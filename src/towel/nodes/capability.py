@@ -132,7 +132,9 @@ class NodeCapability:
         # relative to a single context window (the bottleneck).
         return min(1.0, self.total_context_tokens_used / self.context_window)
 
-    def add_context_slot(self, session_id: str, tokens_used: int = 0, model: str = "") -> ContextSlot:
+    def add_context_slot(
+        self, session_id: str, tokens_used: int = 0, model: str = ""
+    ) -> ContextSlot:
         """Register an active context window on this node."""
         slot = ContextSlot(
             session_id=session_id,

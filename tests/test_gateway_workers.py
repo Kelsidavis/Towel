@@ -6,7 +6,7 @@ import json
 import pytest
 from starlette.testclient import TestClient
 
-from towel.agent.conversation import Conversation, Role
+from towel.agent.conversation import Role
 from towel.agent.runtime import AgentRuntime
 from towel.config import TowelConfig
 from towel.gateway.server import GatewayServer
@@ -78,7 +78,12 @@ class TestWorkerRegistry:
         registry.register(
             "worker-b",
             DummyWS(),
-            {"backend": "claude", "model": "repo/model-a", "modes": ["anthropic_messages"], "tools": False},
+            {
+                "backend": "claude",
+                "model": "repo/model-a",
+                "modes": ["anthropic_messages"],
+                "tools": False,
+            },
         )
         registry.register(
             "worker-c",
@@ -166,7 +171,11 @@ class TestGatewayScheduling:
         gateway._workers.register(
             "worker-claude",
             DummyWS(),
-            {"backend": "claude", "model": gateway.config.model.name, "modes": ["anthropic_messages"]},
+            {
+                "backend": "claude",
+                "model": gateway.config.model.name,
+                "modes": ["anthropic_messages"],
+            },
         )
         gateway._workers.register(
             "worker-mlx",
@@ -188,12 +197,22 @@ class TestGatewayScheduling:
         gateway._workers.register(
             "worker-a",
             DummyWS(),
-            {"backend": "mlx", "model": gateway.config.model.name, "modes": ["mlx_prompt"], "tools": False},
+            {
+                "backend": "mlx",
+                "model": gateway.config.model.name,
+                "modes": ["mlx_prompt"],
+                "tools": False,
+            },
         )
         gateway._workers.register(
             "worker-b",
             DummyWS(),
-            {"backend": "mlx", "model": gateway.config.model.name, "modes": ["mlx_prompt"], "tools": False},
+            {
+                "backend": "mlx",
+                "model": gateway.config.model.name,
+                "modes": ["mlx_prompt"],
+                "tools": False,
+            },
         )
 
         assert gateway.pin_session_worker("session-1", "worker-b") is True

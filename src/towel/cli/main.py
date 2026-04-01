@@ -497,7 +497,9 @@ def status() -> None:
                 f"{backend} {modes} {model} session={session_id}"
             )
         workers_block = "\n".join(worker_lines) if worker_lines else "  - none"
-        pin_lines = [f"  - {session_id} -> {worker_id}" for session_id, worker_id in sorted(pins.items())]
+        pin_lines = [
+            f"  - {session_id} -> {worker_id}" for session_id, worker_id in sorted(pins.items())
+        ]
         pins_block = "\n".join(pin_lines) if pin_lines else "  - none"
         console.print(
             Panel(
@@ -551,7 +553,9 @@ def workers(as_json: bool) -> None:
         f"model={str(requirements.get('model', 'any')).split('/')[-1]} "
         f"tools={requirements.get('tools', 'any')}"
     )
-    pin_lines = [f"  - {session_id} -> {worker_id}" for session_id, worker_id in sorted(pins.items())]
+    pin_lines = [
+        f"  - {session_id} -> {worker_id}" for session_id, worker_id in sorted(pins.items())
+    ]
     pins_block = "\n".join(pin_lines) if pin_lines else "  - none"
     if not worker_items:
         console.print(

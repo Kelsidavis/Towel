@@ -1,6 +1,5 @@
 """Tests for the singleton Towel runtime lock."""
 
-from pathlib import Path
 
 import pytest
 

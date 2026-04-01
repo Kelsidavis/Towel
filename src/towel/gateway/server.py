@@ -26,19 +26,23 @@ from websockets.asyncio.server import Server, ServerConnection
 from towel.agent.context import count_tokens_fallback
 from towel.agent.conversation import Role
 from towel.agent.events import AgentEvent
-from towel.agent.runtime import AgentRuntime
-from towel.agent.runtime import MAX_TOOL_ITERATIONS, format_tool_feedback, tool_result_is_error
+from towel.agent.runtime import (
+    MAX_TOOL_ITERATIONS,
+    AgentRuntime,
+    format_tool_feedback,
+    tool_result_is_error,
+)
 from towel.agent.tool_parser import parse_tool_calls
 from towel.config import TowelConfig
-from towel.gateway.context_sync import ContextSyncManager, apply_delta, compute_response_delta
+from towel.gateway.context_sync import ContextSyncManager
 from towel.gateway.handoff import HandoffManager, HandoffReason
 from towel.gateway.sessions import SessionManager
 from towel.gateway.workers import WorkerInfo, WorkerRegistry
 from towel.memory.cluster import ClusterMemorySync
 from towel.memory.store import MemoryStore
 from towel.nodes.tracker import NodeTracker
-from towel.persistence.store import ConversationStore
 from towel.persistence.session_pins import SessionPinStore
+from towel.persistence.store import ConversationStore
 from towel.persistence.worker_state import WorkerStateStore
 
 log = logging.getLogger("towel.gateway")
@@ -192,7 +196,9 @@ class GatewayServer:
                                 self._stream_remote_inference(ws, session_id, session, worker)
                             )
                         else:
-                            task = asyncio.create_task(self._stream_response(ws, session_id, session))
+                            task = asyncio.create_task(
+                                self._stream_response(ws, session_id, session)
+                            )
                         self._active_tasks[session_id] = task
                         try:
                             await task
@@ -211,7 +217,9 @@ class GatewayServer:
                             self._active_tasks.pop(session_id, None)
                     else:
                         if worker:
-                            response = await self._step_remote_inference(session_id, session, worker)
+                            response = await self._step_remote_inference(
+                                session_id, session, worker
+                            )
                         else:
                             response = await self.agent.step(session.conversation)
                             session.conversation.messages.append(response)
@@ -342,7 +350,9 @@ class GatewayServer:
                 except Exception:
                     pass
 
-    async def _initiate_handoffs_for_worker(self, worker_id: str, reason: HandoffReason) -> list[str]:
+    async def _initiate_handoffs_for_worker(
+        self, worker_id: str, reason: HandoffReason
+    ) -> list[str]:
         """Start handoffs for all sessions on a draining/disconnecting worker.
 
         Returns session IDs that were handed off.
@@ -411,7 +421,9 @@ class GatewayServer:
         worker = self._workers.get(worker_id)
         if not worker:
             return
-        await worker.ws.send(json.dumps({"type": "cancel_job", "job_id": job_id, "session": session_id}))
+        await worker.ws.send(
+            json.dumps({"type": "cancel_job", "job_id": job_id, "session": session_id})
+        )
 
     async def _remote_generate(
         self,
@@ -471,7 +483,9 @@ class GatewayServer:
             self._session_jobs.pop(session_id, None)
             self._workers.release(worker.id)
 
-    async def _step_remote_inference(self, session_id: str, session: Any, worker: WorkerInfo) -> Any:
+    async def _step_remote_inference(
+        self, session_id: str, session: Any, worker: WorkerInfo
+    ) -> Any:
         """Run the local tool loop while outsourcing each generation pass."""
         total_tokens = 0
         last_metadata: dict[str, Any] = {"remote_worker": worker.id}
@@ -589,7 +603,8 @@ class GatewayServer:
                 session.conversation.add(Role.ASSISTANT, remaining_text)
 
             for tc in tool_calls:
-                await ws.send(json.dumps(AgentEvent.tool_call(tc.name, tc.arguments).to_ws_message(session_id)))
+                event_msg = AgentEvent.tool_call(tc.name, tc.arguments).to_ws_message(session_id)
+                await ws.send(json.dumps(event_msg))
                 try:
                     tool_result = await self.agent.skills.execute_tool(tc.name, tc.arguments)
                     result_str = tool_result if isinstance(tool_result, str) else str(tool_result)
@@ -599,7 +614,8 @@ class GatewayServer:
                     is_error = True
                     log.error(result_str)
 
-                await ws.send(json.dumps(AgentEvent.tool_result(tc.name, result_str).to_ws_message(session_id)))
+                result_msg = AgentEvent.tool_result(tc.name, result_str).to_ws_message(session_id)
+                await ws.send(json.dumps(result_msg))
                 session.conversation.add(
                     Role.TOOL,
                     format_tool_feedback(tc.name, result_str, is_error),
@@ -611,7 +627,11 @@ class GatewayServer:
             json.dumps(
                 AgentEvent.complete(
                     remaining_text or "I've reached my tool execution limit for this turn.",
-                    metadata={"tokens": total_tokens, "remote_worker": worker.id, "max_iterations": True},
+                    metadata={
+                        "tokens": total_tokens,
+                        "remote_worker": worker.id,
+                        "max_iterations": True,
+                    },
                 ).to_ws_message(session_id)
             )
         )
