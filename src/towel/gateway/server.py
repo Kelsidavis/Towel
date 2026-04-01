@@ -217,6 +217,14 @@ class GatewayServer:
                     session.conversation.add(Role.USER, content, channel=channel)
 
                     worker = self._select_worker(session_id)
+                    pinned_to_worker = session_id in self._session_pins
+                    if worker and not pinned_to_worker:
+                        # Smart routing: classify task complexity and decide whether
+                        # the large worker or the fast local coordinator is better.
+                        last_msg = session.conversation.messages[-1].content if session.conversation.messages else ""
+                        route_to_worker = self._should_route_to_worker(last_msg, worker, session_id)
+                        if not route_to_worker:
+                            worker = None  # coordinator handles this request
                     if stream:
                         # Run streaming in a task so cancel messages can be received
                         if worker:
@@ -335,6 +343,75 @@ class GatewayServer:
         if worker:
             self._session_workers[session_id] = worker.id
         return worker
+
+    def _should_route_to_worker(
+        self, message: str, worker: WorkerInfo, session_id: str
+    ) -> bool:
+        """Decide if the worker or the coordinator should handle this request.
+
+        Routes to the large worker for accuracy-heavy tasks; keeps fast/simple
+        requests on the coordinator's local model to reduce latency.
+
+        Returns True → send to worker, False → handle locally on coordinator.
+        """
+        # Always use worker if it already holds session context (locality)
+        node = self._node_tracker.get(worker.id)
+        if node is not None and node.get_context_slot(session_id) is not None:
+            return True
+
+        # If coordinator is already busy, spill over to worker
+        if self._active_tasks:
+            return True
+
+        text = message.lower()
+        worker_score = 0
+
+        # Accuracy-heavy signals → prefer large worker
+        HARD_KEYWORDS = (
+            "write", "implement", "code", "debug", "fix", "refactor",
+            "explain", "analyze", "compare", "design", "architect",
+            "proof", "derive", "calculate", "solve", "optimize",
+            "translate", "summarize", "research", "essay", "report",
+            "step by step", "how does", "why does", "difference between",
+        )
+        CREATIVE_KEYWORDS = (
+            "story", "poem", "write a", "creative", "fiction", "script",
+            "screenplay", "lyrics", "novel", "character",
+        )
+        FAST_KEYWORDS = (
+            "what is", "who is", "when", "where", "define",
+            "hello", "hi", "thanks", "yes", "no", "ok",
+            "list", "name", "tell me",
+        )
+
+        for kw in HARD_KEYWORDS:
+            if kw in text:
+                worker_score += 2
+        for kw in CREATIVE_KEYWORDS:
+            if kw in text:
+                worker_score += 2
+        for kw in FAST_KEYWORDS:
+            if kw in text:
+                worker_score -= 1
+
+        # Long messages suggest complex task → worker
+        if len(message) > 300:
+            worker_score += 3
+        elif len(message) < 60:
+            worker_score -= 1
+
+        # Worker's larger context window is an advantage for long conversations
+        worker_ctx = worker.capabilities.get("context_window", 0)
+        coord_ctx = getattr(self.config.model, "context_window", 0)
+        if worker_ctx > coord_ctx:
+            worker_score += 1
+
+        log.debug(
+            "Task routing: score=%d → %s",
+            worker_score,
+            "worker" if worker_score > 0 else "coordinator",
+        )
+        return worker_score > 0
 
     def pin_session_worker(self, session_id: str, worker_id: str) -> bool:
         """Pin a session to a specific worker if that worker exists."""
