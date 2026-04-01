@@ -159,7 +159,10 @@ class AgentRuntime:
 
         loop = asyncio.get_event_loop()
         prompt = request["prompt"]
-        return await loop.run_in_executor(self._mlx_executor, self._generate_prompt_sync, prompt)
+        max_tokens = request.get("max_tokens")
+        return await loop.run_in_executor(
+            self._mlx_executor, self._generate_prompt_sync, prompt, max_tokens
+        )
 
     def _make_turboquant_cache(self) -> list | None:
         """Build a TurboQuant prompt cache if enabled, else None."""
@@ -178,7 +181,7 @@ class AgentRuntime:
         prompt = self._build_prompt(conversation)
         return self._generate_prompt_sync(prompt)
 
-    def _generate_prompt_sync(self, prompt: str) -> GenerationResult:
+    def _generate_prompt_sync(self, prompt: str, max_tokens: int | None = None) -> GenerationResult:
         """Synchronous generation via mlx_lm from a prebuilt prompt."""
         from mlx_lm import generate
         from mlx_lm.sample_utils import make_sampler
@@ -197,7 +200,7 @@ class AgentRuntime:
             self._model,
             self._tokenizer,
             prompt=prompt,
-            max_tokens=self.config.model.max_tokens,
+            max_tokens=max_tokens if max_tokens is not None else self.config.model.max_tokens,
             sampler=sampler,
             **extra_kwargs,
         )
