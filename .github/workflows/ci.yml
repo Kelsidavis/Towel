@@ -32,7 +32,7 @@ jobs:
       - name: Run tests with coverage
         run: |
           pip install pytest-cov
-          pytest --cov=towel --cov-report=xml --cov-report=term-missing -q
+          pytest --cov=towel --cov-report=xml -q --no-header -p no:cacheprovider
 
       - name: Upload coverage to Codecov
         if: matrix.python-version == '3.13'
