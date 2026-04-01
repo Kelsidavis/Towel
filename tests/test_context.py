@@ -3,6 +3,7 @@
 from towel.agent.context import (
     ContextBudget,
     count_tokens_fallback,
+    estimate_output_reserve,
     fit_messages,
     maybe_compact_conversation,
 )
@@ -31,6 +32,33 @@ class TestContextBudget:
             message_tokens=1000,
         )
         assert b.remaining == 4096 - 500 - 1000
+
+
+class TestOutputReserve:
+    def test_short_blank_slate_turn_uses_small_reserve(self):
+        reserve = estimate_output_reserve(
+            [_msg("user", "hi")],
+            configured_max_tokens=4096,
+            token_counter=word_counter,
+        )
+        assert reserve <= 768
+        assert reserve >= 256
+
+    def test_detailed_prompt_reserves_more(self):
+        reserve = estimate_output_reserve(
+            [_msg("user", "please explain this in detail and review the code step by step")],
+            configured_max_tokens=4096,
+            token_counter=word_counter,
+        )
+        assert reserve >= 1536
+
+    def test_reserve_never_exceeds_configured_max(self):
+        reserve = estimate_output_reserve(
+            [_msg("user", "write a very long answer " * 100)],
+            configured_max_tokens=700,
+            token_counter=word_counter,
+        )
+        assert reserve == 700
 
 
 class TestFitMessages:

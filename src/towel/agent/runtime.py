@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
-from towel.agent.context import fit_messages, maybe_compact_conversation
+from towel.agent.context import estimate_output_reserve, fit_messages, maybe_compact_conversation
 from towel.agent.conversation import Conversation, Message, Role
 from towel.agent.events import AgentEvent
 from towel.agent.instance_lock import acquire_runtime_lock
@@ -145,6 +145,22 @@ class AgentRuntime:
         result = await loop.run_in_executor(self._mlx_executor, self._generate_sync, conversation)
         return result
 
+    def build_inference_request(self, conversation: Conversation) -> dict[str, Any]:
+        """Build a worker-safe inference payload for this conversation."""
+        return {"mode": "mlx_prompt", "prompt": self._build_prompt(conversation)}
+
+    async def generate_from_request(self, request: dict[str, Any]) -> GenerationResult:
+        """Generate from a prebuilt prompt payload."""
+        if not self._loaded:
+            await self.load_model()
+
+        if request.get("mode") != "mlx_prompt":
+            raise ValueError(f"Unsupported inference mode: {request.get('mode')}")
+
+        loop = asyncio.get_event_loop()
+        prompt = request["prompt"]
+        return await loop.run_in_executor(self._mlx_executor, self._generate_prompt_sync, prompt)
+
     def _make_turboquant_cache(self) -> list | None:
         """Build a TurboQuant prompt cache if enabled, else None."""
         if not self.config.model.turboquant:
@@ -159,10 +175,14 @@ class AgentRuntime:
 
     def _generate_sync(self, conversation: Conversation) -> GenerationResult:
         """Synchronous generation via mlx_lm."""
+        prompt = self._build_prompt(conversation)
+        return self._generate_prompt_sync(prompt)
+
+    def _generate_prompt_sync(self, prompt: str) -> GenerationResult:
+        """Synchronous generation via mlx_lm from a prebuilt prompt."""
         from mlx_lm import generate
         from mlx_lm.sample_utils import make_sampler
 
-        prompt = self._build_prompt(conversation)
         sampler = make_sampler(
             temp=self.config.model.temperature,
             top_p=self.config.model.top_p,
@@ -198,6 +218,17 @@ class AgentRuntime:
         if not self._loaded:
             await self.load_model()
 
+        async for chunk in self.stream_from_request(self.build_inference_request(conversation)):
+            yield chunk
+
+    async def stream_from_request(self, request: dict[str, Any]) -> AsyncIterator[str]:
+        """Stream generation from a prebuilt prompt payload."""
+        if not self._loaded:
+            await self.load_model()
+
+        if request.get("mode") != "mlx_prompt":
+            raise ValueError(f"Unsupported inference mode: {request.get('mode')}")
+
         loop = asyncio.get_event_loop()
         queue: asyncio.Queue[str | None] = asyncio.Queue()
         cancel_flag = self._cancel
@@ -206,7 +237,7 @@ class AgentRuntime:
             from mlx_lm import stream_generate
             from mlx_lm.sample_utils import make_sampler
 
-            prompt = self._build_prompt(conversation)
+            prompt = request["prompt"]
             sampler = make_sampler(
                 temp=self.config.model.temperature,
                 top_p=self.config.model.top_p,
@@ -463,11 +494,17 @@ class AgentRuntime:
         model's token budget, dropping oldest messages first.
         """
         system_content = self._build_system_content()
+        all_messages = conversation.to_chat_messages()
+        output_reserve = estimate_output_reserve(
+            all_messages,
+            configured_max_tokens=self.config.model.max_tokens,
+            token_counter=self._token_count,
+        )
         maybe_compact_conversation(
             conversation,
             system_content=system_content,
             context_window=self.config.model.context_window,
-            max_output_tokens=self.config.model.max_tokens,
+            max_output_tokens=output_reserve,
             token_counter=self._token_count,
         )
         all_messages = conversation.to_chat_messages()
@@ -479,7 +516,7 @@ class AgentRuntime:
             system_content=system_content,
             messages=all_messages,
             context_window=self.config.model.context_window,
-            max_output_tokens=self.config.model.max_tokens,
+            max_output_tokens=output_reserve,
             token_counter=self._token_count,
             pinned_indices=pinned_indices if pinned_indices else None,
         )

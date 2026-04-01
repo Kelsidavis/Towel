@@ -185,6 +185,85 @@ async def _start(agent: Any, gateway: Any) -> None:
 
 
 @cli.command()
+@click.option("--master", required=True, help="Controller gateway URL, e.g. ws://192.168.1.10:18742")
+@click.option("--id", "worker_id", default=None, help="Worker ID (defaults to hostname)")
+@click.option(
+    "--agent", "-a", default=None, help="Agent profile to use (e.g., coder, researcher, writer)"
+)
+@click.option(
+    "--turboquant/--no-turboquant", default=None, help="Enable TurboQuant KV cache compression"
+)
+@click.option("--tq-bits", default=None, type=int, help="TurboQuant quantization bits (3 or 4)")
+@click.option(
+    "--backend",
+    "-b",
+    default=None,
+    type=click.Choice(["mlx", "claude"]),
+    help="Runtime backend (mlx=local model, claude=Claude Code CLI)",
+)
+@click.option(
+    "--claude-model",
+    default=None,
+    help="Claude model when using --backend claude (e.g., sonnet, opus, haiku)",
+)
+@click.option(
+    "--allow-tools/--no-allow-tools",
+    default=False,
+    help="Allow tools to run on the remote worker machine",
+)
+def worker(
+    master: str,
+    worker_id: str | None,
+    agent: str | None,
+    turboquant: bool | None,
+    tq_bits: int | None,
+    backend: str | None,
+    claude_model: str | None,
+    allow_tools: bool,
+) -> None:
+    """Start a remote worker that executes jobs for a controller."""
+    console.print(Panel(Text(BANNER, style="bold green"), border_style="green"))
+
+    config = TowelConfig.load()
+    model_config, identity = config.resolve_agent(agent)
+    config.model = model_config
+    config.identity = identity
+    _apply_turboquant_overrides(config, turboquant, tq_bits)
+
+    if backend == "claude":
+        console.print(f"[dim]Backend:[/dim] Claude Code CLI ({claude_model or 'sonnet'})")
+    else:
+        console.print(f"[dim]Model:[/dim] {config.model.name}")
+    console.print(f"[dim]Controller:[/dim] {master}")
+    console.print(f"[dim]Remote tools:[/dim] {'enabled' if allow_tools else 'disabled'}")
+    console.print()
+
+    from towel.gateway.worker_client import RemoteWorkerClient, default_worker_capabilities
+    from towel.memory.store import MemoryStore
+    from towel.skills.registry import SkillRegistry
+
+    memory = MemoryStore()
+    skills = _build_skill_registry(config, memory_store=memory) if allow_tools else SkillRegistry()
+    agent_rt = _build_runtime(config, skills, memory, backend, claude_model)
+    effective_backend = backend or "mlx"
+    capabilities = default_worker_capabilities(config, effective_backend, allow_tools)
+    client = RemoteWorkerClient(
+        master_url=master,
+        agent=agent_rt,
+        worker_id=worker_id or capabilities["hostname"],
+        capabilities=capabilities,
+    )
+
+    asyncio.run(_start_worker(agent_rt, client))
+
+
+async def _start_worker(agent: Any, client: Any) -> None:
+    await agent.load_model()
+    console.print("[green]Worker ready. Waiting for controller jobs...[/green]")
+    await client.run_forever()
+
+
+@cli.command()
 @click.option("--session", "-s", default="cli", help="Session ID")
 @click.option("--agent", "-a", default=None, help="Agent profile (e.g., coder, researcher, writer)")
 @click.option(
@@ -354,16 +433,43 @@ def status() -> None:
 
     config = TowelConfig.load()
     url = f"http://{config.gateway.host}:{config.gateway.port + 1}/health"
+    workers_url = f"http://{config.gateway.host}:{config.gateway.port + 1}/workers"
 
     try:
         resp = httpx.get(url, timeout=3)
         data = resp.json()
+        workers_resp = httpx.get(workers_url, timeout=3)
+        workers_data = workers_resp.json()
+        workers = workers_data.get("workers", [])
+        pins = workers_data.get("pins", {})
+        worker_lines = []
+        for worker in workers:
+            caps = worker.get("capabilities", {})
+            model = str(caps.get("model", "")).split("/")[-1] or "unknown"
+            backend = caps.get("backend", "unknown")
+            modes = ",".join(caps.get("modes", [])) or "unknown"
+            state = "busy" if worker.get("busy") else "idle"
+            availability = "enabled" if worker.get("enabled", True) else "disabled"
+            flow = "draining" if worker.get("draining") else "ready"
+            session_id = worker.get("current_session_id") or "-"
+            worker_lines.append(
+                f"  - {worker['id']} [{state}/{availability}/{flow}] "
+                f"{backend} {modes} {model} session={session_id}"
+            )
+        workers_block = "\n".join(worker_lines) if worker_lines else "  - none"
+        pin_lines = [f"  - {session_id} -> {worker_id}" for session_id, worker_id in sorted(pins.items())]
+        pins_block = "\n".join(pin_lines) if pin_lines else "  - none"
         console.print(
             Panel(
                 f"[green]Status:[/green] {data['status']}\n"
                 f"[green]Version:[/green] {data['version']}\n"
                 f"[green]Connections:[/green] {data['connections']}\n"
                 f"[green]Sessions:[/green] {data['sessions']}\n"
+                f"[green]Workers:[/green] {data['workers']['total']} "
+                f"(idle {data['workers']['idle']}, busy {data['workers']['busy']}, "
+                f"draining {data['workers']['draining']}, disabled {data['workers']['disabled']})\n"
+                f"[green]Worker Inventory:[/green]\n{workers_block}\n"
+                f"[green]Pinned Sessions:[/green]\n{pins_block}\n"
                 f"[dim]{data['motto']}[/dim]",
                 title="Towel Gateway",
                 border_style="green",
@@ -372,6 +478,256 @@ def status() -> None:
     except Exception:
         console.print("[red]Gateway not running.[/red] Start it with: towel serve")
         sys.exit(1)
+
+
+@cli.command()
+@click.option("--json", "as_json", is_flag=True, help="Output worker inventory as JSON")
+def workers(as_json: bool) -> None:
+    """Show connected LAN workers."""
+    import json as json_mod
+
+    import httpx
+
+    config = TowelConfig.load()
+    workers_url = f"http://{config.gateway.host}:{config.gateway.port + 1}/workers"
+
+    try:
+        resp = httpx.get(workers_url, timeout=3)
+        data = resp.json()
+    except Exception:
+        console.print("[red]Gateway not running.[/red] Start it with: towel serve")
+        sys.exit(1)
+
+    if as_json:
+        console.print(json_mod.dumps(data, indent=2))
+        return
+
+    requirements = data.get("requirements", {})
+    worker_items = data.get("workers", [])
+    pins = data.get("pins", {})
+    requirement_text = (
+        f"backend={requirements.get('backend', 'any')} "
+        f"mode={requirements.get('mode', 'any')} "
+        f"model={str(requirements.get('model', 'any')).split('/')[-1]} "
+        f"tools={requirements.get('tools', 'any')}"
+    )
+    pin_lines = [f"  - {session_id} -> {worker_id}" for session_id, worker_id in sorted(pins.items())]
+    pins_block = "\n".join(pin_lines) if pin_lines else "  - none"
+    if not worker_items:
+        console.print(
+            Panel(
+                f"[green]Workers:[/green] 0\n"
+                f"[green]Controller Needs:[/green] {requirement_text}\n"
+                f"[green]Pinned Sessions:[/green]\n{pins_block}\n"
+                f"[dim]No remote workers connected.[/dim]",
+                title="Towel Workers",
+                border_style="green",
+            )
+        )
+        return
+
+    lines = []
+    for worker in worker_items:
+        caps = worker.get("capabilities", {})
+        model = str(caps.get("model", "")).split("/")[-1] or "unknown"
+        backend = caps.get("backend", "unknown")
+        modes = ",".join(caps.get("modes", [])) or "unknown"
+        tools = "yes" if caps.get("tools") else "no"
+        state = "busy" if worker.get("busy") else "idle"
+        availability = "enabled" if worker.get("enabled", True) else "disabled"
+        flow = "draining" if worker.get("draining") else "ready"
+        session_id = worker.get("current_session_id") or "-"
+        lines.append(
+            f"  - {worker['id']} [{state}/{availability}/{flow}] backend={backend} mode={modes} "
+            f"model={model} tools={tools} session={session_id}"
+        )
+
+    console.print(
+        Panel(
+            f"[green]Workers:[/green] {len(worker_items)}\n"
+            f"[green]Controller Needs:[/green] {requirement_text}\n"
+            + "\n".join(lines)
+            + "\n"
+            + f"[green]Pinned Sessions:[/green]\n{pins_block}",
+            title="Towel Workers",
+            border_style="green",
+        )
+    )
+
+
+@cli.command(name="pin-worker")
+@click.argument("session_id")
+@click.argument("worker_id")
+def pin_worker(session_id: str, worker_id: str) -> None:
+    """Pin a session to a specific worker."""
+    import httpx
+
+    config = TowelConfig.load()
+    url = f"http://{config.gateway.host}:{config.gateway.port + 1}/sessions/{session_id}/pin-worker"
+
+    try:
+        resp = httpx.post(url, json={"worker_id": worker_id}, timeout=3)
+        if resp.status_code >= 400:
+            message = resp.json().get("error", "Failed to pin worker")
+            console.print(f"[red]{message}[/red]")
+            sys.exit(1)
+        data = resp.json()
+        console.print(
+            f"[green]Pinned[/green] session [bold]{data['session_id']}[/bold] "
+            f"to worker [bold]{data['worker_id']}[/bold]"
+        )
+    except Exception:
+        console.print("[red]Gateway not running.[/red] Start it with: towel serve")
+        sys.exit(1)
+
+
+@cli.command(name="unpin-worker")
+@click.argument("session_id")
+def unpin_worker(session_id: str) -> None:
+    """Remove an explicit worker pin from a session."""
+    import httpx
+
+    config = TowelConfig.load()
+    url = f"http://{config.gateway.host}:{config.gateway.port + 1}/sessions/{session_id}/pin-worker"
+
+    try:
+        resp = httpx.delete(url, timeout=3)
+        if resp.status_code >= 400:
+            message = resp.json().get("error", "Failed to unpin worker")
+            console.print(f"[red]{message}[/red]")
+            sys.exit(1)
+        data = resp.json()
+        action = "Unpinned" if data.get("removed") else "No pin found for"
+        console.print(f"[green]{action}[/green] session [bold]{data['session_id']}[/bold]")
+    except Exception:
+        console.print("[red]Gateway not running.[/red] Start it with: towel serve")
+        sys.exit(1)
+
+
+def _update_worker_state(worker_id: str, **payload: Any) -> dict[str, Any]:
+    import httpx
+
+    config = TowelConfig.load()
+    url = f"http://{config.gateway.host}:{config.gateway.port + 1}/workers/{worker_id}/state"
+    resp = httpx.post(url, json=payload, timeout=3)
+    if resp.status_code >= 400:
+        message = resp.json().get("error", "Failed to update worker state")
+        raise RuntimeError(message)
+    return resp.json()
+
+
+@cli.command(name="drain-worker")
+@click.argument("worker_id")
+def drain_worker(worker_id: str) -> None:
+    """Mark a worker as draining so it stops receiving new sessions."""
+    try:
+        _update_worker_state(worker_id, draining=True)
+        console.print(f"[green]Draining[/green] worker [bold]{worker_id}[/bold]")
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        sys.exit(1)
+    except Exception:
+        console.print("[red]Gateway not running.[/red] Start it with: towel serve")
+        sys.exit(1)
+
+
+@cli.command(name="undrain-worker")
+@click.argument("worker_id")
+def undrain_worker(worker_id: str) -> None:
+    """Allow a draining worker to receive new sessions again."""
+    try:
+        _update_worker_state(worker_id, draining=False)
+        console.print(f"[green]Undrained[/green] worker [bold]{worker_id}[/bold]")
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        sys.exit(1)
+    except Exception:
+        console.print("[red]Gateway not running.[/red] Start it with: towel serve")
+        sys.exit(1)
+
+
+@cli.command(name="disable-worker")
+@click.argument("worker_id")
+def disable_worker(worker_id: str) -> None:
+    """Disable a worker so the scheduler will not use it."""
+    try:
+        _update_worker_state(worker_id, enabled=False)
+        console.print(f"[green]Disabled[/green] worker [bold]{worker_id}[/bold]")
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        sys.exit(1)
+    except Exception:
+        console.print("[red]Gateway not running.[/red] Start it with: towel serve")
+        sys.exit(1)
+
+
+@cli.command(name="enable-worker")
+@click.argument("worker_id")
+def enable_worker(worker_id: str) -> None:
+    """Re-enable a disabled worker."""
+    try:
+        _update_worker_state(worker_id, enabled=True)
+        console.print(f"[green]Enabled[/green] worker [bold]{worker_id}[/bold]")
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        sys.exit(1)
+    except Exception:
+        console.print("[red]Gateway not running.[/red] Start it with: towel serve")
+        sys.exit(1)
+
+
+@cli.command()
+@click.option("--json", "as_json", is_flag=True, help="Output session routes as JSON")
+def routes(as_json: bool) -> None:
+    """Show session-to-worker routing state."""
+    import json as json_mod
+
+    import httpx
+
+    config = TowelConfig.load()
+    sessions_url = f"http://{config.gateway.host}:{config.gateway.port + 1}/sessions"
+
+    try:
+        resp = httpx.get(sessions_url, timeout=3)
+        data = resp.json()
+    except Exception:
+        console.print("[red]Gateway not running.[/red] Start it with: towel serve")
+        sys.exit(1)
+
+    if as_json:
+        console.print(json_mod.dumps(data, indent=2))
+        return
+
+    sessions = data.get("sessions", [])
+    if not sessions:
+        console.print(
+            Panel(
+                "[green]Routes:[/green] 0\n[dim]No active sessions.[/dim]",
+                title="Towel Routes",
+                border_style="green",
+            )
+        )
+        return
+
+    lines = []
+    for session in sessions:
+        session_id = session.get("id", "unknown")
+        channel = session.get("channel", "unknown")
+        messages = session.get("messages", 0)
+        current_worker = session.get("worker_id") or "-"
+        pinned_worker = session.get("pinned_worker_id") or "-"
+        lines.append(
+            f"  - {session_id} channel={channel} messages={messages} "
+            f"current={current_worker} pinned={pinned_worker}"
+        )
+
+    console.print(
+        Panel(
+            f"[green]Routes:[/green] {len(sessions)}\n" + "\n".join(lines),
+            title="Towel Routes",
+            border_style="green",
+        )
+    )
 
 
 STARTER_CONFIG = """\

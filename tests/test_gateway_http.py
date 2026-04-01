@@ -8,7 +8,9 @@ from towel.agent.runtime import AgentRuntime
 from towel.config import TowelConfig
 from towel.gateway.server import GatewayServer
 from towel.gateway.sessions import SessionManager
+from towel.persistence.session_pins import SessionPinStore
 from towel.persistence.store import ConversationStore
+from towel.persistence.worker_state import WorkerStateStore
 
 
 @pytest.fixture
@@ -21,7 +23,15 @@ def gateway(store):
     config = TowelConfig()
     agent = AgentRuntime(config)
     sessions = SessionManager(store=store)
-    return GatewayServer(config=config, agent=agent, sessions=sessions)
+    pin_store = SessionPinStore(path=store.store_dir / "session_pins.json")
+    worker_state_store = WorkerStateStore(path=store.store_dir / "worker_state.json")
+    return GatewayServer(
+        config=config,
+        agent=agent,
+        sessions=sessions,
+        pin_store=pin_store,
+        worker_state_store=worker_state_store,
+    )
 
 
 @pytest.fixture
@@ -59,6 +69,90 @@ class TestSessionsEndpoint:
         data = client.get("/sessions").json()
         assert len(data["sessions"]) == 1
         assert data["sessions"][0]["id"] == "test-session"
+        assert data["sessions"][0]["worker_id"] is None
+
+
+class TestWorkersEndpoint:
+    def test_workers_empty(self, client):
+        resp = client.get("/workers")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["workers"] == []
+        assert data["requirements"]["backend"] == "mlx"
+
+    def test_workers_list_connected_workers(self, gateway, client):
+        gateway._workers.register(
+            "desktop-1",
+            object(),
+            {
+                "backend": "mlx",
+                "model": "repo/model-a",
+                "modes": ["mlx_prompt"],
+                "tools": False,
+            },
+        )
+        gateway._workers.assign("desktop-1", "job-1", "session-1")
+
+        data = client.get("/workers").json()
+
+        assert len(data["workers"]) == 1
+        assert data["workers"][0]["id"] == "desktop-1"
+        assert data["workers"][0]["busy"] is True
+        assert data["workers"][0]["current_session_id"] == "session-1"
+        assert data["workers"][0]["capabilities"]["backend"] == "mlx"
+        assert data["workers"][0]["enabled"] is True
+        assert data["workers"][0]["draining"] is False
+        assert data["pins"] == {}
+
+
+class TestWorkerStateEndpoint:
+    def test_worker_state_update_sets_draining(self, gateway, client):
+        gateway._workers.register("desktop-1", object(), {"backend": "mlx", "modes": ["mlx_prompt"]})
+
+        resp = client.post("/workers/desktop-1/state", json={"draining": True})
+
+        assert resp.status_code == 200
+        assert resp.json()["draining"] is True
+        assert gateway._workers.get("desktop-1").draining is True
+
+    def test_worker_state_update_sets_enabled(self, gateway, client):
+        gateway._workers.register("desktop-1", object(), {"backend": "mlx", "modes": ["mlx_prompt"]})
+
+        resp = client.post("/workers/desktop-1/state", json={"enabled": False})
+
+        assert resp.status_code == 200
+        assert resp.json()["enabled"] is False
+        assert gateway._workers.get("desktop-1").enabled is False
+
+    def test_worker_state_update_rejects_unknown_worker(self, client):
+        resp = client.post("/workers/missing/state", json={"enabled": False})
+
+        assert resp.status_code == 404
+
+
+class TestWorkerPinEndpoint:
+    def test_pin_worker_sets_session_pin(self, gateway, client):
+        gateway._workers.register("desktop-1", object(), {"backend": "mlx", "modes": ["mlx_prompt"]})
+
+        resp = client.post("/sessions/chat-1/pin-worker", json={"worker_id": "desktop-1"})
+
+        assert resp.status_code == 200
+        assert resp.json()["pinned"] is True
+        assert gateway._session_pins["chat-1"] == "desktop-1"
+
+    def test_pin_worker_rejects_unknown_worker(self, client):
+        resp = client.post("/sessions/chat-1/pin-worker", json={"worker_id": "missing"})
+
+        assert resp.status_code == 404
+
+    def test_unpin_worker_clears_session_pin(self, gateway, client):
+        gateway._session_pins["chat-1"] = "desktop-1"
+
+        resp = client.request("DELETE", "/sessions/chat-1/pin-worker")
+
+        assert resp.status_code == 200
+        assert resp.json()["pinned"] is False
+        assert "chat-1" not in gateway._session_pins
 
 
 class TestWebUI:
@@ -117,8 +211,16 @@ class TestWebUI:
     def test_index_has_toolbar(self, client):
         resp = client.get("/")
         assert "toolbar" in resp.text
+        assert "tb-fleet" in resp.text
         assert "tb-export" in resp.text
         assert "tb-delete" in resp.text
+
+    def test_index_has_fleet_panel(self, client):
+        resp = client.get("/")
+        assert "fleet-overlay" in resp.text
+        assert "fleet-workers-list" in resp.text
+        assert "fleet-routes-list" in resp.text
+        assert "Fleet Control" in resp.text
 
     def test_index_has_delete_button_on_conversations(self, client):
         resp = client.get("/")

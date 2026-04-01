@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from towel.agent.conversation import Conversation, Message, Role
-from towel.agent.context import maybe_compact_conversation
+from towel.agent.context import estimate_output_reserve, maybe_compact_conversation
 from towel.agent.events import AgentEvent
 from towel.agent.instance_lock import acquire_runtime_lock
 from towel.agent.tool_parser import parse_tool_calls
@@ -231,11 +231,18 @@ class ClaudeCodeRuntime:
 
     def _build_messages(self, conversation: Conversation) -> list[dict[str, str]]:
         """Convert towel conversation to Anthropic messages format."""
+        existing_messages = [
+            {"role": msg.role.value, "content": msg.content} for msg in conversation.messages
+        ]
+        output_reserve = estimate_output_reserve(
+            existing_messages,
+            configured_max_tokens=self.config.model.max_tokens,
+        )
         maybe_compact_conversation(
             conversation,
             system_content=self._build_system_prompt(),
             context_window=self.config.model.context_window,
-            max_output_tokens=self.config.model.max_tokens,
+            max_output_tokens=output_reserve,
         )
         messages: list[dict[str, str]] = []
         for msg in conversation.messages:
@@ -250,16 +257,34 @@ class ClaudeCodeRuntime:
                 )
         return messages
 
+    def build_inference_request(self, conversation: Conversation) -> dict[str, Any]:
+        """Build a worker-safe Anthropic payload for this conversation."""
+        return {
+            "mode": "anthropic_messages",
+            "system": self._build_system_prompt(),
+            "messages": self._build_messages(conversation),
+        }
+
     async def generate(self, conversation: Conversation) -> ClaudeGenerationResult:
         """Run a single generation pass (non-streaming)."""
         if not self._loaded:
             await self.load_model()
 
+        return await self.generate_from_request(self.build_inference_request(conversation))
+
+    async def generate_from_request(self, request: dict[str, Any]) -> ClaudeGenerationResult:
+        """Generate from a prebuilt Anthropic messages payload."""
+        if not self._loaded:
+            await self.load_model()
+
+        if request.get("mode") != "anthropic_messages":
+            raise ValueError(f"Unsupported inference mode: {request.get('mode')}")
+
         response = await self._client.messages.create(
             model=self.model,
             max_tokens=self.config.model.max_tokens,
-            system=self._build_system_prompt(),
-            messages=self._build_messages(conversation),
+            system=request["system"],
+            messages=request["messages"],
         )
 
         text = ""
@@ -278,11 +303,22 @@ class ClaudeCodeRuntime:
         if not self._loaded:
             await self.load_model()
 
+        async for text in self.stream_from_request(self.build_inference_request(conversation)):
+            yield text
+
+    async def stream_from_request(self, request: dict[str, Any]) -> AsyncIterator[str]:
+        """Stream generation from a prebuilt Anthropic messages payload."""
+        if not self._loaded:
+            await self.load_model()
+
+        if request.get("mode") != "anthropic_messages":
+            raise ValueError(f"Unsupported inference mode: {request.get('mode')}")
+
         async with self._client.messages.stream(
             model=self.model,
             max_tokens=self.config.model.max_tokens,
-            system=self._build_system_prompt(),
-            messages=self._build_messages(conversation),
+            system=request["system"],
+            messages=request["messages"],
         ) as stream:
             async for text in stream.text_stream:
                 if self._cancel_flag:

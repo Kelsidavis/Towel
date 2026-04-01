@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -23,10 +24,16 @@ from starlette.staticfiles import StaticFiles
 from websockets.asyncio.server import Server, ServerConnection
 
 from towel.agent.conversation import Role
+from towel.agent.events import AgentEvent
 from towel.agent.runtime import AgentRuntime
+from towel.agent.runtime import MAX_TOOL_ITERATIONS, format_tool_feedback, tool_result_is_error
+from towel.agent.tool_parser import parse_tool_calls
 from towel.config import TowelConfig
 from towel.gateway.sessions import SessionManager
+from towel.gateway.workers import WorkerInfo, WorkerRegistry
 from towel.persistence.store import ConversationStore
+from towel.persistence.session_pins import SessionPinStore
+from towel.persistence.worker_state import WorkerStateStore
 
 log = logging.getLogger("towel.gateway")
 
@@ -40,9 +47,21 @@ class GatewayServer:
     sessions: SessionManager = field(
         default_factory=lambda: SessionManager(store=ConversationStore())
     )
+    pin_store: SessionPinStore = field(default_factory=SessionPinStore)
+    worker_state_store: WorkerStateStore = field(default_factory=WorkerStateStore)
     _ws_server: Server | None = None
     _connections: dict[str, ServerConnection] = field(default_factory=dict)
     _active_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
+    _workers: WorkerRegistry = field(default_factory=WorkerRegistry)
+    _job_queues: dict[str, asyncio.Queue[dict[str, Any]]] = field(default_factory=dict)
+    _session_workers: dict[str, str] = field(default_factory=dict)
+    _session_pins: dict[str, str] = field(default_factory=dict)
+    _session_jobs: dict[str, str] = field(default_factory=dict)
+    _worker_states: dict[str, dict[str, bool]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self._session_pins = self.pin_store.load()
+        self._worker_states = self.worker_state_store.load()
 
     async def start(self) -> None:
         """Start the gateway (WebSocket + HTTP)."""
@@ -80,15 +99,39 @@ class GatewayServer:
                 if msg_type == "register":
                     conn_id = msg.get("id", ws.id.hex[:12])
                     self._connections[conn_id] = ws
+                    role = msg.get("role", "channel")
+                    capabilities = msg.get("capabilities", {})
+                    if role == "worker":
+                        self._workers.register(conn_id, ws, capabilities)
+                        state = self._worker_states.get(conn_id)
+                        if state:
+                            self._workers.apply_state(
+                                conn_id,
+                                enabled=state.get("enabled"),
+                                draining=state.get("draining"),
+                            )
                     await ws.send(
                         json.dumps(
                             {
                                 "type": "registered",
                                 "id": conn_id,
+                                "role": role,
                                 "motto": "Don't Panic.",
                             }
                         )
                     )
+                    continue
+
+                if msg_type == "heartbeat":
+                    if conn_id and self._workers.get(conn_id):
+                        self._workers.heartbeat(conn_id, msg.get("capabilities"))
+                    continue
+
+                if msg_type in {"job_event", "job_done", "job_error"}:
+                    job_id = msg.get("job_id")
+                    queue = self._job_queues.get(job_id or "")
+                    if queue:
+                        await queue.put(msg)
                     continue
 
                 if msg_type == "cancel":
@@ -98,6 +141,7 @@ class GatewayServer:
                     task = self._active_tasks.pop(session_id, None)
                     if task and not task.done():
                         task.cancel()
+                    await self._cancel_remote_job(session_id)
                     log.info(f"Cancelled generation for session {session_id}")
                     continue
 
@@ -110,9 +154,15 @@ class GatewayServer:
 
                     session.conversation.add(Role.USER, content, channel=channel)
 
+                    worker = self._select_worker(session_id)
                     if stream:
                         # Run streaming in a task so cancel messages can be received
-                        task = asyncio.create_task(self._stream_response(ws, session_id, session))
+                        if worker:
+                            task = asyncio.create_task(
+                                self._stream_remote_inference(ws, session_id, session, worker)
+                            )
+                        else:
+                            task = asyncio.create_task(self._stream_response(ws, session_id, session))
                         self._active_tasks[session_id] = task
                         try:
                             await task
@@ -130,8 +180,11 @@ class GatewayServer:
                         finally:
                             self._active_tasks.pop(session_id, None)
                     else:
-                        response = await self.agent.step(session.conversation)
-                        session.conversation.messages.append(response)
+                        if worker:
+                            response = await self._step_remote_inference(session_id, session, worker)
+                        else:
+                            response = await self.agent.step(session.conversation)
+                            session.conversation.messages.append(response)
                         await ws.send(
                             json.dumps(
                                 {
@@ -167,6 +220,11 @@ class GatewayServer:
         finally:
             if conn_id and conn_id in self._connections:
                 del self._connections[conn_id]
+            if conn_id:
+                self._workers.unregister(conn_id)
+                for session_id, worker_id in list(self._session_workers.items()):
+                    if worker_id == conn_id:
+                        self._session_workers.pop(session_id, None)
             # Cancel any running tasks for this connection
             for task in self._active_tasks.values():
                 if not task.done():
@@ -176,6 +234,358 @@ class GatewayServer:
         """Stream agent response events to the WebSocket."""
         async for event in self.agent.step_streaming(session.conversation):
             await ws.send(json.dumps(event.to_ws_message(session_id)))
+
+    def _select_worker(self, session_id: str) -> WorkerInfo | None:
+        """Choose a worker for this session, preserving affinity when possible."""
+        preferred_id = self._session_pins.get(session_id) or self._session_workers.get(session_id)
+        worker = self._workers.acquire(
+            preferred_id=preferred_id,
+            requirements=self._desired_worker_capabilities(),
+        )
+        if worker:
+            self._session_workers[session_id] = worker.id
+        return worker
+
+    def pin_session_worker(self, session_id: str, worker_id: str) -> bool:
+        """Pin a session to a specific worker if that worker exists."""
+        if not self._workers.get(worker_id):
+            return False
+        self._session_pins[session_id] = worker_id
+        self._session_workers[session_id] = worker_id
+        self.sessions.get_or_create(session_id)
+        self._save_pins()
+        return True
+
+    def unpin_session_worker(self, session_id: str) -> bool:
+        """Remove an explicit worker pin from a session."""
+        removed = session_id in self._session_pins
+        self._session_pins.pop(session_id, None)
+        self._save_pins()
+        return removed
+
+    def _save_pins(self) -> None:
+        """Persist current session worker pins."""
+        self.pin_store.save(self._session_pins)
+
+    def _save_worker_states(self) -> None:
+        """Persist current worker operational state."""
+        current = self.worker_state_store.load()
+        current.update(self._workers.state_snapshot())
+        self._worker_states = current
+        self.worker_state_store.save(current)
+
+    def _desired_worker_capabilities(self) -> dict[str, Any]:
+        """Describe the worker shape that best matches this controller runtime."""
+        backend = "claude" if self.agent.__class__.__name__ == "ClaudeCodeRuntime" else "mlx"
+        mode = "anthropic_messages" if backend == "claude" else "mlx_prompt"
+        return {
+            "backend": backend,
+            "model": getattr(self.config.model, "name", ""),
+            "mode": mode,
+            "tools": False,
+        }
+
+    async def _cancel_remote_job(self, session_id: str) -> None:
+        job_id = self._session_jobs.get(session_id)
+        worker_id = self._session_workers.get(session_id)
+        if not job_id or not worker_id:
+            return
+        worker = self._workers.get(worker_id)
+        if not worker:
+            return
+        await worker.ws.send(json.dumps({"type": "cancel_job", "job_id": job_id, "session": session_id}))
+
+    async def _remote_generate(
+        self,
+        session_id: str,
+        conversation: Any,
+        worker: WorkerInfo,
+        *,
+        stream: bool,
+        client_ws: ServerConnection | None = None,
+    ) -> dict[str, Any]:
+        """Run one inference pass on a remote worker from a controller-built payload."""
+        build_request = getattr(self.agent, "build_inference_request", None)
+        if not callable(build_request):
+            raise RuntimeError("Agent runtime does not support remote inference requests")
+
+        request = build_request(conversation)
+        job_id = uuid.uuid4().hex[:12]
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._job_queues[job_id] = queue
+        self._session_jobs[session_id] = job_id
+        self._workers.assign(worker.id, job_id, session_id)
+
+        await worker.ws.send(
+            json.dumps(
+                {
+                    "type": "infer",
+                    "job_id": job_id,
+                    "session": session_id,
+                    "stream": stream,
+                    "request": request,
+                }
+            )
+        )
+
+        try:
+            while True:
+                msg = await queue.get()
+                msg_type = msg.get("type")
+                if msg_type == "job_event":
+                    event = msg.get("event", {})
+                    if client_ws is not None:
+                        await client_ws.send(json.dumps(event))
+                elif msg_type == "job_done":
+                    return msg.get("result", {})
+                elif msg_type == "job_error":
+                    raise RuntimeError(msg.get("message", "Remote worker failed"))
+        finally:
+            self._job_queues.pop(job_id, None)
+            self._session_jobs.pop(session_id, None)
+            self._workers.release(worker.id)
+
+    async def _step_remote_inference(self, session_id: str, session: Any, worker: WorkerInfo) -> Any:
+        """Run the local tool loop while outsourcing each generation pass."""
+        total_tokens = 0
+        last_metadata: dict[str, Any] = {"remote_worker": worker.id}
+        remaining_text = ""
+
+        for _ in range(MAX_TOOL_ITERATIONS):
+            result = await self._remote_generate(
+                session_id,
+                session.conversation,
+                worker,
+                stream=False,
+            )
+            text = result.get("text", "")
+            metadata = result.get("metadata", {})
+            total_tokens += metadata.get("tokens", metadata.get("output_tokens", 0))
+            last_metadata = {"remote_worker": worker.id, **metadata}
+
+            tool_calls, remaining_text = parse_tool_calls(text)
+            if not tool_calls:
+                from towel.agent.conversation import Message
+
+                response = Message(
+                    role=Role.ASSISTANT,
+                    content=text,
+                    metadata=last_metadata | {"tokens": total_tokens},
+                )
+                session.conversation.messages.append(response)
+                return response
+
+            if remaining_text:
+                session.conversation.add(Role.ASSISTANT, remaining_text)
+
+            for tc in tool_calls:
+                try:
+                    tool_result = await self.agent.skills.execute_tool(tc.name, tc.arguments)
+                    result_str = tool_result if isinstance(tool_result, str) else str(tool_result)
+                    is_error = tool_result_is_error(result_str)
+                except Exception as exc:
+                    result_str = f"Error executing {tc.name}: {exc}"
+                    is_error = True
+                    log.error(result_str)
+
+                session.conversation.add(
+                    Role.TOOL,
+                    format_tool_feedback(tc.name, result_str, is_error),
+                    tool_name=tc.name,
+                    status="error" if is_error else "ok",
+                )
+
+        from towel.agent.conversation import Message
+
+        response = Message(
+            role=Role.ASSISTANT,
+            content=remaining_text or "I've reached my tool execution limit for this turn.",
+            metadata=last_metadata | {"tokens": total_tokens, "max_iterations": True},
+        )
+        session.conversation.messages.append(response)
+        return response
+
+    async def _stream_remote_inference(
+        self,
+        ws: ServerConnection,
+        session_id: str,
+        session: Any,
+        worker: WorkerInfo,
+    ) -> None:
+        """Run the local streaming tool loop while outsourcing generation."""
+        total_tokens = 0
+        remaining_text = ""
+
+        for _ in range(MAX_TOOL_ITERATIONS):
+            result = await self._remote_generate(
+                session_id,
+                session.conversation,
+                worker,
+                stream=True,
+                client_ws=ws,
+            )
+            full_text = result.get("text", "")
+
+            if self.agent.is_cancelled:
+                if full_text.strip():
+                    session.conversation.add(Role.ASSISTANT, full_text)
+                await ws.send(
+                    json.dumps(
+                        AgentEvent.cancelled(
+                            full_text,
+                            metadata={"tokens": total_tokens, "reason": "user_cancelled"},
+                        ).to_ws_message(session_id)
+                    )
+                )
+                return
+
+            tokenizer = getattr(self.agent, "_tokenizer", None)
+            if tokenizer:
+                token_count = len(tokenizer.encode(full_text))
+            else:
+                token_count = len(full_text.split())
+            total_tokens += token_count
+
+            tool_calls, remaining_text = parse_tool_calls(full_text)
+            if not tool_calls:
+                session.conversation.add(Role.ASSISTANT, full_text)
+                await ws.send(
+                    json.dumps(
+                        AgentEvent.complete(
+                            full_text,
+                            metadata={"tokens": total_tokens, "remote_worker": worker.id},
+                        ).to_ws_message(session_id)
+                    )
+                )
+                return
+
+            if remaining_text:
+                session.conversation.add(Role.ASSISTANT, remaining_text)
+
+            for tc in tool_calls:
+                await ws.send(json.dumps(AgentEvent.tool_call(tc.name, tc.arguments).to_ws_message(session_id)))
+                try:
+                    tool_result = await self.agent.skills.execute_tool(tc.name, tc.arguments)
+                    result_str = tool_result if isinstance(tool_result, str) else str(tool_result)
+                    is_error = tool_result_is_error(result_str)
+                except Exception as exc:
+                    result_str = f"Error executing {tc.name}: {exc}"
+                    is_error = True
+                    log.error(result_str)
+
+                await ws.send(json.dumps(AgentEvent.tool_result(tc.name, result_str).to_ws_message(session_id)))
+                session.conversation.add(
+                    Role.TOOL,
+                    format_tool_feedback(tc.name, result_str, is_error),
+                    tool_name=tc.name,
+                    status="error" if is_error else "ok",
+                )
+
+        await ws.send(
+            json.dumps(
+                AgentEvent.complete(
+                    remaining_text or "I've reached my tool execution limit for this turn.",
+                    metadata={"tokens": total_tokens, "remote_worker": worker.id, "max_iterations": True},
+                ).to_ws_message(session_id)
+            )
+        )
+
+    async def _stream_remote_response(
+        self,
+        ws: ServerConnection,
+        session_id: str,
+        session: Any,
+        worker: WorkerInfo,
+    ) -> None:
+        """Run a streaming response on a remote worker and forward its events."""
+        job_id = uuid.uuid4().hex[:12]
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._job_queues[job_id] = queue
+        self._session_jobs[session_id] = job_id
+        self._workers.assign(worker.id, job_id, session_id)
+
+        await worker.ws.send(
+            json.dumps(
+                {
+                    "type": "run",
+                    "job_id": job_id,
+                    "session": session_id,
+                    "stream": True,
+                    "conversation": session.conversation.to_dict(),
+                }
+            )
+        )
+
+        try:
+            while True:
+                msg = await queue.get()
+                msg_type = msg.get("type")
+                if msg_type == "job_event":
+                    event = msg.get("event", {})
+                    await ws.send(json.dumps(event))
+                elif msg_type == "job_done":
+                    conversation = msg.get("conversation")
+                    if conversation:
+                        session.conversation = session.conversation.from_dict(conversation)
+                    break
+                elif msg_type == "job_error":
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "type": "error",
+                                "session": session_id,
+                                "message": msg.get("message", "Remote worker failed"),
+                            }
+                        )
+                    )
+                    break
+        finally:
+            self._job_queues.pop(job_id, None)
+            self._session_jobs.pop(session_id, None)
+            self._workers.release(worker.id)
+
+    async def _step_remote(self, session_id: str, session: Any, worker: WorkerInfo) -> Any:
+        """Run a non-streaming response on a remote worker."""
+        job_id = uuid.uuid4().hex[:12]
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._job_queues[job_id] = queue
+        self._session_jobs[session_id] = job_id
+        self._workers.assign(worker.id, job_id, session_id)
+
+        await worker.ws.send(
+            json.dumps(
+                {
+                    "type": "run",
+                    "job_id": job_id,
+                    "session": session_id,
+                    "stream": False,
+                    "conversation": session.conversation.to_dict(),
+                }
+            )
+        )
+
+        try:
+            while True:
+                msg = await queue.get()
+                msg_type = msg.get("type")
+                if msg_type == "job_done":
+                    conversation = msg.get("conversation")
+                    if conversation:
+                        session.conversation = session.conversation.from_dict(conversation)
+                    response = msg.get("response", {})
+                    from towel.agent.conversation import Message
+
+                    return Message(
+                        role=Role.ASSISTANT,
+                        content=response.get("content", ""),
+                        metadata=response.get("metadata", {}),
+                    )
+                if msg_type == "job_error":
+                    raise RuntimeError(msg.get("message", "Remote worker failed"))
+        finally:
+            self._job_queues.pop(job_id, None)
+            self._session_jobs.pop(session_id, None)
+            self._workers.release(worker.id)
 
     def _build_http_app(self) -> Starlette:
         """Build the HTTP API + web UI app."""
@@ -189,6 +599,7 @@ class GatewayServer:
                     "motto": "Don't Panic.",
                     "connections": len(self._connections),
                     "sessions": len(self.sessions),
+                    "workers": self._workers.stats(),
                 }
             )
 
@@ -201,9 +612,79 @@ class GatewayServer:
                             "channel": s.conversation.channel,
                             "messages": len(s.conversation),
                             "created_at": s.conversation.created_at.isoformat(),
+                            "worker_id": self._session_workers.get(s.id),
+                            "pinned_worker_id": self._session_pins.get(s.id),
                         }
                         for s in self.sessions.all()
                     ]
+                }
+            )
+
+        async def workers_list(_request: Any) -> JSONResponse:
+            return JSONResponse(
+                {
+                    "workers": [worker.to_dict() for worker in self._workers.matching()],
+                    "requirements": self._desired_worker_capabilities(),
+                    "pins": dict(self._session_pins),
+                }
+            )
+
+        async def worker_state_update(request: Request) -> JSONResponse:
+            worker_id = request.path_params["worker_id"]
+            try:
+                body = await request.json()
+            except Exception:
+                return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+
+            worker = self._workers.get(worker_id)
+            if not worker:
+                return JSONResponse({"error": "Worker not found"}, status_code=404)
+
+            enabled = body.get("enabled")
+            draining = body.get("draining")
+            if enabled is None and draining is None:
+                return JSONResponse(
+                    {"error": "enabled or draining required"},
+                    status_code=400,
+                )
+
+            if enabled is not None:
+                self._workers.set_enabled(worker_id, bool(enabled))
+            if draining is not None:
+                self._workers.set_draining(worker_id, bool(draining))
+            self._save_worker_states()
+
+            updated = self._workers.get(worker_id)
+            assert updated is not None
+            return JSONResponse(updated.to_dict())
+
+        async def session_pin_worker(request: Request) -> JSONResponse:
+            session_id = request.path_params["session_id"]
+            try:
+                body = await request.json()
+                worker_id = body.get("worker_id", "").strip()
+            except Exception:
+                return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+            if not worker_id:
+                return JSONResponse({"error": "worker_id required"}, status_code=400)
+            if not self.pin_session_worker(session_id, worker_id):
+                return JSONResponse({"error": "Worker not found"}, status_code=404)
+            return JSONResponse(
+                {
+                    "session_id": session_id,
+                    "worker_id": worker_id,
+                    "pinned": True,
+                }
+            )
+
+        async def session_unpin_worker(request: Request) -> JSONResponse:
+            session_id = request.path_params["session_id"]
+            removed = self.unpin_session_worker(session_id)
+            return JSONResponse(
+                {
+                    "session_id": session_id,
+                    "pinned": False,
+                    "removed": removed,
                 }
             )
 
@@ -430,6 +911,10 @@ class GatewayServer:
         routes: list[Route | Mount] = [
             Route("/health", health),
             Route("/sessions", sessions_list),
+            Route("/sessions/{session_id}/pin-worker", session_pin_worker, methods=["POST"]),
+            Route("/sessions/{session_id}/pin-worker", session_unpin_worker, methods=["DELETE"]),
+            Route("/workers", workers_list),
+            Route("/workers/{worker_id}/state", worker_state_update, methods=["POST"]),
             Route("/conversations", conversations_list),
             Route("/conversations/{conv_id}", conversation_detail, methods=["GET"]),
             Route("/conversations/{conv_id}", conversation_delete, methods=["DELETE"]),

@@ -49,6 +49,54 @@ def count_tokens_fallback(text: str) -> int:
     return max(1, len(text) // 4)
 
 
+def estimate_output_reserve(
+    messages: list[dict[str, str]],
+    configured_max_tokens: int,
+    token_counter: Callable[[str], int] | None = None,
+) -> int:
+    """Estimate a practical output reserve smaller than the hard max when possible.
+
+    The configured max remains the true generation ceiling; this heuristic is only
+    used for context fitting/compaction so short turns do not reserve thousands of
+    output tokens they are unlikely to use.
+    """
+    count = token_counter or count_tokens_fallback
+    if configured_max_tokens <= 0:
+        return 0
+
+    if not messages:
+        return min(configured_max_tokens, 512)
+
+    latest_user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+    latest_user_tokens = count(latest_user)
+    total_message_tokens = sum(count(m["content"]) for m in messages)
+
+    reserve = max(512, latest_user_tokens * 2)
+    reserve = max(reserve, min(1536, total_message_tokens // 2))
+
+    detailed_cues = (
+        "explain",
+        "analyze",
+        "review",
+        "summarize",
+        "write",
+        "refactor",
+        "plan",
+        "compare",
+        "debug",
+        "step by step",
+        "detailed",
+    )
+    latest_lower = latest_user.lower()
+    if any(cue in latest_lower for cue in detailed_cues):
+        reserve = max(reserve, 1536)
+
+    if len(messages) <= 2 and latest_user_tokens <= 32:
+        reserve = min(reserve, 768)
+
+    return max(256, min(configured_max_tokens, reserve))
+
+
 def _latest_user_index(messages: list[dict[str, str]]) -> int | None:
     for i in range(len(messages) - 1, -1, -1):
         if messages[i]["role"] == "user":
