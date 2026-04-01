@@ -23,14 +23,20 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from websockets.asyncio.server import Server, ServerConnection
 
+from towel.agent.context import count_tokens_fallback
 from towel.agent.conversation import Role
 from towel.agent.events import AgentEvent
 from towel.agent.runtime import AgentRuntime
 from towel.agent.runtime import MAX_TOOL_ITERATIONS, format_tool_feedback, tool_result_is_error
 from towel.agent.tool_parser import parse_tool_calls
 from towel.config import TowelConfig
+from towel.gateway.context_sync import ContextSyncManager, apply_delta, compute_response_delta
+from towel.gateway.handoff import HandoffManager, HandoffReason
 from towel.gateway.sessions import SessionManager
 from towel.gateway.workers import WorkerInfo, WorkerRegistry
+from towel.memory.cluster import ClusterMemorySync
+from towel.memory.store import MemoryStore
+from towel.nodes.tracker import NodeTracker
 from towel.persistence.store import ConversationStore
 from towel.persistence.session_pins import SessionPinStore
 from towel.persistence.worker_state import WorkerStateStore
@@ -53,6 +59,10 @@ class GatewayServer:
     _connections: dict[str, ServerConnection] = field(default_factory=dict)
     _active_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
     _workers: WorkerRegistry = field(default_factory=WorkerRegistry)
+    _node_tracker: NodeTracker = field(default_factory=NodeTracker)
+    _context_sync: ContextSyncManager = field(default_factory=ContextSyncManager)
+    _handoff_manager: HandoffManager = field(default_factory=HandoffManager)
+    _cluster_memory: ClusterMemorySync | None = None
     _job_queues: dict[str, asyncio.Queue[dict[str, Any]]] = field(default_factory=dict)
     _session_workers: dict[str, str] = field(default_factory=dict)
     _session_pins: dict[str, str] = field(default_factory=dict)
@@ -62,6 +72,10 @@ class GatewayServer:
     def __post_init__(self) -> None:
         self._session_pins = self.pin_store.load()
         self._worker_states = self.worker_state_store.load()
+        # Initialize cluster memory from agent's memory store if available
+        memory_store = getattr(self.agent, "memory", None)
+        if isinstance(memory_store, MemoryStore):
+            self._cluster_memory = ClusterMemorySync(memory_store, is_controller=True)
 
     async def start(self) -> None:
         """Start the gateway (WebSocket + HTTP)."""
@@ -103,6 +117,7 @@ class GatewayServer:
                     capabilities = msg.get("capabilities", {})
                     if role == "worker":
                         self._workers.register(conn_id, ws, capabilities)
+                        self._node_tracker.register(conn_id, capabilities)
                         state = self._worker_states.get(conn_id)
                         if state:
                             self._workers.apply_state(
@@ -120,11 +135,26 @@ class GatewayServer:
                             }
                         )
                     )
+                    # Send memory snapshot to newly connected worker
+                    if role == "worker" and self._cluster_memory:
+                        await ws.send(json.dumps(self._cluster_memory.build_snapshot_message()))
                     continue
 
                 if msg_type == "heartbeat":
                     if conn_id and self._workers.get(conn_id):
-                        self._workers.heartbeat(conn_id, msg.get("capabilities"))
+                        caps = msg.get("capabilities")
+                        self._workers.heartbeat(conn_id, caps)
+                        if caps:
+                            self._node_tracker.update_heartbeat(conn_id, caps)
+                    continue
+
+                if msg_type == "memory_sync":
+                    # Worker is sending memory mutations to the controller
+                    if conn_id and self._cluster_memory:
+                        mutations = msg.get("mutations", [])
+                        self._cluster_memory.apply_mutations(mutations)
+                        # Broadcast to other workers
+                        await self._broadcast_memory_sync(conn_id)
                     continue
 
                 if msg_type in {"job_event", "job_done", "job_error"}:
@@ -221,10 +251,22 @@ class GatewayServer:
             if conn_id and conn_id in self._connections:
                 del self._connections[conn_id]
             if conn_id:
+                # Trigger handoffs for sessions on this worker before unregistering
+                sessions_to_handoff = self._handoff_manager.sessions_needing_handoff(
+                    conn_id, self._session_workers
+                )
+                for sid in sessions_to_handoff:
+                    self._handoff_manager.plan_handoff(
+                        sid, conn_id, HandoffReason.WORKER_DISCONNECTED
+                    )
+                    # Clear affinity so _select_worker picks a new one
+                    self._session_workers.pop(sid, None)
+                    # Complete handoff — next request will land on a new worker
+                    self._handoff_manager.complete_handoff(sid, success=True)
+
                 self._workers.unregister(conn_id)
-                for session_id, worker_id in list(self._session_workers.items()):
-                    if worker_id == conn_id:
-                        self._session_workers.pop(session_id, None)
+                self._node_tracker.unregister(conn_id)
+                self._context_sync.clear_worker(conn_id)
             # Cancel any running tasks for this connection
             for task in self._active_tasks.values():
                 if not task.done():
@@ -235,12 +277,24 @@ class GatewayServer:
         async for event in self.agent.step_streaming(session.conversation):
             await ws.send(json.dumps(event.to_ws_message(session_id)))
 
-    def _select_worker(self, session_id: str) -> WorkerInfo | None:
-        """Choose a worker for this session, preserving affinity when possible."""
+    def _select_worker(self, session_id: str, estimated_tokens: int = 0) -> WorkerInfo | None:
+        """Choose a worker for this session, preserving affinity when possible.
+
+        Uses context-aware scheduling when the NodeTracker has data:
+        - Prefers workers with lower context pressure
+        - Avoids workers that can't fit the conversation
+        - Favors workers that already hold this session's context
+        """
         preferred_id = self._session_pins.get(session_id) or self._session_workers.get(session_id)
+        requirements = self._desired_worker_capabilities()
+        if estimated_tokens > 0:
+            requirements["estimated_tokens"] = estimated_tokens
+        requirements["session_id"] = session_id
+
         worker = self._workers.acquire(
             preferred_id=preferred_id,
-            requirements=self._desired_worker_capabilities(),
+            requirements=requirements,
+            node_tracker=self._node_tracker if len(self._node_tracker) > 0 else None,
         )
         if worker:
             self._session_workers[session_id] = worker.id
@@ -273,6 +327,62 @@ class GatewayServer:
         current.update(self._workers.state_snapshot())
         self._worker_states = current
         self.worker_state_store.save(current)
+
+    async def _broadcast_memory_sync(self, exclude_worker_id: str = "") -> None:
+        """Broadcast pending memory mutations to all connected workers."""
+        if not self._cluster_memory:
+            return
+        for worker in self._workers.list():
+            if worker.id == exclude_worker_id:
+                continue
+            msg = self._cluster_memory.build_sync_message(target_worker_id=worker.id)
+            if msg:
+                try:
+                    await worker.ws.send(json.dumps(msg))
+                except Exception:
+                    pass
+
+    async def _initiate_handoffs_for_worker(self, worker_id: str, reason: HandoffReason) -> list[str]:
+        """Start handoffs for all sessions on a draining/disconnecting worker.
+
+        Returns session IDs that were handed off.
+        """
+        sessions = self._handoff_manager.sessions_needing_handoff(
+            worker_id, self._session_workers
+        )
+        handed_off = []
+        for sid in sessions:
+            session = self.sessions.get_or_create(sid)
+            token_estimate = sum(
+                count_tokens_fallback(m.content) for m in session.conversation.messages
+            )
+            self._handoff_manager.plan_handoff(
+                sid, worker_id, reason,
+                conversation_messages=len(session.conversation),
+                estimated_tokens=token_estimate,
+            )
+            # Clear old affinity
+            self._session_workers.pop(sid, None)
+            self._context_sync.clear_worker(worker_id)
+
+            # Try to pre-select a new worker
+            new_worker = self._select_worker(sid, estimated_tokens=token_estimate)
+            if new_worker:
+                self._handoff_manager.assign_target(sid, new_worker.id)
+                # Open context slot on the new node
+                self._node_tracker.open_context_slot(new_worker.id, sid, token_estimate)
+                self._handoff_manager.complete_handoff(sid, success=True)
+            else:
+                self._handoff_manager.complete_handoff(
+                    sid, success=False, error="No suitable replacement worker available"
+                )
+            handed_off.append(sid)
+        return handed_off
+
+    def _estimate_conversation_tokens(self, session_id: str) -> int:
+        """Estimate token count for a session's conversation."""
+        session = self.sessions.get_or_create(session_id)
+        return sum(count_tokens_fallback(m.content) for m in session.conversation.messages)
 
     def _desired_worker_capabilities(self) -> dict[str, Any]:
         """Describe the worker shape that best matches this controller runtime."""
@@ -316,6 +426,12 @@ class GatewayServer:
         self._session_jobs[session_id] = job_id
         self._workers.assign(worker.id, job_id, session_id)
 
+        # Track context usage on the node
+        token_estimate = sum(
+            count_tokens_fallback(m.content) for m in conversation.messages
+        )
+        self._node_tracker.open_context_slot(worker.id, session_id, token_estimate)
+
         await worker.ws.send(
             json.dumps(
                 {
@@ -337,6 +453,8 @@ class GatewayServer:
                     if client_ws is not None:
                         await client_ws.send(json.dumps(event))
                 elif msg_type == "job_done":
+                    # Advance the sync cursor after successful job
+                    self._context_sync.advance_cursor(worker.id, session_id, conversation)
                     return msg.get("result", {})
                 elif msg_type == "job_error":
                     raise RuntimeError(msg.get("message", "Remote worker failed"))
@@ -629,6 +747,17 @@ class GatewayServer:
                 }
             )
 
+        async def cluster_nodes(_request: Any) -> JSONResponse:
+            return JSONResponse(self._node_tracker.to_dict())
+
+        async def cluster_handoffs(_request: Any) -> JSONResponse:
+            return JSONResponse(
+                {
+                    "stats": self._handoff_manager.stats(),
+                    "recent": self._handoff_manager.recent_handoffs(),
+                }
+            )
+
         async def worker_state_update(request: Request) -> JSONResponse:
             worker_id = request.path_params["worker_id"]
             try:
@@ -652,6 +781,11 @@ class GatewayServer:
                 self._workers.set_enabled(worker_id, bool(enabled))
             if draining is not None:
                 self._workers.set_draining(worker_id, bool(draining))
+                # Trigger handoffs when a worker starts draining
+                if draining:
+                    await self._initiate_handoffs_for_worker(
+                        worker_id, HandoffReason.WORKER_DRAINING
+                    )
             self._save_worker_states()
 
             updated = self._workers.get(worker_id)
@@ -915,6 +1049,8 @@ class GatewayServer:
             Route("/sessions/{session_id}/pin-worker", session_unpin_worker, methods=["DELETE"]),
             Route("/workers", workers_list),
             Route("/workers/{worker_id}/state", worker_state_update, methods=["POST"]),
+            Route("/cluster/nodes", cluster_nodes),
+            Route("/cluster/handoffs", cluster_handoffs),
             Route("/conversations", conversations_list),
             Route("/conversations/{conv_id}", conversation_detail, methods=["GET"]),
             Route("/conversations/{conv_id}", conversation_delete, methods=["DELETE"]),

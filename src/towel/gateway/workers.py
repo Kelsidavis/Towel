@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
 from websockets.asyncio.server import ServerConnection
+
+log = logging.getLogger("towel.gateway.workers")
 
 
 @dataclass
@@ -117,8 +120,19 @@ class WorkerRegistry:
             for worker_id, worker in self._workers.items()
         }
 
-    def _score_worker(self, worker: WorkerInfo, requirements: dict[str, Any] | None = None) -> tuple[int, datetime, str]:
-        """Rank workers by capability fit, then recency."""
+    def _score_worker(
+        self,
+        worker: WorkerInfo,
+        requirements: dict[str, Any] | None = None,
+        node_tracker: Any | None = None,
+    ) -> tuple[int, datetime, str]:
+        """Rank workers by capability fit, context pressure, then recency.
+
+        When a NodeTracker is provided, context-aware signals are folded in:
+        - Workers with lower context pressure get a bonus
+        - Workers that can't fit the estimated conversation size get penalized
+        - Workers already holding the session's context get a locality bonus
+        """
         score = 0
         req = requirements or {}
         caps = worker.capabilities
@@ -153,18 +167,42 @@ class WorkerRegistry:
             elif required_tools:
                 score -= 50
 
+        # ── Context-aware scoring ───────────────────────────────────
+        if node_tracker is not None:
+            node = node_tracker.get(worker.id)
+            if node is not None:
+                # Bonus for low context pressure (0-15 points)
+                pressure = node.context_pressure
+                score += int((1.0 - pressure) * 15)
+
+                # Penalty if the conversation won't fit
+                estimated_tokens = req.get("estimated_tokens", 0)
+                if estimated_tokens > 0 and not node.can_fit_conversation(estimated_tokens):
+                    score -= 60
+
+                # Context locality bonus: if this worker already has the
+                # session's context loaded, prefer it to avoid cold transfer
+                target_session = req.get("session_id")
+                if target_session and node.get_context_slot(target_session) is not None:
+                    score += 25
+
         return (score, worker.last_seen, worker.id)
 
     def acquire(
         self,
         preferred_id: str | None = None,
         requirements: dict[str, Any] | None = None,
+        node_tracker: Any | None = None,
     ) -> WorkerInfo | None:
-        """Return the best idle worker, preferring the sticky one when it fits."""
+        """Return the best idle worker, preferring the sticky one when it fits.
+
+        When node_tracker is provided, scoring includes context pressure,
+        capacity checks, and context locality bonuses.
+        """
         if preferred_id:
             preferred = self._workers.get(preferred_id)
             if preferred and preferred.enabled and not preferred.draining and not preferred.busy:
-                if requirements is None or self._score_worker(preferred, requirements)[0] >= 0:
+                if requirements is None or self._score_worker(preferred, requirements, node_tracker)[0] >= 0:
                     return preferred
 
         idle = [
@@ -178,13 +216,21 @@ class WorkerRegistry:
         if requirements:
             ranked = sorted(
                 idle,
-                key=lambda worker: self._score_worker(worker, requirements),
+                key=lambda worker: self._score_worker(worker, requirements, node_tracker),
                 reverse=True,
             )
             best = ranked[0]
-            if self._score_worker(best, requirements)[0] < 0:
+            if self._score_worker(best, requirements, node_tracker)[0] < 0:
                 return None
             return best
+
+        if node_tracker is not None:
+            # Even without specific requirements, prefer least-loaded nodes
+            idle.sort(
+                key=lambda w: self._score_worker(w, node_tracker=node_tracker),
+                reverse=True,
+            )
+            return idle[0]
 
         idle.sort(key=lambda worker: (worker.last_seen, worker.id), reverse=True)
         return idle[0]
