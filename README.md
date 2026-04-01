@@ -1,6 +1,6 @@
 # Towel
 
-[![CI](https://github.com/Kelsidavis/Towl/actions/workflows/ci.yml/badge.svg)](https://github.com/Kelsidavis/Towl/actions/workflows/ci.yml)
+[![CI](https://github.com/Kelsidavis/Towel/actions/workflows/ci.yml/badge.svg)](https://github.com/Kelsidavis/Towel/actions/workflows/ci.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://python.org)
 [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-MLX-black?logo=apple)](https://ml-explore.github.io/mlx/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)

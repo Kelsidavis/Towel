@@ -5,8 +5,8 @@ Don't Panic. Contributions are welcome.
 ## Development Setup
 
 ```bash
-git clone https://github.com/Kelsidavis/Towl.git
-cd Towl
+git clone https://github.com/Kelsidavis/Towel.git
+cd Towel
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```

@@ -31,6 +31,7 @@ dependencies = [
     "rich>=13.9.0",
     "pydantic>=2.10.0",
     "toml>=0.10.2",
+    "zeroconf>=0.130.0",
 ]
 
 [project.optional-dependencies]
@@ -77,6 +78,6 @@ strict = true
 
 
 [project.urls]
-Homepage = "https://github.com/Kelsidavis/Towl"
-Repository = "https://github.com/Kelsidavis/Towl"
-Issues = "https://github.com/Kelsidavis/Towl/issues"
+Homepage = "https://github.com/Kelsidavis/Towel"
+Repository = "https://github.com/Kelsidavis/Towel"
+Issues = "https://github.com/Kelsidavis/Towel/issues"

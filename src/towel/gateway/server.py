@@ -82,7 +82,7 @@ class GatewayServer:
             self._cluster_memory = ClusterMemorySync(memory_store, is_controller=True)
 
     async def start(self) -> None:
-        """Start the gateway (WebSocket + HTTP)."""
+        """Start the gateway (WebSocket + HTTP), advertise via mDNS."""
         gw = self.config.gateway
 
         # Start WebSocket server
@@ -92,6 +92,16 @@ class GatewayServer:
             gw.port,
         )
         log.info(f"WebSocket listening on ws://{gw.host}:{gw.port}")
+
+        # Advertise via mDNS so workers can discover us
+        self._mdns_advertiser = None
+        try:
+            from towel.gateway.mdns import TowelServiceAdvertiser
+
+            self._mdns_advertiser = TowelServiceAdvertiser(port=gw.port)
+            await self._mdns_advertiser.start()
+        except Exception as exc:
+            log.warning("mDNS advertisement failed (workers can still connect manually): %s", exc)
 
         # Start HTTP API on port+1
         http_app = self._build_http_app()
@@ -104,7 +114,11 @@ class GatewayServer:
         http_server = uvicorn.Server(http_config)
         log.info(f"HTTP API listening on http://{gw.host}:{gw.port + 1}")
 
-        await http_server.serve()
+        try:
+            await http_server.serve()
+        finally:
+            if self._mdns_advertiser:
+                await self._mdns_advertiser.stop()
 
     async def _handle_ws(self, ws: ServerConnection) -> None:
         """Handle an incoming WebSocket connection."""

@@ -90,6 +90,16 @@ def cli() -> None:
     pass
 
 
+def _auto_detect_backend() -> str | None:
+    """Auto-detect the best available backend for this system."""
+    from towel.agent.discovery import detect_gpus, find_llama_server
+
+    gpus = detect_gpus()
+    if gpus and find_llama_server():
+        return "llama"
+    return None
+
+
 def _build_runtime(
     config: TowelConfig,
     skills: Any,
@@ -97,6 +107,8 @@ def _build_runtime(
     backend: str | None,
     claude_model: str | None,
     ollama_url: str | None = None,
+    llama_url: str | None = None,
+    llama_model: str | None = None,
 ):
     """Build the appropriate runtime based on --backend flag."""
     if backend == "claude":
@@ -117,6 +129,16 @@ def _build_runtime(
             memory=memory,
             ollama_url=ollama_url or "http://localhost:11434",
         )
+    elif backend == "llama":
+        from towel.agent.llama_runtime import LlamaRuntime
+
+        return LlamaRuntime(
+            config,
+            skills=skills,
+            memory=memory,
+            llama_url=llama_url or "http://localhost:8080",
+            llama_model=llama_model,
+        )
     else:
         from towel.agent.runtime import AgentRuntime
 
@@ -135,8 +157,8 @@ def _build_runtime(
     "--backend",
     "-b",
     default=None,
-    type=click.Choice(["mlx", "claude", "ollama"]),
-    help="Runtime backend (mlx=local model, claude=Claude Code CLI, ollama=Ollama daemon)",
+    type=click.Choice(["mlx", "claude", "ollama", "llama"]),
+    help="Runtime backend (mlx=local, claude=Claude API, ollama=Ollama, llama=llama-server)",
 )
 @click.option(
     "--claude-model",
@@ -148,6 +170,16 @@ def _build_runtime(
     default=None,
     help="Ollama server URL when using --backend ollama (default: http://localhost:11434)",
 )
+@click.option(
+    "--llama-url",
+    default=None,
+    help="llama-server URL when using --backend llama (default: http://localhost:8080)",
+)
+@click.option(
+    "--llama-model",
+    default=None,
+    help="Path to a .gguf model file (auto-detected if omitted)",
+)
 def serve(
     agent: str | None,
     turboquant: bool | None,
@@ -155,6 +187,8 @@ def serve(
     backend: str | None,
     claude_model: str | None,
     ollama_url: str | None,
+    llama_url: str | None,
+    llama_model: str | None,
 ) -> None:
     """Start the Towel gateway and agent runtime."""
     console.print(Panel(Text(BANNER, style="bold green"), border_style="green"))
@@ -165,11 +199,24 @@ def serve(
     config.identity = identity
     _apply_turboquant_overrides(config, turboquant, tq_bits)
 
+    # Auto-detect backend if not specified
+    if not backend:
+        detected = _auto_detect_backend()
+        if detected:
+            backend = detected
+            console.print(f"[dim]Auto-detected backend:[/dim] {backend}")
+
     if backend == "claude":
         console.print(f"[dim]Backend:[/dim] Claude Code CLI ({claude_model or 'sonnet'})")
     elif backend == "ollama":
         console.print(f"[dim]Backend:[/dim] Ollama ({ollama_url or 'http://localhost:11434'})")
         console.print(f"[dim]Model:[/dim] {config.model.name}")
+    elif backend == "llama":
+        console.print(f"[dim]Backend:[/dim] llama-server ({llama_url or 'http://localhost:8080'})")
+        if llama_model:
+            console.print(f"[dim]Model:[/dim] {llama_model}")
+        else:
+            console.print("[dim]Model:[/dim] auto-detect")
     else:
         console.print(f"[dim]Model:[/dim] {config.model.name}")
         if config.model.turboquant:
@@ -194,11 +241,17 @@ def serve(
 
     memory = MemoryStore()
     skills = _build_skill_registry(config, memory_store=memory)
-    agent_rt = _build_runtime(config, skills, memory, backend, claude_model, ollama_url)
+    agent_rt = _build_runtime(
+        config, skills, memory, backend, claude_model, ollama_url, llama_url, llama_model
+    )
     gateway = GatewayServer(config=config, agent=agent_rt)
 
     console.print("[green]Connecting...[/green]")
-    asyncio.run(_start(agent_rt, gateway))
+    try:
+        asyncio.run(_start(agent_rt, gateway))
+    finally:
+        if hasattr(agent_rt, "shutdown"):
+            agent_rt.shutdown()
 
 
 async def _start(agent: Any, gateway: Any) -> None:
@@ -208,7 +261,7 @@ async def _start(agent: Any, gateway: Any) -> None:
 
 
 @cli.command()
-@click.option("--master", required=True, help="Controller gateway URL, e.g. ws://192.168.1.10:18742")
+@click.option("--master", default=None, help="Controller URL (auto-discovered via mDNS if omitted)")
 @click.option("--id", "worker_id", default=None, help="Worker ID (defaults to hostname)")
 @click.option(
     "--agent", "-a", default=None, help="Agent profile to use (e.g., coder, researcher, writer)"
@@ -221,8 +274,8 @@ async def _start(agent: Any, gateway: Any) -> None:
     "--backend",
     "-b",
     default=None,
-    type=click.Choice(["mlx", "claude", "ollama"]),
-    help="Runtime backend (mlx=local model, claude=Claude Code CLI, ollama=Ollama daemon)",
+    type=click.Choice(["mlx", "claude", "ollama", "llama"]),
+    help="Runtime backend (mlx=local, claude=Claude API, ollama=Ollama, llama=llama-server)",
 )
 @click.option(
     "--claude-model",
@@ -235,12 +288,22 @@ async def _start(agent: Any, gateway: Any) -> None:
     help="Ollama server URL when using --backend ollama (default: http://localhost:11434)",
 )
 @click.option(
+    "--llama-url",
+    default=None,
+    help="llama-server URL when using --backend llama (default: http://localhost:8080)",
+)
+@click.option(
+    "--llama-model",
+    default=None,
+    help="Path to a .gguf model file (auto-detected if omitted)",
+)
+@click.option(
     "--allow-tools/--no-allow-tools",
     default=False,
     help="Allow tools to run on the remote worker machine",
 )
 def worker(
-    master: str,
+    master: str | None,
     worker_id: str | None,
     agent: str | None,
     turboquant: bool | None,
@@ -248,10 +311,29 @@ def worker(
     backend: str | None,
     claude_model: str | None,
     ollama_url: str | None,
+    llama_url: str | None,
+    llama_model: str | None,
     allow_tools: bool,
 ) -> None:
     """Start a remote worker that executes jobs for a controller."""
     console.print(Panel(Text(BANNER, style="bold green"), border_style="green"))
+
+    # Discover coordinator via mDNS if --master not given
+    if not master:
+        console.print("[dim]Searching for controller on the network...[/dim]")
+
+        from towel.gateway.mdns import discover_controller
+
+        ctrl = asyncio.run(discover_controller(timeout=30.0))
+        if not ctrl:
+            console.print(
+                "[red]No controller found on the network.[/red]\n"
+                "Start a controller with [bold]towel serve[/bold], or specify "
+                "[bold]--master ws://host:port[/bold]."
+            )
+            raise SystemExit(1)
+        master = ctrl.ws_url
+        console.print(f"[green]Found controller:[/green] {ctrl.hostname} at {master}")
 
     config = TowelConfig.load()
     model_config, identity = config.resolve_agent(agent)
@@ -259,11 +341,24 @@ def worker(
     config.identity = identity
     _apply_turboquant_overrides(config, turboquant, tq_bits)
 
+    # Auto-detect backend if not specified
+    if not backend:
+        detected = _auto_detect_backend()
+        if detected:
+            backend = detected
+            console.print(f"[dim]Auto-detected backend:[/dim] {backend}")
+
     if backend == "claude":
         console.print(f"[dim]Backend:[/dim] Claude Code CLI ({claude_model or 'sonnet'})")
     elif backend == "ollama":
         console.print(f"[dim]Backend:[/dim] Ollama ({ollama_url or 'http://localhost:11434'})")
         console.print(f"[dim]Model:[/dim] {config.model.name}")
+    elif backend == "llama":
+        console.print(f"[dim]Backend:[/dim] llama-server ({llama_url or 'http://localhost:8080'})")
+        if llama_model:
+            console.print(f"[dim]Model:[/dim] {llama_model}")
+        else:
+            console.print("[dim]Model:[/dim] auto-detect")
     else:
         console.print(f"[dim]Model:[/dim] {config.model.name}")
     console.print(f"[dim]Controller:[/dim] {master}")
@@ -276,7 +371,9 @@ def worker(
 
     memory = MemoryStore()
     skills = _build_skill_registry(config, memory_store=memory) if allow_tools else SkillRegistry()
-    agent_rt = _build_runtime(config, skills, memory, backend, claude_model, ollama_url)
+    agent_rt = _build_runtime(
+        config, skills, memory, backend, claude_model, ollama_url, llama_url, llama_model
+    )
     effective_backend = backend or "mlx"
     capabilities = default_worker_capabilities(config, effective_backend, allow_tools)
     client = RemoteWorkerClient(
@@ -286,7 +383,11 @@ def worker(
         capabilities=capabilities,
     )
 
-    asyncio.run(_start_worker(agent_rt, client))
+    try:
+        asyncio.run(_start_worker(agent_rt, client))
+    finally:
+        if hasattr(agent_rt, "shutdown"):
+            agent_rt.shutdown()
 
 
 async def _start_worker(agent: Any, client: Any) -> None:
@@ -306,8 +407,8 @@ async def _start_worker(agent: Any, client: Any) -> None:
     "--backend",
     "-b",
     default=None,
-    type=click.Choice(["mlx", "claude", "ollama"]),
-    help="Runtime backend (mlx=local model, claude=Claude Code CLI, ollama=Ollama daemon)",
+    type=click.Choice(["mlx", "claude", "ollama", "llama"]),
+    help="Runtime backend (mlx=local, claude=Claude API, ollama=Ollama, llama=llama-server)",
 )
 @click.option(
     "--claude-model",
@@ -319,6 +420,16 @@ async def _start_worker(agent: Any, client: Any) -> None:
     default=None,
     help="Ollama server URL when using --backend ollama (default: http://localhost:11434)",
 )
+@click.option(
+    "--llama-url",
+    default=None,
+    help="llama-server URL when using --backend llama (default: http://localhost:8080)",
+)
+@click.option(
+    "--llama-model",
+    default=None,
+    help="Path to a .gguf model file (auto-detected if omitted)",
+)
 def chat(
     session: str,
     agent: str | None,
@@ -327,6 +438,8 @@ def chat(
     backend: str | None,
     claude_model: str | None,
     ollama_url: str | None,
+    llama_url: str | None,
+    llama_model: str | None,
 ) -> None:
     """Interactive chat with Towel."""
     console.print(
@@ -343,10 +456,19 @@ def chat(
     config.identity = identity
     _apply_turboquant_overrides(config, turboquant, tq_bits)
 
+    # Auto-detect backend if not specified
+    if not backend:
+        detected = _auto_detect_backend()
+        if detected:
+            backend = detected
+            console.print(f"[dim]Auto-detected backend: {backend}[/dim]")
+
     if backend == "claude":
         console.print(f"[dim]Backend: Claude Code CLI ({claude_model or 'sonnet'})[/dim]")
     elif backend == "ollama":
         console.print(f"[dim]Backend: Ollama ({ollama_url or 'http://localhost:11434'})[/dim]")
+    elif backend == "llama":
+        console.print(f"[dim]Backend: llama-server ({llama_url or 'http://localhost:8080'})[/dim]")
     if agent:
         console.print(f"[dim]Agent: {agent}[/dim]")
 
@@ -358,7 +480,9 @@ def chat(
 
     memory = MemoryStore()
     skills = _build_skill_registry(config, memory_store=memory)
-    agent_rt = _build_runtime(config, skills, memory, backend, claude_model, ollama_url)
+    agent_rt = _build_runtime(
+        config, skills, memory, backend, claude_model, ollama_url, llama_url, llama_model
+    )
     store = ConversationStore()
 
     # Resume existing conversation or start fresh
@@ -463,7 +587,11 @@ def chat(
             store.save(conv)
             console.print()
 
-    asyncio.run(_chat_loop())
+    try:
+        asyncio.run(_chat_loop())
+    finally:
+        if hasattr(agent_rt, "shutdown"):
+            agent_rt.shutdown()
 
 
 @cli.command()
@@ -1289,6 +1417,66 @@ def doctor() -> None:
         console.print("\n  [dim]Mostly hoopy. Check the warnings above.[/dim]")
     else:
         console.print("\n  [dim]Everything is hoopy. Don't Panic.[/dim]")
+
+
+@cli.command(name="install-worker")
+def install_worker() -> None:
+    """Install systemd user service for auto-starting the Towel worker on boot."""
+    import shutil
+    from pathlib import Path
+
+    service_name = "towel-worker.service"
+    systemd_dir = Path.home() / ".config" / "systemd" / "user"
+    systemd_dir.mkdir(parents=True, exist_ok=True)
+
+    # Find towel binary
+    towel_bin = shutil.which("towel")
+    if not towel_bin:
+        console.print("[red]Cannot find 'towel' in PATH. Install towel first.[/red]")
+        raise SystemExit(1)
+
+    service_content = f"""\
+[Unit]
+Description=Towel AI Worker — auto-discovers GPU, models, and controller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={towel_bin} worker
+Restart=always
+RestartSec=10
+Environment=PATH={Path.home() / '.local' / 'bin'}:/usr/local/bin:/usr/bin:/bin
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=towel-worker
+
+[Install]
+WantedBy=default.target
+"""
+    dest = systemd_dir / service_name
+    dest.write_text(service_content)
+    console.print(f"[green]Wrote[/green] {dest}")
+
+    # Enable and start
+    import subprocess
+
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+    subprocess.run(["systemctl", "--user", "enable", service_name], check=True)
+    subprocess.run(["systemctl", "--user", "start", service_name], check=True)
+
+    # Enable lingering so it runs without login
+    subprocess.run(["loginctl", "enable-linger"], check=False)
+
+    console.print(f"[green]Enabled and started {service_name}[/green]")
+    console.print()
+    console.print("[dim]The worker will now start on boot and auto-discover the controller.[/dim]")
+    console.print("[dim]Check status:  systemctl --user status towel-worker[/dim]")
+    console.print("[dim]View logs:     journalctl --user -u towel-worker -f[/dim]")
+    console.print("[dim]Stop:          systemctl --user stop towel-worker[/dim]")
+    console.print("[dim]Uninstall:     systemctl --user disable --now towel-worker[/dim]")
 
 
 @cli.command()

@@ -241,9 +241,12 @@ def default_worker_capabilities(config: Any, backend: str, allow_tools: bool) ->
         mode = "anthropic_messages"
     elif backend == "ollama":
         mode = "ollama_chat"
+    elif backend == "llama":
+        mode = "llama_chat"
     else:
         mode = "mlx_prompt"
-    return {
+
+    caps: dict[str, Any] = {
         "hostname": socket.gethostname(),
         "backend": backend,
         "model": getattr(config.model, "name", ""),
@@ -252,3 +255,16 @@ def default_worker_capabilities(config: Any, backend: str, allow_tools: bool) ->
         "max_tokens": getattr(config.model, "max_tokens", 0),
         "tools": allow_tools,
     }
+
+    # Add GPU info if available
+    try:
+        from towel.agent.discovery import detect_gpus
+
+        gpus = detect_gpus()
+        if gpus:
+            caps["gpus"] = [{"name": g.name, "vram_mb": g.vram_mb} for g in gpus]
+            caps["total_vram_mb"] = sum(g.vram_mb for g in gpus)
+    except Exception:
+        pass
+
+    return caps
