@@ -10,7 +10,8 @@
 
 **Don't Panic.**
 
-A local AI assistant powered by MLX on Apple Silicon. Private, fast, extensible — runs entirely on your Mac with no cloud dependency.
+A local AI assistant powered by MLX. Private, fast, extensible, and local-first.
+Towel is best on Apple Silicon, and also supports Linux.
 
 ## Quick Start
 
@@ -18,6 +19,13 @@ A local AI assistant powered by MLX on Apple Silicon. Private, fast, extensible 
 pip install -e ".[all]"
 towel init
 towel chat
+```
+
+Launch scripts:
+
+```bash
+./launch.sh       # Linux (also works on macOS)
+./launch.command  # macOS double-click friendly
 ```
 
 ## What Can Towel Do?
