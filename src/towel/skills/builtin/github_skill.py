@@ -1,7 +1,10 @@
 """GitHub skill — search repos, view profiles, trending."""
 from __future__ import annotations
+
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
+
 
 class GithubSkill(Skill):
     @property

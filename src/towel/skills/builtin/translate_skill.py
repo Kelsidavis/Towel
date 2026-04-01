@@ -1,7 +1,9 @@
 """Translate skill — detect language and translate text."""
 
 from __future__ import annotations
+
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
 
 # Common language codes for detection heuristic

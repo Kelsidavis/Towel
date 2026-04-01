@@ -108,5 +108,5 @@ class MakeSkill(Skill):
             return out or "(no output)"
         except FileNotFoundError:
             return "make not found."
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return "make timed out (60s)."

@@ -1,9 +1,11 @@
 """String manipulation skill — encoding, hashing, escaping, case conversion."""
 
 from __future__ import annotations
+
 import html
 import urllib.parse
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
 
 

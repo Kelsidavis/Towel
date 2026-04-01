@@ -12,8 +12,6 @@ Generates:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
-
 
 DOCKERFILE = '''FROM python:3.13-slim
 WORKDIR /app

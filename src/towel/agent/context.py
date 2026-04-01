@@ -13,8 +13,8 @@ as much recent context as the model can handle.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
 
 log = logging.getLogger("towel.agent.context")
 

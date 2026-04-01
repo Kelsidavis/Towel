@@ -1,8 +1,12 @@
 """DNS skill — advanced DNS lookups with record types."""
 from __future__ import annotations
-import asyncio, socket
+
+import asyncio
+import socket
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
+
 
 class DnsSkill(Skill):
     @property

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import shlex
 from typing import Any
 
 from towel.skills.base import Skill, ToolDefinition
@@ -61,7 +60,7 @@ class ShellSkill(Skill):
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             return f"Command timed out after {timeout}s"
         except Exception as e:

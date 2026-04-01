@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
 from datetime import datetime, timedelta
+from typing import Any
 
 from towel.skills.base import Skill, ToolDefinition
 
@@ -37,7 +37,7 @@ def explain_cron(expr: str) -> str:
     parts = expr.strip().split()
     if len(parts) != 5:
         return f"Invalid cron: expected 5 fields, got {len(parts)}"
-    
+
     minute, hour, dom, month, dow = parts
     pieces = []
 
@@ -72,7 +72,7 @@ def next_runs(expr: str, count: int = 5) -> list[str]:
     """Approximate next N run times (simple, not fully cron-accurate)."""
     parts = expr.strip().split()
     if len(parts) != 5:
-        return [f"Invalid cron expression"]
+        return ["Invalid cron expression"]
 
     minute, hour, dom, month, dow = parts
     now = datetime.now()

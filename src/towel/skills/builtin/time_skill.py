@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
-from typing import Any
 import time
+from datetime import UTC, datetime, timedelta, timezone
+from typing import Any
 
 from towel.skills.base import Skill, ToolDefinition
 
@@ -134,7 +134,7 @@ class TimeSkill(Skill):
     def _unix_timestamp(self, ts: float | None = None) -> str:
         if ts is not None:
             try:
-                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                dt = datetime.fromtimestamp(ts, tz=UTC)
                 return (
                     f"Unix timestamp {int(ts)}:\n"
                     f"  UTC: {dt.strftime('%Y-%m-%d %H:%M:%S %Z')}\n"

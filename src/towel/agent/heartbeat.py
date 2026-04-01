@@ -7,13 +7,13 @@ failures before they become visible to the user.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import threading
 import time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any
 
 log = logging.getLogger("towel.agent.heartbeat")
 
@@ -41,7 +41,7 @@ class HealthStatus:
             "model_loaded": self.model_loaded,
             "is_generating": self.is_generating,
             "last_heartbeat": datetime.fromtimestamp(
-                self.last_heartbeat, tz=timezone.utc
+                self.last_heartbeat, tz=UTC
             ).isoformat() if self.last_heartbeat else None,
         }
 

@@ -11,14 +11,10 @@ Usage:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Callable, Awaitable
+from datetime import UTC, datetime
 
 from towel.config import TOWEL_HOME
 
@@ -46,7 +42,7 @@ class AutonomousAgent:
     tools: list[str] = field(default_factory=list)
     enabled: bool = True
     logs: list[AgentLog] = field(default_factory=list)
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     total_runs: int = 0
 
     def to_dict(self) -> dict:
@@ -113,7 +109,7 @@ def log_agent_action(name: str, action: str, result: str) -> None:
     for a in agents:
         if a.name == name:
             a.logs.append(AgentLog(
-                timestamp=datetime.now(timezone.utc).isoformat(),
+                timestamp=datetime.now(UTC).isoformat(),
                 action=action, result=result,
             ))
             a.total_runs += 1

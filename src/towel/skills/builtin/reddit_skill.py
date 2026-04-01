@@ -1,7 +1,10 @@
 """Reddit skill — browse posts from any subreddit (no auth, uses .json API)."""
 from __future__ import annotations
+
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
+
 
 class RedditSkill(Skill):
     @property

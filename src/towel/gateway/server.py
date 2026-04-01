@@ -13,18 +13,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import uvicorn
 import websockets
-from websockets.asyncio.server import ServerConnection, Server
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse, HTMLResponse, FileResponse
-from starlette.routing import Route, Mount
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse
+from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
-import uvicorn
+from websockets.asyncio.server import Server, ServerConnection
 
-from towel.config import TowelConfig
+from towel.agent.conversation import Role
 from towel.agent.runtime import AgentRuntime
-from towel.agent.conversation import Conversation, Role
+from towel.config import TowelConfig
 from towel.gateway.sessions import SessionManager
 from towel.persistence.store import ConversationStore
 
@@ -286,7 +286,8 @@ class GatewayServer:
         async def conversation_export(request: Request) -> HTMLResponse:
             """Export a conversation to markdown."""
             from starlette.responses import Response
-            from towel.persistence.export import export_markdown, export_text, export_json
+
+            from towel.persistence.export import export_json, export_markdown, export_text
 
             conv_id = request.path_params["conv_id"]
             fmt = request.query_params.get("format", "markdown")

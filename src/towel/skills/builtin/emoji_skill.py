@@ -1,6 +1,8 @@
 """Emoji skill — search and look up emoji by name or keyword."""
 from __future__ import annotations
+
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
 
 _EMOJI: dict[str, str] = {

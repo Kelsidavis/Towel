@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 from typing import Any
 
-from towel.skills.base import Skill, ToolDefinition
 from towel.config import TOWEL_HOME
+from towel.skills.base import Skill, ToolDefinition
 
 BM_FILE = TOWEL_HOME / "bookmarks.json"
 
@@ -62,7 +61,7 @@ class BookmarkSkill(Skill):
     def _add(self, url: str, title: str, tags: list[str]) -> str:
         bms = _load()
         bms.append({"url": url, "title": title or url, "tags": [t.lower() for t in tags],
-                     "added": datetime.now(timezone.utc).isoformat()})
+                     "added": datetime.now(UTC).isoformat()})
         _save(bms)
         return f"Bookmarked: {title or url}"
 

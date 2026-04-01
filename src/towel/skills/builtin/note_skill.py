@@ -1,7 +1,9 @@
 """Quick notes skill — ephemeral scratchpad for the current session."""
 
 from __future__ import annotations
+
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
 
 _notes: dict[str, str] = {}

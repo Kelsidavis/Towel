@@ -1,8 +1,10 @@
 """Wikipedia skill — search and summarize articles."""
 from __future__ import annotations
-import json
+
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
+
 
 class WikipediaSkill(Skill):
     @property

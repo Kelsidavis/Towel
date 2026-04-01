@@ -1,7 +1,9 @@
 """Timezone skill — world clock and conversion."""
 from __future__ import annotations
-from datetime import datetime, timezone, timedelta
+
+from datetime import UTC, datetime, timedelta
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
 
 _TZ = {"UTC":0,"EST":-5,"EDT":-4,"CST":-6,"CDT":-5,"MST":-7,"MDT":-6,"PST":-8,"PDT":-7,
@@ -24,7 +26,7 @@ class TimezoneSkill(Skill):
     async def execute(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         if tool_name == "tz_now":
             zones = arguments.get("zones", ["UTC","EST","PST","CET","JST"])
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             lines = ["World clock:"]
             for z in zones:
                 off = _TZ.get(z.upper(), 0)

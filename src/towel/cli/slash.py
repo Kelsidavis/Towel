@@ -21,7 +21,7 @@ Commands:
 
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from rich.console import Console
 
@@ -272,7 +272,7 @@ def _cmd_info(ctx: SlashContext) -> None:
         for p in contexts:
             console.print(f"    [dim]{p}[/dim]")
     else:
-        console.print(f"  [green]Project context:[/green] [dim]none (create .towel.md)[/dim]")
+        console.print("  [green]Project context:[/green] [dim]none (create .towel.md)[/dim]")
 
 
 def _cmd_stats(ctx: SlashContext) -> None:
@@ -332,7 +332,7 @@ def _cmd_stats(ctx: SlashContext) -> None:
         for provider, cost_per_m in cloud_costs.items():
             est = (total_tokens / 1_000_000) * cost_per_m
             console.print(f"    [dim]{provider}: ~${est:.4f}[/dim]")
-        console.print(f"    [green]Towel (local): $0.00[/green]")
+        console.print("    [green]Towel (local): $0.00[/green]")
 
 
 def _cmd_undo(ctx: SlashContext) -> None:
@@ -395,6 +395,7 @@ def _cmd_retry(ctx: SlashContext) -> bool | None:
 def _cmd_fork(ctx: SlashContext, arg: str) -> None:
     """Save current conversation and start a new branch with the same history."""
     import uuid
+
     from towel.agent.conversation import Conversation, Message
 
     if not ctx.conv.messages:
@@ -437,7 +438,6 @@ def _cmd_fork(ctx: SlashContext, arg: str) -> None:
 
 
 def _cmd_clear(ctx: SlashContext) -> None:
-    from towel.agent.conversation import Conversation
     count = len(ctx.conv)
     ctx.conv.messages.clear()
     console.print(f"[green]Cleared {count} messages.[/green] Conversation reset.")
@@ -447,7 +447,7 @@ def _cmd_agent(ctx: SlashContext, arg: str) -> None:
     if not arg:
         console.print(f"  Current agent: [green]{ctx.current_agent_name or 'default'}[/green]")
         console.print(f"  Model: {ctx.config.model.name}")
-        console.print(f"  [dim]Switch with: /agent <name>[/dim]")
+        console.print("  [dim]Switch with: /agent <name>[/dim]")
         return
 
     name = arg.strip()
@@ -606,7 +606,8 @@ def _cmd_compact(ctx: SlashContext, arg: str) -> None:
     with a condensed summary. Pinned messages are always preserved.
     """
     import re
-    from towel.agent.conversation import Role, Message
+
+    from towel.agent.conversation import Message, Role
 
     keep_count = int(arg.strip()) if arg.strip().isdigit() else 4
     msgs = ctx.conv.messages
@@ -827,7 +828,7 @@ def _cmd_pin(ctx: SlashContext, arg: str) -> None:
     preview = target.content[:60] + "..." if len(target.content) > 60 else target.content
     preview = preview.replace("\n", " ")
     console.print(f"[green]{action}:[/green] {preview}")
-    console.print(f"[dim]Pinned messages stay in context even when older messages are dropped.[/dim]")
+    console.print("[dim]Pinned messages stay in context even when older messages are dropped.[/dim]")
 
 
 def _cmd_pins(ctx: SlashContext) -> None:
@@ -851,6 +852,7 @@ def _cmd_report(ctx: SlashContext) -> None:
     """Generate a structured session summary from the conversation."""
     import re
     from collections import Counter
+
     from towel.agent.conversation import Role
 
     msgs = ctx.conv.messages
@@ -906,7 +908,7 @@ def _cmd_report(ctx: SlashContext) -> None:
     pinned = [m for m in msgs if m.pinned]
 
     # ── Render ──
-    console.print(f"\n[bold]Session Report[/bold]")
+    console.print("\n[bold]Session Report[/bold]")
     console.print(f"  [green]{ctx.conv.display_title}[/green]")
     if ctx.conv.tags:
         console.print(f"  Tags: {' '.join(f'[yellow]#{t}[/yellow]' for t in ctx.conv.tags)}")
@@ -943,6 +945,7 @@ def _cmd_save(ctx: SlashContext, arg: str) -> None:
     """Save a code block from the last assistant response to a file."""
     import re
     from pathlib import Path
+
     from towel.agent.conversation import Role
 
     parts = arg.strip().split()
@@ -1001,6 +1004,7 @@ def _cmd_copy(ctx: SlashContext, arg: str) -> None:
     import platform
     import re
     import subprocess
+
     from towel.agent.conversation import Role
 
     # Find last assistant message
@@ -1112,7 +1116,7 @@ def _cmd_history(ctx: SlashContext, arg: str) -> None:
         )
         console.print(f"    {c.summary}")
 
-    console.print(f"\n[dim]Switch with: /resume <id>[/dim]")
+    console.print("\n[dim]Switch with: /resume <id>[/dim]")
 
 
 def _cmd_resume(ctx: SlashContext, arg: str) -> None:
@@ -1190,7 +1194,7 @@ def _cmd_context(ctx: SlashContext) -> None:
 
 
 def _cmd_export(ctx: SlashContext, arg: str) -> None:
-    from towel.persistence.export import export_markdown, export_html
+    from towel.persistence.export import export_html, export_markdown
 
     if len(ctx.conv) == 0:
         console.print("[dim]Nothing to export (conversation is empty).[/dim]")
@@ -1213,7 +1217,7 @@ def _cmd_export(ctx: SlashContext, arg: str) -> None:
 
 
 def _cmd_snippet(ctx: SlashContext, arg: str) -> None:
-    from towel.cli.snippets import set_snippet, remove_snippet
+    from towel.cli.snippets import remove_snippet, set_snippet
 
     parts = arg.split(None, 1)
     if len(parts) < 1:
@@ -1256,14 +1260,14 @@ def _cmd_snippets(ctx: SlashContext) -> None:
         if len(preview) > 60:
             preview = preview[:57] + "..."
         console.print(f"  [green]{name}[/green]  {preview}")
-    console.print(f"\n[dim]Use with: /s <name> [extra text][/dim]")
+    console.print("\n[dim]Use with: /s <name> [extra text][/dim]")
 
 
 def _cmd_use_snippet(ctx: SlashContext, arg: str) -> bool | None:
     """Insert a snippet into the conversation as a user message."""
-    from towel.cli.snippets import get_snippet
     from towel.agent.conversation import Role
     from towel.agent.refs import expand_refs, parse_refs
+    from towel.cli.snippets import get_snippet
 
     parts = arg.split(None, 1)
     if not parts:
@@ -1343,9 +1347,9 @@ def _try_alias(ctx: SlashContext, cmd: str, arg: str) -> bool | None:
 
     Returns False to signal agent step, True if consumed, None if not an alias.
     """
-    from towel.cli.aliases import get_alias
     from towel.agent.conversation import Role
     from towel.agent.refs import expand_refs, parse_refs
+    from towel.cli.aliases import get_alias
 
     # cmd is like "/review" — strip the slash
     alias_name = cmd.lstrip("/")
@@ -1377,7 +1381,7 @@ def _cmd_system(ctx: SlashContext, arg: str) -> None:
         return
     ctx.config.identity = arg
     ctx.agent.config = ctx.config
-    console.print(f"[green]System prompt updated.[/green]")
+    console.print("[green]System prompt updated.[/green]")
     console.print(f"  [dim]{arg[:100]}{'...' if len(arg) > 100 else ''}[/dim]")
 
 
@@ -1389,7 +1393,6 @@ _active_loops: dict[str, bool] = {}  # name -> running
 def _cmd_loop(ctx: SlashContext, arg: str) -> None:
     """Run a prompt on a recurring interval."""
     import re
-    import asyncio
     import threading
 
     parts = arg.strip().split(None, 1)
@@ -1458,7 +1461,6 @@ def _cmd_loop(ctx: SlashContext, arg: str) -> None:
 
 def _cmd_health(ctx: SlashContext) -> None:
     """Show agent health status."""
-    from towel.agent.heartbeat import Heartbeat
 
     # Check if heartbeat is attached to agent
     hb = getattr(ctx.agent, '_heartbeat', None)
@@ -1525,18 +1527,20 @@ def _cmd_whoami(ctx: SlashContext) -> None:
     skill_count = len(skills) if skills else 0
     tool_count = len(skills.tool_definitions()) if skills else 0
 
-    console.print(f"[bold]Agent identity:[/bold]")
+    console.print("[bold]Agent identity:[/bold]")
     console.print(f"  Model: [green]{config.model.name}[/green]")
     console.print(f"  Agent: {ctx.current_agent_name or 'default'}")
+    if config.model.turboquant:
+        console.print(f"  KV cache: [cyan]TurboQuant {config.model.turboquant_bits}-bit[/cyan] (QJL ratio {config.model.turboquant_qjl_ratio})")
     console.print(f"  Identity: [dim]{config.identity[:80]}{'...' if len(config.identity) > 80 else ''}[/dim]")
-    console.print(f"\n[bold]Context budget:[/bold]")
+    console.print("\n[bold]Context budget:[/bold]")
     console.print(f"  Window:     {config.model.context_window:,} tokens")
     console.print(f"  Max output: {config.model.max_tokens:,} tokens")
     console.print(f"  System:     ~{sys_tokens:,} tokens")
     console.print(f"  Messages:   {len(conv)} ({conv_chars:,} chars)")
     pinned = sum(1 for m in conv.messages if m.pinned)
     if pinned: console.print(f"  Pinned:     {pinned}")
-    console.print(f"\n[bold]Capabilities:[/bold]")
+    console.print("\n[bold]Capabilities:[/bold]")
     console.print(f"  Skills: {skill_count}  Tools: {tool_count}")
     if conv.tags:
         console.print(f"  Tags: {' '.join(f'#{t}' for t in conv.tags)}")

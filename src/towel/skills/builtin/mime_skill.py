@@ -1,9 +1,12 @@
 """MIME type skill — identify file types by extension or content."""
 from __future__ import annotations
+
 import mimetypes
 from pathlib import Path
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
+
 
 class MimeSkill(Skill):
     @property

@@ -85,9 +85,9 @@ class LogAnalyzerSkill(Skill):
             parts.append(f"  Time range: {timestamps[0]} to {timestamps[-1]}")
         parts.append(f"  Error rate: {error_rate:.1f}% ({errors:,} errors)")
         if levels:
-            parts.append(f"  Levels: " + ", ".join(f"{k}={v}" for k, v in levels.most_common()))
+            parts.append("  Levels: " + ", ".join(f"{k}={v}" for k, v in levels.most_common()))
         if ips:
-            parts.append(f"  Top IPs: " + ", ".join(f"{ip}({c})" for ip, c in ips.most_common(5)))
+            parts.append("  Top IPs: " + ", ".join(f"{ip}({c})" for ip, c in ips.most_common(5)))
         return "\n".join(parts)
 
     def _filter(self, path: str, level: str|None, pattern: str|None, tail: int|None) -> str:

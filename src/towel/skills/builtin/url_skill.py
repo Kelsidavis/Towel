@@ -1,8 +1,11 @@
 """URL skill — parse, build, shorten, and inspect URLs."""
 from __future__ import annotations
-from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
+
 from typing import Any
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
 from towel.skills.base import Skill, ToolDefinition
+
 
 class UrlSkill(Skill):
     @property

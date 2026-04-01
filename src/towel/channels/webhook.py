@@ -24,8 +24,6 @@ API:
 
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 from typing import Any
 
@@ -55,11 +53,11 @@ class WebhookChannel(Channel):
 
     async def listen(self) -> None:
         """Start the webhook HTTP server."""
+        import uvicorn
         from starlette.applications import Starlette
         from starlette.requests import Request
         from starlette.responses import JSONResponse
         from starlette.routing import Route
-        import uvicorn
 
         async def health(_request: Request) -> JSONResponse:
             return JSONResponse({"status": "ok", "channel": "webhook"})

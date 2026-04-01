@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import abc
-import asyncio
 import json
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 import websockets
 

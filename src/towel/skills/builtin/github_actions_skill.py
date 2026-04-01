@@ -1,7 +1,10 @@
 """GitHub Actions skill — check workflow runs and status."""
 from __future__ import annotations
+
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
+
 
 class GithubActionsSkill(Skill):
     @property

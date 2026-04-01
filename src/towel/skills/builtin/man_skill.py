@@ -50,7 +50,7 @@ class ManSkill(Skill):
             return out[:10000]
         except FileNotFoundError:
             return f"Command not found: {cmd[0]}"
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return "Command timed out."
         except Exception as e:
             return f"Error: {e}"

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import re
 from pathlib import Path
 from typing import Any
@@ -145,7 +144,7 @@ class SearchSkill(Skill):
             kind = "d" if fpath.is_dir() else "f"
             matches.append(f"  {kind} {rel}")
             if len(matches) >= 100:
-                matches.append(f"  ... (truncated at 100)")
+                matches.append("  ... (truncated at 100)")
                 break
 
         if not matches:

@@ -1,9 +1,14 @@
 """SSL certificate skill — inspect TLS certificates for any domain."""
 from __future__ import annotations
-import asyncio, ssl, socket
+
+import asyncio
+import socket
+import ssl
 from datetime import datetime
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
+
 
 class CertSkill(Skill):
     @property

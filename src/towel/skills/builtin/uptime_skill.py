@@ -1,7 +1,9 @@
 """Uptime monitor skill — check if URLs are up and measure response time."""
 from __future__ import annotations
+
 import time as _time
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
 
 _history: list[dict] = []

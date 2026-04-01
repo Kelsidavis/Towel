@@ -1,7 +1,10 @@
 """Port scanner skill — scan common ports on a host."""
 from __future__ import annotations
-import asyncio, socket
+
+import asyncio
+import socket
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
 
 COMMON_PORTS = {22:"SSH",80:"HTTP",443:"HTTPS",3000:"Dev",3306:"MySQL",5432:"PostgreSQL",

@@ -1,9 +1,10 @@
 """Math skill — statistics, number formatting, and unit-aware calculations."""
 
 from __future__ import annotations
-import math
+
 import statistics
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
 
 

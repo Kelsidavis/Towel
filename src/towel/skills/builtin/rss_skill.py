@@ -1,8 +1,11 @@
 """RSS skill — read and parse RSS/Atom feeds."""
 from __future__ import annotations
+
 import re
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
+
 
 class RssSkill(Skill):
     @property

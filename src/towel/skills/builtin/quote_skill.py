@@ -1,7 +1,9 @@
 """Quote skill — random inspirational quotes."""
 from __future__ import annotations
+
 import random
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
 
 _QUOTES = [

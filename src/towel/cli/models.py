@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
 
 from rich.console import Console
-from rich.table import Table
 
-from towel.config import TowelConfig, DEFAULT_AGENTS
+from towel.config import TowelConfig
 
 log = logging.getLogger("towel.models")
 console = Console()

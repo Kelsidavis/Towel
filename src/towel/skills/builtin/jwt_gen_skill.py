@@ -1,8 +1,15 @@
 """JWT generator skill — create JWTs for testing."""
 from __future__ import annotations
-import base64, json, time, hmac, hashlib
+
+import base64
+import hashlib
+import hmac
+import json
+import time
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
+
 
 class JwtGenSkill(Skill):
     @property

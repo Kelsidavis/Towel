@@ -1,7 +1,9 @@
 """HTTP header skill — analyze, explain, and generate HTTP headers."""
 
 from __future__ import annotations
+
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
 
 _HEADER_DB: dict[str, str] = {
@@ -130,10 +132,10 @@ class HttpHeaderSkill(Skill):
         lines = ["CORS headers:\n"]
         lines.append(f"  Access-Control-Allow-Origin: {origins}")
         lines.append(f"  Access-Control-Allow-Methods: {methods}")
-        lines.append(f"  Access-Control-Allow-Headers: Content-Type, Authorization")
+        lines.append("  Access-Control-Allow-Headers: Content-Type, Authorization")
         if credentials:
-            lines.append(f"  Access-Control-Allow-Credentials: true")
+            lines.append("  Access-Control-Allow-Credentials: true")
             if origins == "*":
                 lines.append("\n  [!] Warning: credentials=true is incompatible with origin=*")
-        lines.append(f"  Access-Control-Max-Age: 86400")
+        lines.append("  Access-Control-Max-Age: 86400")
         return "\n".join(lines)

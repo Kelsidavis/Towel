@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import time
+from datetime import UTC
 from typing import Any
 
 from towel.skills.base import Skill, ToolDefinition
@@ -58,8 +59,8 @@ class JwtSkill(Skill):
         now = int(time.time())
 
         if exp:
-            from datetime import datetime, timezone
-            exp_dt = datetime.fromtimestamp(exp, tz=timezone.utc)
+            from datetime import datetime
+            exp_dt = datetime.fromtimestamp(exp, tz=UTC)
             if exp < now:
                 lines.append(f"\nStatus: EXPIRED (expired {exp_dt.isoformat()})")
             else:
@@ -68,8 +69,8 @@ class JwtSkill(Skill):
                 lines.append(f"\nStatus: VALID (expires {exp_dt.isoformat()}, {h}h {m}m remaining)")
 
         if iat:
-            from datetime import datetime, timezone
-            iat_dt = datetime.fromtimestamp(iat, tz=timezone.utc)
+            from datetime import datetime
+            iat_dt = datetime.fromtimestamp(iat, tz=UTC)
             lines.append(f"Issued: {iat_dt.isoformat()}")
 
         sub = payload.get("sub")

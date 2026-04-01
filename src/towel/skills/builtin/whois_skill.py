@@ -1,8 +1,11 @@
 """Whois skill — domain registration and expiry info."""
 from __future__ import annotations
+
 import asyncio
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
+
 
 class WhoisSkill(Skill):
     @property

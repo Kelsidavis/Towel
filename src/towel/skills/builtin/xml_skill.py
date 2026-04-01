@@ -1,8 +1,12 @@
 """XML skill — parse and extract data from XML."""
 from __future__ import annotations
-import json, re
+
+import json
+import re
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
+
 
 def _xml_to_dict(xml: str) -> dict | list | str:
     """Simple XML to dict (handles basic cases without lxml)."""

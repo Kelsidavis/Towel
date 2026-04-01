@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import signal
 from typing import Any
 
 from towel.skills.base import Skill, ToolDefinition

@@ -128,7 +128,7 @@ class TelegramChannel(Channel):
                             "parse_mode": "Markdown",
                         },
                     )
-                except Exception as e:
+                except Exception:
                     # Retry without markdown if it fails
                     try:
                         await client.post(

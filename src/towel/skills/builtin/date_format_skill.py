@@ -1,7 +1,9 @@
 """Date format skill — parse and format dates between formats."""
 from __future__ import annotations
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
 
 _FORMATS = {
@@ -28,7 +30,7 @@ class DateFormatSkill(Skill):
         ]
     async def execute(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         if tool_name == "date_now":
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             lines = ["Current date/time (UTC):"]
             for name, fmt in _FORMATS.items():
                 if fmt == "unix": lines.append(f"  {name}: {int(now.timestamp())}")
@@ -42,7 +44,7 @@ class DateFormatSkill(Skill):
             if not fmt: return f"Unknown format: {arguments['to_format']}"
             if fmt == "unix": return str(int(dt.timestamp()))
             if fmt == "relative":
-                delta = datetime.now(timezone.utc) - dt.replace(tzinfo=timezone.utc)
+                delta = datetime.now(UTC) - dt.replace(tzinfo=UTC)
                 days = delta.days
                 if days == 0: return "today"
                 if days == 1: return "yesterday"

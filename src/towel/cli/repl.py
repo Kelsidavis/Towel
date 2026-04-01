@@ -76,7 +76,7 @@ def run_repl(skills_registry: Any) -> None:
 
         if tool_name not in tool_names:
             console.print(f"[red]Unknown tool:[/red] {tool_name}")
-            console.print(f"[dim]Type 'list' to see available tools.[/dim]")
+            console.print("[dim]Type 'list' to see available tools.[/dim]")
             continue
 
         # Parse arguments

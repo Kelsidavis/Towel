@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 from typing import Any
 
-from towel.skills.base import Skill, ToolDefinition
 from towel.config import TOWEL_HOME
+from towel.skills.base import Skill, ToolDefinition
 
 KB_FILE = TOWEL_HOME / "knowledge.json"
 
@@ -64,7 +63,7 @@ class KnowledgeSkill(Skill):
     def _add(self, content: str, tags: list[str], title: str) -> str:
         entries = _load_kb()
         entry = {"content": content, "tags": [t.lower() for t in tags], "title": title,
-                 "created": datetime.now(timezone.utc).isoformat()}
+                 "created": datetime.now(UTC).isoformat()}
         entries.append(entry)
         _save_kb(entries)
         return f"Saved to knowledge base ({len(entries)} total). Tags: {', '.join(tags) or 'none'}"

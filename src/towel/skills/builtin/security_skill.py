@@ -86,7 +86,7 @@ class SecuritySkill(Skill):
         return f"Found {len(findings)} potential secret(s) in {files_scanned} files:\n" + "\n".join(findings[:50])
 
     def _check_perms(self, path: str) -> str:
-        import os, stat
+        import stat
         root = Path(path).expanduser().resolve()
         issues: list[str] = []
         for fp in sorted(root.rglob("*")):

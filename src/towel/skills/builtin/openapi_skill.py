@@ -56,7 +56,7 @@ class OpenApiSkill(Skill):
                 result = _simple_yaml_parse(text)
                 if isinstance(result, dict): return result
             except: pass
-            return f"Cannot parse spec (not valid JSON)"
+            return "Cannot parse spec (not valid JSON)"
 
     def _summary(self, spec: dict|str) -> str:
         if isinstance(spec, str): return spec
@@ -110,7 +110,7 @@ class OpenApiSkill(Skill):
                 lines.append(f"    {p.get('in','?')}/{p.get('name','?')}: {p.get('schema',{}).get('type','?')}{req}")
         responses = op.get("responses", {})
         if responses:
-            lines.append(f"  Responses:")
+            lines.append("  Responses:")
             for code, resp in responses.items():
                 desc = resp.get("description", "")[:50] if isinstance(resp, dict) else ""
                 lines.append(f"    {code}: {desc}")

@@ -128,7 +128,7 @@ class NetworkSkill(Skill):
                 return f"Port {port} on {host}: OPEN ({service})"
             else:
                 return f"Port {port} on {host}: CLOSED/FILTERED"
-        except socket.timeout:
+        except TimeoutError:
             return f"Port {port} on {host}: TIMEOUT after {timeout}s"
         except socket.gaierror as e:
             return f"Cannot resolve {host}: {e}"

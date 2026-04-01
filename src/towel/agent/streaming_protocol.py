@@ -11,8 +11,8 @@ Usage from client:
 from __future__ import annotations
 
 import json
-import asyncio
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from starlette.requests import Request
 from starlette.responses import StreamingResponse

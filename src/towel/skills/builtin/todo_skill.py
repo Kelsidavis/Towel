@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 from typing import Any
 
-from towel.skills.base import Skill, ToolDefinition
 from towel.config import TOWEL_HOME
+from towel.skills.base import Skill, ToolDefinition
 
 TODO_FILE = TOWEL_HOME / "todos.json"
 
@@ -64,7 +63,7 @@ class TodoSkill(Skill):
     def _add(self, task: str, priority: str, due: str|None, tags: list[str]) -> str:
         todos = _load()
         entry = {"task": task, "priority": priority, "done": False,
-                 "tags": [t.lower() for t in tags], "created": datetime.now(timezone.utc).isoformat()}
+                 "tags": [t.lower() for t in tags], "created": datetime.now(UTC).isoformat()}
         if due: entry["due"] = due
         todos.append(entry)
         _save(todos)
@@ -95,7 +94,7 @@ class TodoSkill(Skill):
         todos = _load()
         if index < 0 or index >= len(todos): return f"Invalid index: {index}"
         todos[index]["done"] = True
-        todos[index]["completed_at"] = datetime.now(timezone.utc).isoformat()
+        todos[index]["completed_at"] = datetime.now(UTC).isoformat()
         _save(todos)
         return f"Completed: {todos[index]['task']}"
 

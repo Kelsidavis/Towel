@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from towel.config import TowelConfig
 
 
-def build_openai_routes(agent: "AgentRuntime", config: "TowelConfig") -> list[Route]:
+def build_openai_routes(agent: AgentRuntime, config: TowelConfig) -> list[Route]:
     """Build /v1/* routes for OpenAI API compatibility."""
 
     async def chat_completions(request: Request) -> JSONResponse | StreamingResponse:
@@ -98,8 +98,8 @@ def build_openai_routes(agent: "AgentRuntime", config: "TowelConfig") -> list[Ro
 
 
 async def _stream_sse(
-    agent: "AgentRuntime",
-    conv: "Conversation",
+    agent: AgentRuntime,
+    conv: Conversation,
     request_id: str,
     created: int,
     model: str,

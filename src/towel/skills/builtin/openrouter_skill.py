@@ -1,7 +1,10 @@
 """OpenRouter skill — query available AI models and pricing."""
 from __future__ import annotations
+
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
+
 
 class OpenRouterSkill(Skill):
     @property

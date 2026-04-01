@@ -67,7 +67,7 @@ class DockerSkill(Skill):
             return output or "(no output)"
         except FileNotFoundError:
             return "Docker CLI not found. Install Docker Desktop."
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return "Docker command timed out."
         except Exception as e:
             return f"Error: {e}"

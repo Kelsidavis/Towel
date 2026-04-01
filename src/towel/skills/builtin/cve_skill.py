@@ -1,7 +1,10 @@
 """CVE skill — search for security vulnerabilities."""
 from __future__ import annotations
+
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
+
 
 class CveSkill(Skill):
     @property

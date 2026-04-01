@@ -9,12 +9,7 @@ Run a set of test prompts through the agent and measure:
 
 from __future__ import annotations
 
-import asyncio
-import time
 from dataclasses import dataclass, field
-from typing import Any
-
-from towel.config import TowelConfig
 
 
 @dataclass
@@ -113,7 +108,7 @@ def score_case(case: EvalCase) -> None:
     # Notes
     notes = []
     if case.expected_keywords and not any(k.lower() in case.response.lower() for k in case.expected_keywords):
-        notes.append(f"missing keywords")
+        notes.append("missing keywords")
     if case.expected_tools and not any(t in case.tools_called for t in case.expected_tools):
         notes.append(f"expected tools: {case.expected_tools}")
     case.notes = ", ".join(notes) if notes else "ok"

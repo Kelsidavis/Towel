@@ -6,11 +6,11 @@ from the main config to avoid clobbering comments.
 
 from __future__ import annotations
 
-import toml
-from pathlib import Path
 from typing import Any
 
-from towel.config import TOWEL_HOME, AgentProfile, ModelConfig
+import toml
+
+from towel.config import TOWEL_HOME, AgentProfile
 
 AGENTS_FILE = TOWEL_HOME / "agents.toml"
 
@@ -39,19 +39,26 @@ def create_agent(
     context_window: int = 8192,
     temperature: float = 0.7,
     max_tokens: int = 4096,
+    turboquant: bool = False,
+    turboquant_bits: int = 3,
 ) -> AgentProfile:
     """Create and persist a new user agent profile."""
     agents = load_user_agents()
 
+    model_cfg: dict = {
+        "name": model_name,
+        "context_window": context_window,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if turboquant:
+        model_cfg["turboquant"] = True
+        model_cfg["turboquant_bits"] = turboquant_bits
+
     agents[name] = {
         "description": description,
         "identity": identity,
-        "model": {
-            "name": model_name,
-            "context_window": context_window,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        },
+        "model": model_cfg,
     }
 
     save_user_agents(agents)
@@ -82,4 +89,6 @@ def clone_agent(source_name: str, new_name: str, config: Any) -> AgentProfile | 
         context_window=profile.model.context_window,
         temperature=profile.model.temperature,
         max_tokens=profile.model.max_tokens,
+        turboquant=profile.model.turboquant,
+        turboquant_bits=profile.model.turboquant_bits,
     )

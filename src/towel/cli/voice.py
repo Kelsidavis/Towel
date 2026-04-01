@@ -11,12 +11,10 @@ Usage:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
 
 from rich.console import Console
 
@@ -36,10 +34,11 @@ def check_voice_deps() -> str | None:
 def record_audio(duration: float = 10.0, sample_rate: int = 16000) -> bytes | str:
     """Record audio from the default microphone. Returns WAV bytes or error string."""
     try:
-        import sounddevice as sd
-        import numpy as np
-        import wave
         import io
+        import wave
+
+        import numpy as np
+        import sounddevice as sd
 
         console.print(f"[green]Listening...[/green] (up to {duration:.0f}s, press Ctrl+C to stop)")
 
@@ -53,7 +52,6 @@ def record_audio(duration: float = 10.0, sample_rate: int = 16000) -> bytes | st
             audio = sd.rec(0, samplerate=sample_rate, channels=1, dtype="int16")
 
         # Trim silence from end
-        import numpy as np
         threshold = np.max(np.abs(audio)) * 0.01
         nonsilent = np.where(np.abs(audio.flatten()) > threshold)[0]
         if len(nonsilent) > 0:

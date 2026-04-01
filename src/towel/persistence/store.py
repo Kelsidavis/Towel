@@ -13,7 +13,6 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any
 
 from towel.agent.conversation import Conversation, Role
 from towel.config import TOWEL_HOME

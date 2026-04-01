@@ -6,18 +6,12 @@ system status, and lets you chat — all in one terminal screen.
 
 from __future__ import annotations
 
-import asyncio
-from typing import Any
-
-from rich.console import Console
 from rich.layout import Layout
 from rich.panel import Panel
 from rich.table import Table
-from rich.live import Live
-from rich.text import Text
 
-from towel.config import TowelConfig, TOWEL_HOME
 from towel import __version__
+from towel.config import TOWEL_HOME, TowelConfig
 
 
 def build_header() -> Panel:
@@ -29,8 +23,8 @@ def build_header() -> Panel:
 
 
 def build_skills_panel(config: TowelConfig) -> Panel:
-    from towel.skills.registry import SkillRegistry
     from towel.skills.builtin import register_builtins
+    from towel.skills.registry import SkillRegistry
 
     reg = SkillRegistry()
     register_builtins(reg)
@@ -97,7 +91,7 @@ def build_system_panel(config: TowelConfig) -> Panel:
 def build_channels_panel() -> Panel:
     channels = [
         ("CLI", "towel chat", "green"),
-        ("Web", f"towel serve", "green"),
+        ("Web", "towel serve", "green"),
         ("Discord", "towel discord -t TOKEN", "blue"),
         ("Telegram", "towel telegram -t TOKEN", "blue"),
         ("Slack", "towel slack -b/-a TOKEN", "blue"),

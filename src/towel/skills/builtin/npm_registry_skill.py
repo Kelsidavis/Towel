@@ -1,7 +1,10 @@
 """NPM registry skill — search and inspect npm packages."""
 from __future__ import annotations
+
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
+
 
 class NpmRegistrySkill(Skill):
     @property
@@ -20,7 +23,7 @@ class NpmRegistrySkill(Skill):
         try:
             async with httpx.AsyncClient(timeout=10) as c:
                 if tool_name == "npm_search":
-                    resp = await c.get(f"https://registry.npmjs.org/-/v1/search", params={"text":arguments["query"],"size":arguments.get("limit",5)})
+                    resp = await c.get("https://registry.npmjs.org/-/v1/search", params={"text":arguments["query"],"size":arguments.get("limit",5)})
                     pkgs = resp.json().get("objects",[])
                     if not pkgs: return "No packages found."
                     lines = ["npm search results:"]

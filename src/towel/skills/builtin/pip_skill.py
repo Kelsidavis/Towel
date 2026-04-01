@@ -66,7 +66,7 @@ class PipSkill(Skill):
         result.append(f"  Pinned: {len(pinned)}")
         result.append(f"  Unpinned: {len(unpinned)}")
         if unpinned:
-            result.append(f"\n  Unpinned packages:")
+            result.append("\n  Unpinned packages:")
             for u in unpinned[:20]: result.append(f"    {u}")
         return "\n".join(result)
 

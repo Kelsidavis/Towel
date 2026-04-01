@@ -1,7 +1,10 @@
 """Weather skill — get weather forecasts using wttr.in (no API key)."""
 from __future__ import annotations
+
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
+
 
 class WeatherSkill(Skill):
     @property

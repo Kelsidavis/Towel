@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import html
 import json
-from typing import Any
 
 from towel.agent.conversation import Conversation, Role
 
@@ -27,7 +26,7 @@ def export_markdown(conv: Conversation, include_metadata: bool = False) -> str:
     for msg in conv.messages:
         match msg.role:
             case Role.USER:
-                lines.append(f"### You")
+                lines.append("### You")
                 if include_metadata:
                     lines.append(f"*{msg.timestamp.strftime('%H:%M:%S')}*")
                 lines.append("")
@@ -35,7 +34,7 @@ def export_markdown(conv: Conversation, include_metadata: bool = False) -> str:
                 lines.append("")
 
             case Role.ASSISTANT:
-                lines.append(f"### Towel")
+                lines.append("### Towel")
                 if include_metadata:
                     ts = msg.timestamp.strftime("%H:%M:%S")
                     meta_parts = [ts]
@@ -77,7 +76,7 @@ def export_markdown(conv: Conversation, include_metadata: bool = False) -> str:
 
     # Footer
     lines.append("---")
-    lines.append(f"*Exported from [Towel](https://github.com/towel-ai/towel) — Don't Panic.*")
+    lines.append("*Exported from [Towel](https://github.com/towel-ai/towel) — Don't Panic.*")
 
     return "\n".join(lines)
 

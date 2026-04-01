@@ -1,8 +1,11 @@
 """Random skill — dice, coin flips, random choices, shuffles."""
 from __future__ import annotations
+
 import random
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
+
 
 class RandomSkill(Skill):
     @property

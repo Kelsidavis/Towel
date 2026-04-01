@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import platform
 import os
+import platform
 from typing import Any
 
 from towel.skills.base import Skill, ToolDefinition

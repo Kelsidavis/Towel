@@ -1,7 +1,9 @@
 """Pomodoro skill — focus timer with work/break cycles."""
 from __future__ import annotations
-import time as _time, threading
+
+import time as _time
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
 
 _active: dict[str, Any] = {}

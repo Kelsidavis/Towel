@@ -1,7 +1,10 @@
 """Stack Overflow skill — search questions and get answers."""
 from __future__ import annotations
+
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
+
 
 class StackOverflowSkill(Skill):
     @property
@@ -34,7 +37,7 @@ class StackOverflowSkill(Skill):
                 data = resp.json()
                 items = data.get("items", [])
                 if not items: return "No questions found."
-                lines = [f"Stack Overflow results:"]
+                lines = ["Stack Overflow results:"]
                 for q in items:
                     score = q.get("score", 0)
                     answers = q.get("answer_count", 0)

@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -36,8 +36,8 @@ class MemoryEntry:
     key: str
     content: str
     memory_type: str = "fact"
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -101,7 +101,7 @@ class MemoryStore:
     def remember(self, key: str, content: str, memory_type: str = "fact") -> MemoryEntry:
         """Store or update a memory."""
         entries = self._load_all()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         if key in entries:
             entry = entries[key]

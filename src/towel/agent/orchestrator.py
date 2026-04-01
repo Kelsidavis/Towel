@@ -21,8 +21,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from towel.agent.conversation import Conversation, Role
 from towel.config import TowelConfig
-from towel.agent.conversation import Conversation, Message, Role
 
 log = logging.getLogger("towel.agent.orchestrator")
 
@@ -197,10 +197,10 @@ class Orchestrator:
 
     async def _run_agent(self, role: str, prompt: str) -> str:
         """Run a single agent step with role-specific system prompt."""
-        from towel.agent.runtime import AgentRuntime
-
         # Create a temporary config with role-specific identity
         import copy
+
+        from towel.agent.runtime import AgentRuntime
         agent_config = copy.deepcopy(self.config)
         agent_config.identity = ROLE_PROMPTS.get(role, ROLE_PROMPTS["default"])
 

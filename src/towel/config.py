@@ -9,7 +9,6 @@ from typing import Any
 import toml
 from pydantic import BaseModel, Field
 
-
 TOWEL_HOME = Path(os.environ.get("TOWEL_HOME", Path.home() / ".towel"))
 
 
@@ -18,9 +17,12 @@ class ModelConfig(BaseModel):
 
     name: str = "Eldadalbajob/Huihui-Qwen3-Next-80B-A3B-Instruct-abliterated-mlx-3Bit"
     max_tokens: int = 4096
-    context_window: int = 8192
+    context_window: int = 262144
     temperature: float = 0.7
     top_p: float = 0.95
+    turboquant: bool = True
+    turboquant_bits: int = 3
+    turboquant_qjl_ratio: float = 0.5
 
 
 class AgentProfile(BaseModel):

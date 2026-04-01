@@ -1,9 +1,11 @@
 """UUID and random data generation skill."""
 
 from __future__ import annotations
+
 import secrets
 import uuid
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from towel.memory.store import MemoryStore, MEMORY_TYPES
+from towel.memory.store import MEMORY_TYPES, MemoryStore
 from towel.skills.base import Skill, ToolDefinition
 
 

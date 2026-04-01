@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from towel.skills.base import Skill, ToolDefinition
+from towel.skills.base import Skill
 
 
 class SkillRegistry:

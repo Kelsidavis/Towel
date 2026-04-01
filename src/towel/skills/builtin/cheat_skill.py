@@ -1,7 +1,10 @@
 """Cheat sheet skill — quick references via cheat.sh."""
 from __future__ import annotations
+
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
+
 
 class CheatSkill(Skill):
     @property

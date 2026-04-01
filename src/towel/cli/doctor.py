@@ -5,20 +5,16 @@ Checks environment, configuration, model availability, skills, and gateway.
 
 from __future__ import annotations
 
-import importlib
 import os
 import platform
 import shutil
 import socket
 import sys
 from pathlib import Path
-from typing import Any
 
 from rich.console import Console
-from rich.panel import Panel
 
-from towel.config import TowelConfig, TOWEL_HOME
-
+from towel.config import TOWEL_HOME, TowelConfig
 
 console = Console()
 
@@ -142,6 +138,10 @@ def check_config(config: TowelConfig) -> Check:
     c.ok(f"Model: {config.model.name}")
     c.ok(f"Context window: {config.model.context_window} tokens")
     c.ok(f"Max output: {config.model.max_tokens} tokens")
+    if config.model.turboquant:
+        c.ok(f"KV cache: TurboQuant {config.model.turboquant_bits}-bit (QJL ratio {config.model.turboquant_qjl_ratio})")
+    else:
+        c.ok("KV cache: float16 (standard)")
     c.ok(f"Gateway: {config.gateway.host}:{config.gateway.port}")
 
     if config.model.context_window <= config.model.max_tokens:
@@ -251,9 +251,9 @@ def check_skills(config: TowelConfig) -> Check:
     """Check skill loading."""
     c = Check("Skills")
 
-    from towel.skills.registry import SkillRegistry
     from towel.skills.builtin import register_builtins
     from towel.skills.loader import SkillLoader
+    from towel.skills.registry import SkillRegistry
 
     registry = SkillRegistry()
 
@@ -309,7 +309,7 @@ def check_gateway(config: TowelConfig) -> Check:
             sock.close()
             if result == 0:
                 c.warn(f"{label} port {port} is in use by another process")
-                c.suggestions.append(f"Change gateway port in config or stop the other process")
+                c.suggestions.append("Change gateway port in config or stop the other process")
             else:
                 c.ok(f"{label} port {port} is available")
         except OSError:

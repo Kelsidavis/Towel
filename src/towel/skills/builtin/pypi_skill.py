@@ -1,7 +1,10 @@
 """PyPI skill — search packages and get info."""
 from __future__ import annotations
+
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
+
 
 class PypiSkill(Skill):
     @property
@@ -38,7 +41,7 @@ class PypiSkill(Skill):
                             f"  Home: {info.get('home_page') or info.get('project_url','?')}")
                 elif tool_name == "pypi_search":
                     # PyPI doesn't have a search API anymore, use warehouse
-                    resp = await client.get(f"https://pypi.org/search/", params={"q": arguments["query"]},
+                    resp = await client.get("https://pypi.org/search/", params={"q": arguments["query"]},
                                            headers={"Accept": "text/html"}, follow_redirects=True)
                     # Parse simple results from HTML
                     import re

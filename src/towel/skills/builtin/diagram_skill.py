@@ -1,7 +1,9 @@
 """Diagram skill — generate ASCII flowcharts, trees, and sequence diagrams."""
 
 from __future__ import annotations
+
 from typing import Any
+
 from towel.skills.base import Skill, ToolDefinition
 
 
