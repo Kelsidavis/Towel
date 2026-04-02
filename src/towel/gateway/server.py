@@ -218,23 +218,21 @@ class GatewayServer:
 
                     worker = self._select_worker(session_id)
                     pinned_to_worker = session_id in self._session_pins
+                    last_msg = session.conversation.messages[-1].content if session.conversation.messages else ""
                     if worker and not pinned_to_worker:
-                        # Smart routing: fast model classifies chit-chat vs instruction.
-                        # Instructions → coordinator (fast coder model).
-                        # Chit-chat → worker (large general model).
-                        last_msg = session.conversation.messages[-1].content if session.conversation.messages else ""
                         route_to_worker = await self._classify_and_route(last_msg, worker, session_id)
                         if not route_to_worker:
-                            worker = None  # coordinator handles this instruction
+                            worker = None
                     if stream:
-                        # Run streaming in a task so cancel messages can be received
+                        # Dual-agent: fast model streams an immediate response while
+                        # the full task runs in parallel on the best available node.
                         if worker:
                             task = asyncio.create_task(
-                                self._stream_remote_inference(ws, session_id, session, worker)
+                                self._stream_dual_agent(ws, session_id, session, worker)
                             )
                         else:
                             task = asyncio.create_task(
-                                self._stream_response(ws, session_id, session)
+                                self._stream_dual_agent(ws, session_id, session, None)
                             )
                         self._active_tasks[session_id] = task
                         try:
@@ -321,6 +319,79 @@ class GatewayServer:
         """Stream agent response events to the WebSocket."""
         async for event in self.agent.step_streaming(session.conversation):
             await ws.send(json.dumps(event.to_ws_message(session_id)))
+
+    async def _stream_dual_agent(
+        self,
+        ws: ServerConnection,
+        session_id: str,
+        session: Any,
+        worker: WorkerInfo | None,
+    ) -> None:
+        """Dual-agent streaming: fast model responds immediately, full task runs in parallel.
+
+        The fast local model starts streaming an immediate answer from its own
+        knowledge right away so the user never waits.  Simultaneously, the full
+        task (with tool use, deeper reasoning, or a larger model) runs in the
+        background.  When the full response is ready it follows seamlessly as a
+        second message, replacing or extending the fast answer.
+        """
+        from towel.agent.conversation import Conversation, Message, Role
+
+        user_msg = session.conversation.messages[-1].content if session.conversation.messages else ""
+
+        # ── Fast path: immediate short answer from coordinator ──────────────
+        fast_prompt = (
+            f"The user asked: {user_msg}\n\n"
+            "Give a brief immediate response (1-3 sentences) from your own knowledge. "
+            "If you don't know, say so briefly. "
+            "A more complete answer is being prepared — do NOT say that."
+        )
+        fast_conv = Conversation(
+            messages=list(session.conversation.messages[:-1])  # history for context
+            + [Message(role=Role.USER, content=fast_prompt)]
+        )
+        fast_request = self.agent.build_inference_request(fast_conv)
+        fast_request["max_tokens"] = 80
+
+        fast_text = ""
+        try:
+            async for chunk in self.agent.stream_from_request(fast_request):
+                fast_text += chunk
+                await ws.send(
+                    json.dumps(AgentEvent.token(chunk).to_ws_message(session_id))
+                )
+        except Exception as exc:
+            log.debug("Fast path failed: %s", exc)
+
+        # Send fast response complete so the UI can render it as a bubble
+        await ws.send(
+            json.dumps(
+                AgentEvent.complete(fast_text, {"fast": True}).to_ws_message(session_id)
+            )
+        )
+
+        # ── Slow path: full task with tools / large model ────────────────────
+        # Add the fast answer to history so the full response doesn't repeat it
+        if fast_text:
+            session.conversation.messages.append(
+                Message(
+                    role=Role.ASSISTANT,
+                    content=fast_text,
+                    metadata={"fast": True},
+                )
+            )
+            # Tell the full model to continue from here
+            session.conversation.messages.append(
+                Message(
+                    role=Role.USER,
+                    content="Now give the complete, detailed answer. Use tools if needed.",
+                )
+            )
+
+        if worker:
+            await self._stream_remote_inference(ws, session_id, session, worker)
+        else:
+            await self._stream_response(ws, session_id, session)
 
     def _select_worker(self, session_id: str, estimated_tokens: int = 0) -> WorkerInfo | None:
         """Choose a worker for this session, preserving affinity when possible.
