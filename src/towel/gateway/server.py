@@ -339,48 +339,72 @@ class GatewayServer:
 
         user_msg = session.conversation.messages[-1].content if session.conversation.messages else ""
 
-        # ── Fast path: immediate short answer from coordinator ──────────────
-        fast_prompt = (
-            f"The user asked: {user_msg}\n\n"
-            "Give a brief immediate response (1-3 sentences) from your own knowledge. "
-            "If you don't know, say so briefly. "
-            "A more complete answer is being prepared — do NOT say that."
-        )
-        fast_conv = Conversation(
-            messages=list(session.conversation.messages[:-1])  # history for context
-            + [Message(role=Role.USER, content=fast_prompt)]
-        )
-        fast_request = self.agent.build_inference_request(fast_conv)
-        fast_request["max_tokens"] = 80
-
+        # ── Fast path: immediate short answer from worker (fast GPU tokens) ──
+        # The worker (RTX 5080) has faster token generation — use it for the
+        # immediate response the user sees right away.
         fast_text = ""
-        try:
-            async for chunk in self.agent.stream_from_request(fast_request):
-                fast_text += chunk
-                await ws.send(
-                    json.dumps(AgentEvent.token(chunk).to_ws_message(session_id))
-                )
-        except Exception as exc:
-            log.debug("Fast path failed: %s", exc)
+        if worker:
+            fast_prompt = (
+                f"The user asked: {user_msg}\n\n"
+                "Give a brief immediate response (1-3 sentences) from your own knowledge. "
+                "If you don't know, say so briefly. "
+                "Do NOT mention that a longer answer is coming."
+            )
+            fast_conv = Conversation(
+                messages=list(session.conversation.messages[:-1])
+                + [Message(role=Role.USER, content=fast_prompt)]
+            )
+            fast_job_id = uuid.uuid4().hex[:12]
+            fast_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+            self._job_queues[fast_job_id] = fast_queue
+            self._workers.assign(worker.id, fast_job_id, session_id)
 
-        # Send fast response complete so the UI can render it as a bubble
+            await worker.ws.send(
+                json.dumps(
+                    {
+                        "type": "run",
+                        "job_id": fast_job_id,
+                        "session": f"{session_id}-fast",
+                        "stream": True,
+                        "conversation": fast_conv.to_dict(),
+                    }
+                )
+            )
+
+            try:
+                while True:
+                    msg = await asyncio.wait_for(fast_queue.get(), timeout=30.0)
+                    msg_type = msg.get("type")
+                    if msg_type == "job_event":
+                        event = msg.get("event", {})
+                        if event.get("type") == "token":
+                            chunk = event.get("content", "") or event.get("text", "")
+                            fast_text += chunk
+                            await ws.send(
+                                json.dumps(AgentEvent.token(chunk).to_ws_message(session_id))
+                            )
+                    elif msg_type in ("job_done", "job_error"):
+                        break
+            except Exception as exc:
+                log.debug("Fast path failed: %s", exc)
+            finally:
+                self._job_queues.pop(fast_job_id, None)
+                self._workers.release(worker.id)
+
+        # Send fast response complete so the UI renders it as a bubble
         await ws.send(
             json.dumps(
                 AgentEvent.complete(fast_text, {"fast": True}).to_ws_message(session_id)
             )
         )
 
-        # ── Slow path: full task with tools / large model ────────────────────
-        # Add the fast answer to history so the full response doesn't repeat it
+        # ── Slow path: full quality response from coordinator ────────────────
+        # The coordinator (MacBook, higher quality model) now does the full
+        # detailed answer with tool use and deeper reasoning.
         if fast_text:
             session.conversation.messages.append(
-                Message(
-                    role=Role.ASSISTANT,
-                    content=fast_text,
-                    metadata={"fast": True},
-                )
+                Message(role=Role.ASSISTANT, content=fast_text, metadata={"fast": True})
             )
-            # Tell the full model to continue from here
             session.conversation.messages.append(
                 Message(
                     role=Role.USER,
@@ -388,10 +412,7 @@ class GatewayServer:
                 )
             )
 
-        if worker:
-            await self._stream_remote_inference(ws, session_id, session, worker)
-        else:
-            await self._stream_response(ws, session_id, session)
+        await self._stream_response(ws, session_id, session)
 
     def _select_worker(self, session_id: str, estimated_tokens: int = 0) -> WorkerInfo | None:
         """Choose a worker for this session, preserving affinity when possible.
