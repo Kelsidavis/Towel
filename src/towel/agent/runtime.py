@@ -41,6 +41,11 @@ _TOOL_ERROR_PATTERNS = (
     re.compile(r"^Not a directory:\b", re.IGNORECASE),
     re.compile(r"^Invalid index:\b", re.IGNORECASE),
     re.compile(r"^File too large\b", re.IGNORECASE),
+    re.compile(r"^HTTP error:\b", re.IGNORECASE),
+    re.compile(r"^\[4\d\d\]", re.IGNORECASE),   # HTTP 4xx client errors
+    re.compile(r"^\[5\d\d\]", re.IGNORECASE),   # HTTP 5xx server errors
+    re.compile(r"^Error calling\b", re.IGNORECASE),
+    re.compile(r"^No module named\b", re.IGNORECASE),
 )
 
 
@@ -53,7 +58,8 @@ def format_tool_feedback(tool_name: str, result: str, is_error: bool) -> str:
     """Format tool feedback so the next model step can recover reliably."""
     status = "error" if is_error else "ok"
     next_step = (
-        "Retry with one corrected valid tool call, or answer directly with the limitation."
+        "The tool failed. Do NOT retry the same tool or try alternative tools to work around this. "
+        "Answer the user directly using what you already know, and mention the limitation briefly."
         if is_error
         else "Use this result to answer the user concretely. Do not stop at saying you will check."
     )

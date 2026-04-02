@@ -43,9 +43,14 @@ class WebFetchSkill(Skill):
         url = arguments["url"]
         method = arguments.get("method", "GET").upper()
 
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (compatible; Towel/1.0; +https://github.com/Kelsidavis/Towel)"
+            )
+        }
         async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
             try:
-                resp = await client.request(method, url)
+                resp = await client.request(method, url, headers=headers)
                 body = resp.text[:MAX_RESPONSE_BYTES]
                 return f"[{resp.status_code}] {body}"
             except httpx.HTTPError as e:
