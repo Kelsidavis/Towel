@@ -45,7 +45,7 @@ class WebFetchSkill(Skill):
 
         headers = {
             "User-Agent": (
-                "Mozilla/5.0 (compatible; Towel/1.0; +https://github.com/Kelsidavis/Towel)"
+                "Towel/1.0 (https://github.com/Kelsidavis/Towel; local AI assistant)"
             )
         }
         async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
