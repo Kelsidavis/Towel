@@ -87,15 +87,25 @@ class TestConfigCheck:
 
 class TestMlxCheck:
     def test_mlx_check_runs(self):
+        import sys
+
         c = check_mlx()
         c.finalize()
-        # MLX should be installed in the test venv
-        assert any("mlx" in d.lower() for d in c.details)
+        if sys.platform == "darwin":
+            assert any("mlx" in d.lower() for d in c.details)
+        else:
+            # MLX is macOS-only; on Linux the check should complete without crashing
+            assert c.passed is False or c.details is not None
 
     def test_mlx_lm_detected(self):
+        import sys
+
         c = check_mlx()
         c.finalize()
-        assert any("mlx-lm" in d.lower() or "mlx_lm" in d.lower() for d in c.details)
+        if sys.platform == "darwin":
+            assert any("mlx-lm" in d.lower() or "mlx_lm" in d.lower() for d in c.details)
+        else:
+            assert c.passed is False or c.details is not None
 
 
 class TestSkillsCheck:
