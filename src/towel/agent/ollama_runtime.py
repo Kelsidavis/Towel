@@ -25,7 +25,7 @@ from towel.skills.registry import SkillRegistry
 
 log = logging.getLogger("towel.agent.ollama")
 
-MAX_TOOL_ITERATIONS = 10
+MAX_TOOL_ITERATIONS = 999
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
 

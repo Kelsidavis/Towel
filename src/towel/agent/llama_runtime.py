@@ -32,7 +32,7 @@ from towel.skills.registry import SkillRegistry
 
 log = logging.getLogger("towel.agent.llama")
 
-MAX_TOOL_ITERATIONS = 10
+MAX_TOOL_ITERATIONS = 999
 DEFAULT_LLAMA_URL = "http://localhost:8080"
 
 
