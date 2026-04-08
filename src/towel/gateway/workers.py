@@ -73,6 +73,15 @@ class WorkerRegistry:
     def get(self, worker_id: str) -> WorkerInfo | None:
         return self._workers.get(worker_id)
 
+    def stale(self, timeout_seconds: float = 60.0) -> list[WorkerInfo]:
+        """Return workers whose last heartbeat is older than timeout_seconds."""
+        now = datetime.now(UTC)
+        return [
+            w
+            for w in self._workers.values()
+            if (now - w.last_seen).total_seconds() > timeout_seconds
+        ]
+
     def set_enabled(self, worker_id: str, enabled: bool) -> bool:
         worker = self._workers.get(worker_id)
         if not worker:
