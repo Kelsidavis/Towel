@@ -317,6 +317,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   <div id="conv-list"></div>
   <div id="sidebar-footer">
     <div class="status"><span id="status-dot"></span><span id="status-text">connecting...</span></div>
+    <button id="clear-all-btn" title="Clear all conversations">clear all</button>
     <button id="theme-btn" title="Switch theme">theme</button>
   </div>
 </div>
@@ -358,6 +359,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   const convSearchEl = document.getElementById('conv-search');
   const newChatBtn = document.getElementById('new-chat-btn');
   const themeBtn = document.getElementById('theme-btn');
+  const clearAllBtn = document.getElementById('clear-all-btn');
   const sessionInfoEl = document.getElementById('session-info');
   const tbFleet = document.getElementById('tb-fleet');
   const tbExport = document.getElementById('tb-export');
@@ -650,6 +652,12 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     else loadConversationList();
   }
 
+  async function clearAllConversations() {
+    if (!confirm('Delete ALL conversations? This cannot be undone.')) return;
+    await apiDelete('/conversations');
+    startNewChat();
+  }
+
   function startNewChat() {
     sessionId = newSessionId();
     saveSession();
@@ -911,6 +919,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   sendBtn.addEventListener('click',sendMessage);
   stopBtn.addEventListener('click',stopGeneration);
   themeBtn.addEventListener('click',cycleTheme);
+  clearAllBtn.addEventListener('click',clearAllConversations);
   tbFleet.addEventListener('click',openFleetPanel);
   tbExport.addEventListener('click',exportConversation);
   tbDelete.addEventListener('click',deleteCurrentConversation);
@@ -959,6 +968,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     {icon:'🛰', label:'Fleet Control', hint:'Ctrl+Shift+F', action:()=>openFleetPanel()},
     {icon:'📤', label:'Export Conversation', hint:'Ctrl+E', action:()=>exportConversation()},
     {icon:'🗑', label:'Delete Conversation', hint:'', action:()=>deleteCurrentConversation()},
+    {icon:'🧹', label:'Clear All Conversations', hint:'', action:()=>clearAllConversations()},
     {icon:'✏️', label:'Clear Input', hint:'Ctrl+L', action:()=>{inputEl.value='';autoResize();inputEl.focus();}},
     {icon:'⏹', label:'Stop Generation', hint:'Esc', action:()=>stopGeneration()},
   ];

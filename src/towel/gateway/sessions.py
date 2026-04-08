@@ -64,6 +64,10 @@ class SessionManager:
     def remove(self, session_id: str) -> None:
         self._sessions.pop(session_id, None)
 
+    def clear(self) -> None:
+        """Remove all sessions from memory."""
+        self._sessions.clear()
+
     def all(self) -> list[Session]:
         return list(self._sessions.values())
 
