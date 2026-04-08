@@ -40,6 +40,7 @@ from towel.gateway.sessions import SessionManager
 from towel.gateway.workers import WorkerInfo, WorkerRegistry
 from towel.memory.cluster import ClusterMemorySync
 from towel.memory.store import MemoryStore
+from towel.nodes.roles import NodeRole, assign_roles, best_node_for_role, classify_message_intent
 from towel.nodes.tracker import NodeTracker
 from towel.persistence.session_pins import SessionPinStore
 from towel.persistence.store import ConversationStore
@@ -72,6 +73,7 @@ class GatewayServer:
     _session_pins: dict[str, str] = field(default_factory=dict)
     _session_jobs: dict[str, str] = field(default_factory=dict)
     _worker_states: dict[str, dict[str, bool]] = field(default_factory=dict)
+    _node_roles: dict[str, list[NodeRole]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self._session_pins = self.pin_store.load()
@@ -128,9 +130,11 @@ class GatewayServer:
         http_server = uvicorn.Server(http_config)
         log.info(f"HTTP API listening on http://{gw.host}:{gw.port + 1}")
 
+        reaper = asyncio.create_task(self._reap_stale_workers())
         try:
             await http_server.serve()
         finally:
+            reaper.cancel()
             if self._mdns_advertiser:
                 await self._mdns_advertiser.stop()
 
@@ -150,6 +154,14 @@ class GatewayServer:
                     if role == "worker":
                         self._workers.register(conn_id, ws, capabilities)
                         self._node_tracker.register(conn_id, capabilities)
+                        # Auto-assign roles based on hardware capabilities
+                        roles = assign_roles(capabilities)
+                        self._node_roles[conn_id] = roles
+                        log.info(
+                            "Worker %s assigned roles: %s",
+                            conn_id,
+                            ", ".join(str(r) for r in roles),
+                        )
                         state = self._worker_states.get(conn_id)
                         if state:
                             self._workers.apply_state(
@@ -216,23 +228,18 @@ class GatewayServer:
 
                     session.conversation.add(Role.USER, content, channel=channel)
 
-                    worker = self._select_worker(session_id)
-                    pinned_to_worker = session_id in self._session_pins
-                    last_msg = session.conversation.messages[-1].content if session.conversation.messages else ""
-                    if worker and not pinned_to_worker:
-                        route_to_worker = await self._classify_and_route(last_msg, worker, session_id)
-                        if not route_to_worker:
-                            worker = None
+                    # ── Role-based dispatch ─────────────────────────────
+                    worker, intent = await self._route_by_role(content, session_id)
                     if stream:
-                        # Dual-agent: fast model streams an immediate response while
-                        # the full task runs in parallel on the best available node.
                         if worker:
                             task = asyncio.create_task(
-                                self._stream_dual_agent(ws, session_id, session, worker)
+                                self._stream_remote_inference(
+                                    ws, session_id, session, worker
+                                )
                             )
                         else:
                             task = asyncio.create_task(
-                                self._stream_dual_agent(ws, session_id, session, None)
+                                self._stream_response(ws, session_id, session)
                             )
                         self._active_tasks[session_id] = task
                         try:
@@ -251,7 +258,11 @@ class GatewayServer:
                         finally:
                             self._active_tasks.pop(session_id, None)
                     else:
-                        if worker:
+                        if worker and intent == "chat":
+                            response = await self._quick_remote_infer(
+                                session_id, session, worker, max_tokens=256
+                            )
+                        elif worker:
                             response = await self._step_remote_inference(
                                 session_id, session, worker
                             )
@@ -309,196 +320,271 @@ class GatewayServer:
 
                 self._workers.unregister(conn_id)
                 self._node_tracker.unregister(conn_id)
+                self._node_roles.pop(conn_id, None)
                 self._context_sync.clear_worker(conn_id)
             # Cancel any running tasks for this connection
             for task in self._active_tasks.values():
                 if not task.done():
                     task.cancel()
 
+    async def _reap_stale_workers(self, interval: float = 30.0, timeout: float = 60.0) -> None:
+        """Periodically close connections to workers that missed heartbeats."""
+        while True:
+            await asyncio.sleep(interval)
+            for worker in self._workers.stale(timeout):
+                log.warning("Reaping stale worker %s (no heartbeat for %.0fs)", worker.id, timeout)
+                try:
+                    await worker.ws.close(1001, "heartbeat timeout")
+                except Exception:
+                    pass
+
     async def _stream_response(self, ws: ServerConnection, session_id: str, session: Any) -> None:
         """Stream agent response events to the WebSocket."""
         async for event in self.agent.step_streaming(session.conversation):
             await ws.send(json.dumps(event.to_ws_message(session_id)))
 
-    async def _stream_dual_agent(
+    # ── Role-based routing ──────────────────────────────────────────
+
+    def _build_node_dicts(self) -> list[dict[str, Any]]:
+        """Build the node descriptor list that the role selector needs."""
+        nodes = []
+        for worker in self._workers.list():
+            node = self._node_tracker.get(worker.id)
+            nd: dict[str, Any] = {
+                "id": worker.id,
+                "capabilities": dict(worker.capabilities),
+                "busy": worker.busy,
+                "enabled": worker.enabled,
+                "draining": worker.draining,
+                "roles": self._node_roles.get(worker.id, []),
+                "context_pressure": node.context_pressure if node else 0.0,
+                "active_sessions": node.active_sessions if node else 0,
+                "context_slots": [s.to_dict() for s in node.context_slots] if node else [],
+            }
+            nodes.append(nd)
+        return nodes
+
+    def _worker_for_role(
         self,
-        ws: ServerConnection,
-        session_id: str,
-        session: Any,
-        worker: WorkerInfo | None,
-    ) -> None:
-        """Dual-agent streaming: fast model responds immediately, full task runs in parallel.
-
-        The fast local model starts streaming an immediate answer from its own
-        knowledge right away so the user never waits.  Simultaneously, the full
-        task (with tool use, deeper reasoning, or a larger model) runs in the
-        background.  When the full response is ready it follows seamlessly as a
-        second message, replacing or extending the fast answer.
-        """
-        from towel.agent.conversation import Conversation, Message, Role
-
-        user_msg = session.conversation.messages[-1].content if session.conversation.messages else ""
-
-        # ── Fast path: immediate short answer from worker (fast GPU tokens) ──
-        # The worker (RTX 5080) has faster token generation — use it for the
-        # immediate response the user sees right away.
-        fast_text = ""
-        if worker:
-            fast_prompt = (
-                f"The user asked: {user_msg}\n\n"
-                "Give a brief immediate response (1-3 sentences) from your own knowledge. "
-                "If you don't know, say so briefly. "
-                "Do NOT mention that a longer answer is coming."
-            )
-            fast_conv = Conversation(
-                messages=list(session.conversation.messages[:-1])
-                + [Message(role=Role.USER, content=fast_prompt)]
-            )
-            fast_job_id = uuid.uuid4().hex[:12]
-            fast_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-            self._job_queues[fast_job_id] = fast_queue
-            self._workers.assign(worker.id, fast_job_id, session_id)
-
-            await worker.ws.send(
-                json.dumps(
-                    {
-                        "type": "run",
-                        "job_id": fast_job_id,
-                        "session": f"{session_id}-fast",
-                        "stream": True,
-                        "conversation": fast_conv.to_dict(),
-                    }
-                )
-            )
-
-            try:
-                while True:
-                    msg = await asyncio.wait_for(fast_queue.get(), timeout=30.0)
-                    msg_type = msg.get("type")
-                    if msg_type == "job_event":
-                        event = msg.get("event", {})
-                        if event.get("type") == "token":
-                            chunk = event.get("content", "") or event.get("text", "")
-                            fast_text += chunk
-                            await ws.send(
-                                json.dumps(AgentEvent.token(chunk).to_ws_message(session_id))
-                            )
-                    elif msg_type in ("job_done", "job_error"):
-                        break
-            except Exception as exc:
-                log.debug("Fast path failed: %s", exc)
-            finally:
-                self._job_queues.pop(fast_job_id, None)
-                self._workers.release(worker.id)
-
-        # Send fast response complete so the UI renders it as a bubble
-        await ws.send(
-            json.dumps(
-                AgentEvent.complete(fast_text, {"fast": True}).to_ws_message(session_id)
-            )
+        role: NodeRole,
+        session_id: str | None = None,
+        exclude_busy: bool = True,
+    ) -> WorkerInfo | None:
+        """Find the best worker for a given role."""
+        nodes = self._build_node_dicts()
+        best = best_node_for_role(
+            role, nodes, exclude_busy=exclude_busy, session_id=session_id,
         )
+        if best is None:
+            return None
+        return self._workers.get(best["id"])
 
-        # ── Slow path: full quality response from coordinator ────────────────
-        # The coordinator (MacBook, higher quality model) now does the full
-        # detailed answer with tool use and deeper reasoning.
-        if fast_text:
-            session.conversation.messages.append(
-                Message(role=Role.ASSISTANT, content=fast_text, metadata={"fast": True})
-            )
-            session.conversation.messages.append(
-                Message(
-                    role=Role.USER,
-                    content="Now give the complete, detailed answer. Use tools if needed.",
-                )
-            )
+    async def _classify_on_worker(self, message: str, worker: WorkerInfo) -> str:
+        """Run classification on a remote worker instead of the coordinator.
 
-        await self._stream_response(ws, session_id, session)
-
-    def _select_worker(self, session_id: str, estimated_tokens: int = 0) -> WorkerInfo | None:
-        """Choose a worker for this session, preserving affinity when possible.
-
-        Uses context-aware scheduling when the NodeTracker has data:
-        - Prefers workers with lower context pressure
-        - Avoids workers that can't fit the conversation
-        - Favors workers that already hold this session's context
+        Sends a minimal classification prompt and expects 'task', 'chat', or 'tool'.
+        Falls back to 'task' on any error.
         """
-        preferred_id = self._session_pins.get(session_id) or self._session_workers.get(session_id)
-        requirements = self._desired_worker_capabilities()
-        if estimated_tokens > 0:
-            requirements["estimated_tokens"] = estimated_tokens
-        requirements["session_id"] = session_id
+        from towel.agent.conversation import Conversation, Message
 
-        worker = self._workers.acquire(
-            preferred_id=preferred_id,
-            requirements=requirements,
-            node_tracker=self._node_tracker if len(self._node_tracker) > 0 else None,
-        )
-        if worker:
-            self._session_workers[session_id] = worker.id
-        return worker
-
-    async def _classify_and_route(
-        self, message: str, worker: WorkerInfo, session_id: str
-    ) -> bool:
-        """Classify the message using the fast local model, then decide routing.
-
-        The coordinator (fast coder model) handles instructions/tasks.
-        The worker (large general model) handles chit-chat and casual conversation.
-
-        Returns True → send to worker (chit-chat), False → coordinator (instruction).
-        """
-        # Hard overrides — no classification needed
-        node = self._node_tracker.get(worker.id)
-        if node is not None and node.get_context_slot(session_id) is not None:
-            return True  # worker already has session context, keep it there
-
-        if self._active_tasks:
-            return True  # coordinator busy, spill to worker
-
-        # For very short messages that are obviously greetings, skip the LLM call
-        stripped = message.strip().lower()
-        if len(stripped) < 20 and any(
-            stripped.startswith(g) for g in ("hi", "hello", "hey", "thanks", "ok", "lol", "haha", "cool", "nice")
-        ):
-            log.debug("Routing: trivial greeting → worker (chit-chat)")
-            return True
-
-        # Use the fast local model to classify in a single short generation
-        classification = await self._fast_classify(message)
-        is_chit_chat = classification == "chat"
-
-        log.debug("Routing: classification=%r message=%r → %s", classification, message[:60], "worker" if is_chit_chat else "coordinator")
-        return is_chit_chat  # True = worker, False = coordinator
-
-    async def _fast_classify(self, message: str) -> str:
-        """Run a fast single-token classification using the coordinator's model.
-
-        Returns 'task' or 'chat'.
-        Falls back to 'task' on any error (coordinator handles it).
-        """
         classify_prompt = (
-            "Classify the following user message as either 'task' (an instruction, question, "
-            "coding request, analysis, creative writing, or anything requiring a substantive "
-            "response) or 'chat' (casual conversation, greetings, acknowledgements, small talk).\n\n"
-            f"Message: {message[:400]}\n\n"
-            "Reply with exactly one word — either 'task' or 'chat':"
+            "Classify this user message. Reply with exactly one word:\n"
+            "- 'chat' if it's casual conversation, greetings, acknowledgements, small talk\n"
+            "- 'tool' if it requires fetching URLs, web search, or running commands\n"
+            "- 'task' if it's a question, instruction, coding, analysis, or creative request\n\n"
+            f"Message: {message[:400]}\n\nClassification:"
         )
-        try:
-            from towel.agent.conversation import Conversation, Message, Role
-            conv = Conversation(messages=[Message(role=Role.USER, content=classify_prompt)])
-            request = self.agent.build_inference_request(conv)
-            request["max_tokens"] = 4  # only need one word
-            result = await asyncio.wait_for(
-                self.agent.generate_from_request(request),
-                timeout=3.0,
+        conv = Conversation(messages=[Message(role=Role.USER, content=classify_prompt)])
+
+        job_id = uuid.uuid4().hex[:12]
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._job_queues[job_id] = queue
+        self._workers.assign(worker.id, job_id, "classify")
+
+        # Determine the worker's inference mode from its capabilities
+        modes = worker.capabilities.get("modes", [])
+        mode = modes[0] if modes else "llama_chat"
+
+        await worker.ws.send(
+            json.dumps(
+                {
+                    "type": "infer",
+                    "job_id": job_id,
+                    "session": "classify",
+                    "stream": False,
+                    "request": {
+                        "mode": mode,
+                        "model": worker.capabilities.get("model", ""),
+                        "system": "",
+                        "messages": [{"role": "user", "content": classify_prompt}],
+                        "max_tokens": 4,
+                        "temperature": 0.0,
+                        "reasoning_effort": "none",
+                    },
+                }
             )
-            text = (result.text if hasattr(result, "text") else str(result)).strip().lower()
-            if "chat" in text:
-                return "chat"
+        )
+
+        try:
+            msg = await asyncio.wait_for(queue.get(), timeout=5.0)
+            if msg.get("type") == "job_done":
+                text = msg.get("result", {}).get("text", "").strip().lower()
+                for label in ("chat", "tool", "task"):
+                    if label in text:
+                        return label
+                return "task"
             return "task"
         except Exception as exc:
-            log.debug("Classification failed (%s), defaulting to task → coordinator", exc)
+            log.debug("Worker classification failed (%s), defaulting to task", exc)
             return "task"
+        finally:
+            self._job_queues.pop(job_id, None)
+            self._workers.release(worker.id)
+
+    async def _route_by_role(
+        self, message: str, session_id: str
+    ) -> tuple[WorkerInfo | None, str]:
+        """Route a message to the best worker based on roles and intent.
+
+        Returns (worker, intent) where intent is 'chat', 'tool', or 'task'.
+        Worker is None when the coordinator should handle it directly.
+
+        Flow:
+        1. Check session pin / affinity
+        2. Quick heuristic classification (free, no LLM)
+        3. If ambiguous, classify on cheapest CLASSIFIER node
+        4. Route based on intent:
+           - chat → cheapest CLASSIFIER node (lightweight infer, no tools)
+           - tool → TOOL_WORKER node (full agent loop with tools)
+           - task → best INFERENCE node (full agent loop)
+        """
+        # Respect explicit pins
+        pinned_id = self._session_pins.get(session_id)
+        if pinned_id:
+            worker = self._workers.get(pinned_id)
+            if worker and worker.enabled and not worker.busy:
+                return worker, "task"
+
+        # Session affinity — if a worker already has this context, prefer it
+        affinity_id = self._session_workers.get(session_id)
+        if affinity_id:
+            affinity_worker = self._workers.get(affinity_id)
+            if affinity_worker and affinity_worker.enabled and not affinity_worker.busy:
+                node = self._node_tracker.get(affinity_id)
+                if node and node.get_context_slot(session_id) is not None:
+                    return affinity_worker, "task"
+
+        # Step 1: Quick local heuristic (no inference cost)
+        intent = classify_message_intent(message)
+
+        # Step 2: If ambiguous, use the cheapest classifier worker
+        if intent is None:
+            classifier = self._worker_for_role(NodeRole.CLASSIFIER, session_id)
+            if classifier:
+                intent = await self._classify_on_worker(message, classifier)
+            else:
+                # No classifier workers — fall back to coordinator
+                intent = "task"
+
+        log.debug("Route: intent=%s message=%r", intent, message[:60])
+
+        # Step 3: Route based on intent
+        if intent == "chat":
+            # Chat uses quick infer on the best inference node (fast t/s matters)
+            worker = self._worker_for_role(NodeRole.INFERENCE, session_id)
+            if worker:
+                self._session_workers[session_id] = worker.id
+                return worker, "chat"
+            # No inference node — fall through to coordinator
+
+        elif intent == "tool":
+            # Tool requests go to tool-capable worker
+            worker = self._worker_for_role(NodeRole.TOOL_WORKER, session_id)
+            if worker:
+                self._session_workers[session_id] = worker.id
+                return worker, "tool"
+            # No tool worker — try inference node, coordinator handles tools
+
+        # intent == "task" or no suitable specialized worker found
+        worker = self._worker_for_role(NodeRole.INFERENCE, session_id)
+        if worker:
+            self._session_workers[session_id] = worker.id
+            return worker, "task"
+
+        # Last resort — any available worker
+        worker = self._worker_for_role(NodeRole.GENERAL, session_id)
+        if worker:
+            self._session_workers[session_id] = worker.id
+            return worker, intent or "task"
+
+        return None, intent or "task"  # No workers → coordinator handles it
+
+    async def _quick_remote_infer(
+        self,
+        session_id: str,
+        session: Any,
+        worker: WorkerInfo,
+        max_tokens: int = 256,
+    ) -> Any:
+        """Lightweight inference on a worker — no tool loop, capped tokens.
+
+        Used for chat/greetings where we want a fast, short response without
+        the overhead of the full agent tool loop.
+        """
+        from towel.agent.conversation import Message
+
+        job_id = uuid.uuid4().hex[:12]
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._job_queues[job_id] = queue
+        self._session_jobs[session_id] = job_id
+        self._workers.assign(worker.id, job_id, session_id)
+
+        # Send as "infer" with capped tokens — worker uses generate_from_request
+        messages = [
+            {"role": m.role.value, "content": m.content}
+            for m in session.conversation.messages
+        ]
+        # Determine the worker's inference mode from its capabilities
+        modes = worker.capabilities.get("modes", [])
+        mode = modes[0] if modes else "llama_chat"
+
+        await worker.ws.send(
+            json.dumps(
+                {
+                    "type": "infer",
+                    "job_id": job_id,
+                    "session": session_id,
+                    "stream": False,
+                    "request": {
+                        "mode": mode,
+                        "model": worker.capabilities.get("model", ""),
+                        "system": "",
+                        "messages": messages,
+                        "max_tokens": max_tokens,
+                        "temperature": 0.7,
+                        "reasoning_effort": "none",
+                    },
+                }
+            )
+        )
+
+        try:
+            msg = await asyncio.wait_for(queue.get(), timeout=60.0)
+            if msg.get("type") == "job_done":
+                text = msg.get("result", {}).get("text", "")
+                response = Message(
+                    role=Role.ASSISTANT,
+                    content=text,
+                    metadata={"remote_worker": worker.id, "quick_infer": True},
+                )
+                session.conversation.messages.append(response)
+                return response
+            elif msg.get("type") == "job_error":
+                raise RuntimeError(msg.get("message", "Worker failed"))
+        finally:
+            self._job_queues.pop(job_id, None)
+            self._session_jobs.pop(session_id, None)
+            self._workers.release(worker.id)
 
     def pin_session_worker(self, session_id: str, worker_id: str) -> bool:
         """Pin a session to a specific worker if that worker exists."""
@@ -586,13 +672,10 @@ class GatewayServer:
         session = self.sessions.get_or_create(session_id)
         return sum(count_tokens_fallback(m.content) for m in session.conversation.messages)
 
-    def _desired_worker_capabilities(self) -> dict[str, Any]:
-        """Describe the worker shape that best matches this controller runtime.
-
-        Backend and mode are returned as soft hints for scoring only — they
-        are not hard filters.  This allows heterogeneous fleets (e.g. an MLX
-        coordinator with a llama/ollama worker) to route correctly.
-        """
+    def _desired_worker_capabilities(
+        self, *, needs_tools: bool = False
+    ) -> dict[str, Any]:
+        """Describe the worker shape for scoring, with dynamic tool requirements."""
         cls = self.agent.__class__.__name__
         if cls == "ClaudeCodeRuntime":
             preferred_backend = "claude"
@@ -607,7 +690,7 @@ class GatewayServer:
             "preferred_backend": preferred_backend,
             "preferred_mode": preferred_mode,
             "model": getattr(self.config.model, "name", ""),
-            "tools": False,
+            "tools": needs_tools,
         }
 
     async def _cancel_remote_job(self, session_id: str) -> None:
@@ -633,10 +716,8 @@ class GatewayServer:
     ) -> dict[str, Any]:
         """Run one inference pass on a remote worker.
 
-        Sends the full conversation via 'run' so the worker builds its own
-        inference request using its own runtime — this handles heterogeneous
-        backends (mlx/llama/ollama) without the coordinator needing to know
-        the worker's prompt format.
+        Uses delta sync when the worker has seen this session before,
+        falling back to full conversation transfer for first contact.
         """
         job_id = uuid.uuid4().hex[:12]
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -650,22 +731,34 @@ class GatewayServer:
         )
         self._node_tracker.open_context_slot(worker.id, session_id, token_estimate)
 
-        await worker.ws.send(
-            json.dumps(
-                {
-                    "type": "run",
-                    "job_id": job_id,
-                    "session": session_id,
-                    "stream": stream,
-                    "conversation": conversation.to_dict(),
-                }
-            )
-        )
+        # Delta sync: only send new messages if worker has seen this session
+        delta = self._context_sync.compute_delta(worker.id, session_id, conversation)
+        if delta.is_full_sync:
+            # First time or structural change — send full conversation
+            payload: dict[str, Any] = {
+                "type": "run",
+                "job_id": job_id,
+                "session": session_id,
+                "stream": stream,
+                "conversation": conversation.to_dict(),
+            }
+        else:
+            # Incremental: send only the delta
+            payload = {
+                "type": "run",
+                "job_id": job_id,
+                "session": session_id,
+                "stream": stream,
+                "conversation": conversation.to_dict(),
+                "delta": delta.to_dict(),
+            }
+
+        await worker.ws.send(json.dumps(payload))
 
         accumulated_text = ""
         try:
             while True:
-                msg = await queue.get()
+                msg = await asyncio.wait_for(queue.get(), timeout=120.0)
                 msg_type = msg.get("type")
                 if msg_type == "job_event":
                     event = msg.get("event", {})
@@ -992,9 +1085,14 @@ class GatewayServer:
             )
 
         async def workers_list(_request: Any) -> JSONResponse:
+            workers_data = []
+            for worker in self._workers.matching():
+                wd = worker.to_dict()
+                wd["roles"] = [str(r) for r in self._node_roles.get(worker.id, [])]
+                workers_data.append(wd)
             return JSONResponse(
                 {
-                    "workers": [worker.to_dict() for worker in self._workers.matching()],
+                    "workers": workers_data,
                     "requirements": self._desired_worker_capabilities(),
                     "pins": dict(self._session_pins),
                 }
@@ -1241,7 +1339,19 @@ class GatewayServer:
                 self.agent.config = self.config
 
             try:
-                response = await self.agent.step(session.conversation)
+                # Route through cluster workers when available
+                worker, intent = await self._route_by_role(message, session_id)
+                if worker and intent == "chat":
+                    response = await self._quick_remote_infer(
+                        session_id, session, worker, max_tokens=256
+                    )
+                elif worker:
+                    response = await self._step_remote_inference(
+                        session_id, session, worker
+                    )
+                else:
+                    response = await self.agent.step(session.conversation)
+                    session.conversation.messages.append(response)
                 self.sessions.save(session_id)
 
                 return JSONResponse(
@@ -1250,6 +1360,7 @@ class GatewayServer:
                         "session": session_id,
                         "tokens": response.metadata.get("tokens", 0),
                         "tps": round(response.metadata.get("tps", 0), 1),
+                        "worker": response.metadata.get("remote_worker", "coordinator"),
                     }
                 )
             except Exception as e:

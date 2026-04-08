@@ -375,7 +375,10 @@ def worker(
         config, skills, memory, backend, claude_model, ollama_url, llama_url, llama_model
     )
     effective_backend = backend or "mlx"
-    capabilities = default_worker_capabilities(config, effective_backend, allow_tools)
+    capabilities = default_worker_capabilities(
+        config, effective_backend, allow_tools,
+        llama_url=llama_url or "",
+    )
     client = RemoteWorkerClient(
         master_url=master,
         agent=agent_rt,

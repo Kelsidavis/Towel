@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import socket
 from dataclasses import dataclass, field
 from typing import Any
@@ -26,14 +27,22 @@ class RemoteWorkerClient:
     worker_id: str
     capabilities: dict[str, Any] = field(default_factory=dict)
     reconnect_delay: float = 3.0
+    max_reconnect_delay: float = 60.0
     heartbeat_interval: float = 15.0
     _jobs: dict[str, asyncio.Task[None]] = field(default_factory=dict)
+    _consecutive_failures: int = field(default=0, init=False)
 
     async def run_forever(self) -> None:
         """Maintain a persistent worker connection to the controller."""
         while True:
             try:
-                async with websockets.connect(self.master_url) as ws:
+                log.info("Connecting to controller %s ...", self.master_url)
+                async with websockets.connect(
+                    self.master_url,
+                    ping_interval=20,
+                    ping_timeout=30,
+                    close_timeout=10,
+                ) as ws:
                     await ws.send(
                         json.dumps(
                             {
@@ -51,6 +60,7 @@ class RemoteWorkerClient:
                     log.info(
                         "Registered worker %s with controller %s", self.worker_id, self.master_url
                     )
+                    self._consecutive_failures = 0
                     heartbeat = asyncio.create_task(self._heartbeat_loop(ws))
 
                     try:
@@ -72,13 +82,23 @@ class RemoteWorkerClient:
                     finally:
                         heartbeat.cancel()
             except Exception as exc:
-                log.warning("Worker connection dropped: %s", exc)
+                self._consecutive_failures += 1
+                log.warning("Worker connection lost: %s", exc)
             finally:
                 for job_id, task in list(self._jobs.items()):
                     if not task.done():
                         task.cancel()
                     self._jobs.pop(job_id, None)
-            await asyncio.sleep(self.reconnect_delay)
+
+            delay = self._backoff_delay()
+            log.info("Reconnecting in %.1fs (attempt %d)...", delay, self._consecutive_failures)
+            await asyncio.sleep(delay)
+
+    def _backoff_delay(self) -> float:
+        """Exponential backoff with jitter, capped at max_reconnect_delay."""
+        exp = min(self._consecutive_failures, 10)
+        base = min(self.reconnect_delay * (2 ** (exp - 1)), self.max_reconnect_delay)
+        return base * (0.5 + random.random() * 0.5)
 
     async def _run_job(self, ws: Any, msg: dict[str, Any]) -> None:
         """Execute a remote generation job."""
@@ -232,11 +252,85 @@ class RemoteWorkerClient:
         """Send periodic heartbeats while connected."""
         while True:
             await asyncio.sleep(self.heartbeat_interval)
-            await self._send_heartbeat(ws)
+            try:
+                await self._send_heartbeat(ws)
+            except Exception:
+                log.debug("Heartbeat send failed, connection likely closing")
+                return
 
 
-def default_worker_capabilities(config: Any, backend: str, allow_tools: bool) -> dict[str, Any]:
-    """Describe this worker's runtime so the controller can schedule it."""
+def _detect_llama_model(llama_url: str) -> dict[str, Any] | None:
+    """Query a running llama-server for its actual model metadata."""
+    try:
+        import httpx
+
+        resp = httpx.get(f"{llama_url}/v1/models", timeout=5)
+        resp.raise_for_status()
+        data = resp.json()
+        models = data.get("data") or data.get("models") or []
+        if models:
+            m = models[0]
+            meta = m.get("meta", {})
+            return {
+                "model_id": m.get("id", ""),
+                "n_params": meta.get("n_params", 0),
+                "n_ctx_train": meta.get("n_ctx_train", 0),
+                "n_embd": meta.get("n_embd", 0),
+                "size_bytes": meta.get("size", 0),
+            }
+    except Exception:
+        pass
+    return None
+
+
+def _detect_system_resources() -> dict[str, Any]:
+    """Detect RAM and CPU info for the current machine."""
+    resources: dict[str, Any] = {"hostname": socket.gethostname()}
+    try:
+        import os
+
+        resources["cpu_count"] = os.cpu_count() or 0
+    except Exception:
+        pass
+    try:
+        import shutil
+
+        total, used, free = shutil.disk_usage("/")
+        # Try /proc/meminfo (Linux) or sysctl (macOS) for RAM
+        import platform
+
+        if platform.system() == "Linux":
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        resources["ram_total_mb"] = int(line.split()[1]) // 1024
+                    elif line.startswith("MemAvailable:"):
+                        resources["ram_available_mb"] = int(line.split()[1]) // 1024
+        elif platform.system() == "Darwin":
+            import subprocess
+
+            result = subprocess.run(
+                ["sysctl", "-n", "hw.memsize"], capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                resources["ram_total_mb"] = int(result.stdout.strip()) // (1024 * 1024)
+    except Exception:
+        pass
+    return resources
+
+
+def default_worker_capabilities(
+    config: Any,
+    backend: str,
+    allow_tools: bool,
+    llama_url: str = "",
+) -> dict[str, Any]:
+    """Describe this worker's runtime so the controller can schedule it.
+
+    For llama/ollama backends, queries the running server to detect the
+    actual model instead of relying on the global config (which may be
+    stale or point to a different model).
+    """
     if backend == "claude":
         mode = "anthropic_messages"
     elif backend == "ollama":
@@ -246,15 +340,37 @@ def default_worker_capabilities(config: Any, backend: str, allow_tools: bool) ->
     else:
         mode = "mlx_prompt"
 
+    model_name = getattr(config.model, "name", "")
+    context_window = getattr(config.model, "context_window", 0)
+    max_tokens = getattr(config.model, "max_tokens", 0)
+
+    # For llama backend, detect the actual running model
+    llama_meta: dict[str, Any] = {}
+    if backend == "llama" and llama_url:
+        detected = _detect_llama_model(llama_url)
+        if detected:
+            llama_meta = detected
+            # Use detected model name and training context if available
+            if detected["model_id"]:
+                model_name = detected["model_id"]
+            if detected["n_ctx_train"] > 0 and context_window <= 0:
+                context_window = detected["n_ctx_train"]
+
     caps: dict[str, Any] = {
         "hostname": socket.gethostname(),
         "backend": backend,
-        "model": getattr(config.model, "name", ""),
+        "model": model_name,
         "modes": [mode],
-        "context_window": getattr(config.model, "context_window", 0),
-        "max_tokens": getattr(config.model, "max_tokens", 0),
+        "context_window": context_window,
+        "max_tokens": max_tokens,
         "tools": allow_tools,
     }
+
+    if llama_meta:
+        caps["model_meta"] = llama_meta
+
+    # Add system resource info (RAM, CPU)
+    caps["resources"] = _detect_system_resources()
 
     # Add GPU info if available
     try:

@@ -271,10 +271,12 @@ class LlamaRuntime:
         payload = {
             "messages": messages,
             "stream": False,
-            "temperature": self.config.model.temperature,
-            "top_p": self.config.model.top_p,
-            "max_tokens": self.config.model.max_tokens,
+            "temperature": request.get("temperature", self.config.model.temperature),
+            "top_p": request.get("top_p", self.config.model.top_p),
+            "max_tokens": request.get("max_tokens", self.config.model.max_tokens),
         }
+        if "reasoning_effort" in request:
+            payload["reasoning_effort"] = request["reasoning_effort"]
 
         async with httpx.AsyncClient(timeout=300.0) as client:
             resp = await client.post(
@@ -316,10 +318,12 @@ class LlamaRuntime:
         payload = {
             "messages": messages,
             "stream": True,
-            "temperature": self.config.model.temperature,
-            "top_p": self.config.model.top_p,
-            "max_tokens": self.config.model.max_tokens,
+            "temperature": request.get("temperature", self.config.model.temperature),
+            "top_p": request.get("top_p", self.config.model.top_p),
+            "max_tokens": request.get("max_tokens", self.config.model.max_tokens),
         }
+        if "reasoning_effort" in request:
+            payload["reasoning_effort"] = request["reasoning_effort"]
 
         async with httpx.AsyncClient(timeout=300.0) as client:
             async with client.stream(
