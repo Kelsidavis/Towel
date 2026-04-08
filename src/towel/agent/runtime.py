@@ -101,6 +101,7 @@ class AgentRuntime:
         self.config = config
         self.skills = skills or SkillRegistry()
         self.memory = memory  # MemoryStore instance
+        self.project_context: str | None = None  # Override from coordinator
         self._model: Any = None
         self._tokenizer: Any = None
         self._loaded = False
@@ -439,12 +440,16 @@ class AgentRuntime:
             "or verified something, explicitly report that back to the user."
         )
 
-        # Inject project context from .towel.md files
-        from towel.agent.project import load_project_context
+        # Inject project context — use coordinator-provided override if set,
+        # otherwise discover from local .towel.md files
+        if self.project_context:
+            system += self.project_context
+        else:
+            from towel.agent.project import load_project_context
 
-        project_block = load_project_context()
-        if project_block:
-            system += project_block
+            project_block = load_project_context()
+            if project_block:
+                system += project_block
 
         # Inject persistent memories
         if self.memory:

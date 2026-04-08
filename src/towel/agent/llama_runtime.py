@@ -69,6 +69,7 @@ class LlamaRuntime:
         self.config = config
         self.skills = skills or SkillRegistry()
         self.memory = memory
+        self.project_context: str | None = None  # Override from coordinator
         self.llama_url = llama_url.rstrip("/")
         self.llama_model = llama_model
         self.auto_start = auto_start
@@ -172,11 +173,14 @@ class LlamaRuntime:
             "use it to provide a direct, helpful answer."
         )
 
-        from towel.agent.project import load_project_context
+        if self.project_context:
+            system += self.project_context
+        else:
+            from towel.agent.project import load_project_context
 
-        project_block = load_project_context()
-        if project_block:
-            system += project_block
+            project_block = load_project_context()
+            if project_block:
+                system += project_block
 
         if self.memory:
             memory_block = self.memory.to_prompt_block()
