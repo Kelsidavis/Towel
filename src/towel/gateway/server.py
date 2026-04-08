@@ -36,6 +36,7 @@ from towel.agent.tool_parser import parse_tool_calls
 from towel.config import TowelConfig
 from towel.gateway.context_sync import ContextSyncManager
 from towel.gateway.handoff import HandoffManager, HandoffReason
+from towel.gateway.idle_tasks import IDLE_TASK_PROMPTS, IdleTask, IdleTaskManager
 from towel.gateway.sessions import SessionManager
 from towel.gateway.workers import WorkerInfo, WorkerRegistry
 from towel.memory.cluster import ClusterMemorySync
@@ -84,6 +85,7 @@ class GatewayServer:
     _worker_states: dict[str, dict[str, bool]] = field(default_factory=dict)
     _node_roles: dict[str, list[NodeRole]] = field(default_factory=dict)
     _node_tasks: dict[str, list[TaskType]] = field(default_factory=dict)
+    _idle_manager: IdleTaskManager = field(default_factory=IdleTaskManager)
 
     def __post_init__(self) -> None:
         self._session_pins = self.pin_store.load()
@@ -195,6 +197,11 @@ class GatewayServer:
                     # Send memory snapshot to newly connected worker
                     if role == "worker" and self._cluster_memory:
                         await ws.send(json.dumps(self._cluster_memory.build_snapshot_message()))
+                    # Start idle work on newly registered worker
+                    if role == "worker":
+                        worker_obj = self._workers.get(conn_id)
+                        if worker_obj:
+                            await self._dispatch_idle_task(worker_obj)
                     continue
 
                 if msg_type == "heartbeat":
@@ -629,6 +636,13 @@ class GatewayServer:
             self._session_workers[session_id] = worker.id
             return worker, intent
 
+        # All workers busy — try to preempt one running an idle task
+        for w in self._workers.list():
+            if w.enabled and not w.draining and self._idle_manager.is_idle_task(w.id):
+                await self._preempt_idle_task(w)
+                self._session_workers[session_id] = w.id
+                return w, intent
+
         return None, intent  # No workers → coordinator handles it
 
     async def _quick_remote_infer(
@@ -816,6 +830,108 @@ class GatewayServer:
         await worker.ws.send(
             json.dumps({"type": "cancel_job", "job_id": job_id, "session": session_id})
         )
+
+    async def _dispatch_idle_task(self, worker: WorkerInfo) -> None:
+        """Send a background idle task to an idle worker.
+
+        The task runs as a normal agent job. If a real request comes in,
+        _preempt_idle_task cancels it first.
+        """
+        has_tools = bool(worker.capabilities.get("tools", False))
+        assigned = self._node_tasks.get(worker.id)
+        task = self._idle_manager.next_task_for_worker(worker.id, has_tools, assigned)
+        if task is None:
+            return
+
+        prompt = IDLE_TASK_PROMPTS[task]
+        job_id = uuid.uuid4().hex[:12]
+        session_id = f"_idle_{worker.id}_{task.value}"
+
+        from towel.agent.conversation import Conversation, Message
+
+        conv = Conversation(id=session_id)
+        conv.add(Role.USER, prompt)
+
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._job_queues[job_id] = queue
+        self._workers.assign(worker.id, job_id, session_id)
+        self._idle_manager.start_task(worker.id, task)
+
+        log.info("Idle task %s dispatched to %s (job %s)", task, worker.id, job_id)
+
+        payload: dict[str, Any] = {
+            "type": "run",
+            "job_id": job_id,
+            "session": session_id,
+            "stream": False,
+            "conversation": conv.to_dict(),
+        }
+        # Include project context if available
+        from towel.agent.project import load_project_context
+        project_ctx = load_project_context()
+        if project_ctx:
+            payload["project_context"] = project_ctx
+
+        await worker.ws.send(json.dumps(payload))
+
+        # Collect result in background — don't block
+        async def _collect() -> None:
+            try:
+                while True:
+                    msg = await asyncio.wait_for(queue.get(), timeout=300.0)
+                    msg_type = msg.get("type")
+                    if msg_type == "job_done":
+                        result = msg.get("result", {})
+                        text = result.get("text", "")
+                        # Also check response field for non-streaming
+                        if not text:
+                            resp = msg.get("response", {})
+                            text = resp.get("content", "")
+                        self._idle_manager.complete_task(worker.id, text)
+                        break
+                    elif msg_type == "job_error":
+                        self._idle_manager.complete_task(
+                            worker.id, msg.get("message", "error"), error=True
+                        )
+                        break
+                    # job_event — ignore streaming tokens for idle tasks
+            except asyncio.TimeoutError:
+                self._idle_manager.complete_task(worker.id, "Timed out", error=True)
+            except asyncio.CancelledError:
+                self._idle_manager.cancel_task(worker.id)
+            finally:
+                self._job_queues.pop(job_id, None)
+                self._workers.release(worker.id)
+                # After finishing, try to dispatch another idle task
+                if not worker.busy and worker.enabled and not worker.draining:
+                    await self._dispatch_idle_task(worker)
+
+        asyncio.create_task(_collect())
+
+    async def _schedule_idle_work(self) -> None:
+        """Check all idle workers and dispatch background tasks."""
+        for worker in self._workers.list():
+            if (
+                not worker.busy
+                and worker.enabled
+                and not worker.draining
+                and not self._idle_manager.is_idle_task(worker.id)
+            ):
+                await self._dispatch_idle_task(worker)
+
+    async def _preempt_idle_task(self, worker: WorkerInfo) -> None:
+        """Cancel any idle task running on a worker to free it for real work."""
+        if not self._idle_manager.is_idle_task(worker.id):
+            return
+        task = self._idle_manager.cancel_task(worker.id)
+        log.info("Preempting idle task %s on %s for real request", task, worker.id)
+        job_id = worker.current_job_id
+        if job_id:
+            await worker.ws.send(
+                json.dumps({"type": "cancel_job", "job_id": job_id, "session": worker.current_session_id or ""})
+            )
+            self._job_queues.pop(job_id, None)
+            self._workers.release(worker.id)
 
     async def _remote_generate(
         self,
@@ -1259,6 +1375,13 @@ class GatewayServer:
                 }
             )
 
+        async def idle_tasks_status(_request: Any) -> JSONResponse:
+            """Return idle task results and active background work."""
+            return JSONResponse({
+                "results": self._idle_manager.all_results(),
+                "active": self._idle_manager.active_tasks(),
+            })
+
         async def worker_state_update(request: Request) -> JSONResponse:
             worker_id = request.path_params["worker_id"]
             try:
@@ -1589,6 +1712,7 @@ class GatewayServer:
             Route("/workers/{worker_id}/tasks", worker_tasks_update, methods=["POST"]),
             Route("/cluster/nodes", cluster_nodes),
             Route("/cluster/handoffs", cluster_handoffs),
+            Route("/cluster/idle", idle_tasks_status),
             Route("/conversations", conversations_list, methods=["GET"]),
             Route("/conversations", conversations_delete_all, methods=["DELETE"]),
             Route("/conversations/{conv_id}", conversation_detail, methods=["GET"]),
