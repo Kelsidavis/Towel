@@ -107,6 +107,11 @@ class RemoteWorkerClient:
         conversation = Conversation.from_dict(msg["conversation"])
         stream = msg.get("stream", True)
 
+        # Apply coordinator's project context so the worker uses it
+        project_ctx = msg.get("project_context")
+        if project_ctx and hasattr(self.agent, "project_context"):
+            self.agent.project_context = project_ctx
+
         try:
             if stream:
                 async for event in self.agent.step_streaming(conversation):

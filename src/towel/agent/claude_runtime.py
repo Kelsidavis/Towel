@@ -125,6 +125,7 @@ class ClaudeCodeRuntime:
         self.config = config
         self.skills = skills or SkillRegistry()
         self.memory = memory
+        self.project_context: str | None = None  # Override from coordinator
         self.model = _resolve_model(model)
         self._client: Any = None  # anthropic.AsyncAnthropic
         self._loaded = False
@@ -178,12 +179,15 @@ class ClaudeCodeRuntime:
             "or verified something, explicitly report that back to the user."
         )
 
-        # Inject project context
-        from towel.agent.project import load_project_context
+        # Inject project context — use coordinator-provided override if set
+        if self.project_context:
+            system += self.project_context
+        else:
+            from towel.agent.project import load_project_context
 
-        project_block = load_project_context()
-        if project_block:
-            system += project_block
+            project_block = load_project_context()
+            if project_block:
+                system += project_block
 
         # Inject persistent memories
         if self.memory:
