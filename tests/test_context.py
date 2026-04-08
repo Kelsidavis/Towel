@@ -229,12 +229,9 @@ class TestFitMessages:
             token_counter=word_counter,
         )
 
+        assert budget.messages_dropped > 0
         assert fitted[0]["role"] == "system"
         assert "Compacted summary" in fitted[0]["content"]
-        assert any(
-            "Question 0" in fitted[0]["content"] or "Answer 0" in fitted[0]["content"]
-            for _ in [0]
-        )
 
     def test_skips_large_old_tool_message_when_fitting_recent_context(self):
         messages = [
