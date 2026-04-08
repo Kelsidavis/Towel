@@ -12,7 +12,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import uvicorn
 import websockets
@@ -48,6 +48,7 @@ from towel.nodes.roles import (
     best_node_for_role,
     best_node_for_task,
     classify_message_intent,
+    classify_task_type,
 )
 from towel.nodes.tracker import NodeTracker
 from towel.persistence.session_pins import SessionPinStore
@@ -468,22 +469,98 @@ class GatewayServer:
             self._job_queues.pop(job_id, None)
             self._workers.release(worker.id)
 
+    async def _classify_task_on_worker(
+        self, message: str, worker: WorkerInfo
+    ) -> TaskType | None:
+        """Classify a message into a specific TaskType using a remote worker.
+
+        Returns a TaskType or None if classification fails.
+        """
+        from towel.agent.conversation import Conversation, Message
+
+        task_labels = ", ".join(f"'{t.value}'" for t in TaskType)
+        classify_prompt = (
+            "Classify this user message into exactly one task type. "
+            f"Reply with exactly one word from: {task_labels}\n\n"
+            f"Message: {message[:400]}\n\nTask type:"
+        )
+
+        job_id = uuid.uuid4().hex[:12]
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._job_queues[job_id] = queue
+        self._workers.assign(worker.id, job_id, "classify_task")
+
+        modes = worker.capabilities.get("modes", [])
+        mode = modes[0] if modes else "llama_chat"
+
+        await worker.ws.send(
+            json.dumps(
+                {
+                    "type": "infer",
+                    "job_id": job_id,
+                    "session": "classify_task",
+                    "stream": False,
+                    "request": {
+                        "mode": mode,
+                        "model": worker.capabilities.get("model", ""),
+                        "system": "",
+                        "messages": [{"role": "user", "content": classify_prompt}],
+                        "max_tokens": 8,
+                        "temperature": 0.0,
+                        "reasoning_effort": "none",
+                    },
+                }
+            )
+        )
+
+        try:
+            msg = await asyncio.wait_for(queue.get(), timeout=5.0)
+            if msg.get("type") == "job_done":
+                text = msg.get("result", {}).get("text", "").strip().lower()
+                # Match against known task types
+                for task_type in TaskType:
+                    if task_type.value in text:
+                        return task_type
+            return None
+        except Exception as exc:
+            log.debug("Task classification failed (%s)", exc)
+            return None
+        finally:
+            self._job_queues.pop(job_id, None)
+            self._workers.release(worker.id)
+
+    # Map TaskType to the routing intent that determines the execution path
+    _TASK_TO_INTENT: ClassVar[dict[TaskType, str]] = {
+        TaskType.CHAT: "chat",
+        TaskType.TRIAGE: "chat",
+        # Tool-heavy tasks use the full agent loop with tools
+        TaskType.LINT: "tool",
+        TaskType.TEST_RUN: "tool",
+        TaskType.TYPE_CHECK: "tool",
+        TaskType.FETCH: "tool",
+        TaskType.SHELL: "tool",
+        TaskType.FILE_OPS: "tool",
+        TaskType.GIT_OPS: "tool",
+        TaskType.BUILD: "tool",
+        TaskType.RESEARCH: "tool",
+        TaskType.REFACTOR: "tool",
+        TaskType.GENERATE: "tool",
+    }
+    # Everything else defaults to "task" (quality inference)
+
     async def _route_by_role(
         self, message: str, session_id: str
     ) -> tuple[WorkerInfo | None, str]:
-        """Route a message to the best worker based on roles and intent.
+        """Route a message to the best worker based on task type.
 
         Returns (worker, intent) where intent is 'chat', 'tool', or 'task'.
         Worker is None when the coordinator should handle it directly.
 
         Flow:
         1. Check session pin / affinity
-        2. Quick heuristic classification (free, no LLM)
-        3. If ambiguous, classify on cheapest CLASSIFIER node
-        4. Route based on intent:
-           - chat → cheapest CLASSIFIER node (lightweight infer, no tools)
-           - tool → TOOL_WORKER node (full agent loop with tools)
-           - task → best INFERENCE node (full agent loop)
+        2. Classify into a specific TaskType (heuristic, then LLM)
+        3. Find the best worker that has that task assigned
+        4. Fall back to role-based routing if no task-assigned worker fits
         """
         # Respect explicit pins
         pinned_id = self._session_pins.get(session_id)
@@ -501,38 +578,46 @@ class GatewayServer:
                 if node and node.get_context_slot(session_id) is not None:
                     return affinity_worker, "task"
 
-        # Step 1: Quick local heuristic (no inference cost)
-        intent = classify_message_intent(message)
+        # Step 1: Classify into a specific TaskType
+        task_type = classify_task_type(message)
 
-        # Step 2: If ambiguous, use the cheapest classifier worker
-        if intent is None:
+        # Step 2: If heuristic didn't match, try LLM classification
+        if task_type is None:
             classifier = self._worker_for_role(NodeRole.CLASSIFIER, session_id)
             if classifier:
-                intent = await self._classify_on_worker(message, classifier)
-            else:
-                # No classifier workers — fall back to coordinator
-                intent = "task"
+                task_type = await self._classify_task_on_worker(message, classifier)
 
-        log.debug("Route: intent=%s message=%r", intent, message[:60])
+        # Step 3: Route by task type
+        if task_type is not None:
+            intent = self._TASK_TO_INTENT.get(task_type, "task")
+            log.debug("Route: task=%s intent=%s message=%r", task_type, intent, message[:60])
 
-        # Step 3: Route based on intent
+            # Try to find a worker with this task assigned
+            worker = self._worker_for_task(task_type, session_id)
+            if worker:
+                self._session_workers[session_id] = worker.id
+                return worker, intent
+
+            # No task-specific worker — fall through to role-based routing
+            log.debug("No worker for task %s, falling back to role-based", task_type)
+
+        # Step 4: Fall back to intent-based routing
+        intent = classify_message_intent(message) or "task"
+        log.debug("Route fallback: intent=%s message=%r", intent, message[:60])
+
         if intent == "chat":
-            # Chat uses quick infer on the best inference node (fast t/s matters)
             worker = self._worker_for_role(NodeRole.INFERENCE, session_id)
             if worker:
                 self._session_workers[session_id] = worker.id
                 return worker, "chat"
-            # No inference node — fall through to coordinator
 
         elif intent == "tool":
-            # Tool requests go to tool-capable worker
             worker = self._worker_for_role(NodeRole.TOOL_WORKER, session_id)
             if worker:
                 self._session_workers[session_id] = worker.id
                 return worker, "tool"
-            # No tool worker — try inference node, coordinator handles tools
 
-        # intent == "task" or no suitable specialized worker found
+        # Default: best inference node
         worker = self._worker_for_role(NodeRole.INFERENCE, session_id)
         if worker:
             self._session_workers[session_id] = worker.id
@@ -542,9 +627,9 @@ class GatewayServer:
         worker = self._worker_for_role(NodeRole.GENERAL, session_id)
         if worker:
             self._session_workers[session_id] = worker.id
-            return worker, intent or "task"
+            return worker, intent
 
-        return None, intent or "task"  # No workers → coordinator handles it
+        return None, intent  # No workers → coordinator handles it
 
     async def _quick_remote_infer(
         self,

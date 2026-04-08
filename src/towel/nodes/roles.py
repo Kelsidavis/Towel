@@ -401,3 +401,118 @@ def classify_message_intent(text: str) -> str | None:
         return "tool"
 
     return None  # Needs LLM classification
+
+
+def classify_task_type(text: str) -> TaskType | None:
+    """Heuristic task type classification from message text.
+
+    Returns a specific TaskType for obvious cases, None if LLM
+    classification is needed. Cheap — no inference cost.
+    """
+    stripped = text.strip().lower()
+
+    # Chat — greetings, short acks
+    if len(stripped) < 25:
+        chat_words = (
+            "hi", "hello", "hey", "thanks", "thank you", "ok", "okay",
+            "lol", "haha", "cool", "nice", "great", "sure", "yep", "yes",
+            "no", "nah", "bye", "goodbye", "gn", "gm", "sup", "yo",
+        )
+        for w in chat_words:
+            if stripped == w or stripped.startswith(w + " ") or stripped.startswith(w + "!"):
+                return TaskType.CHAT
+
+    # Fetch / URL
+    if "http://" in stripped or "https://" in stripped:
+        return TaskType.FETCH
+    for sig in ("fetch ", "download ", "curl ", "get the url"):
+        if sig in stripped:
+            return TaskType.FETCH
+
+    # Test (before shell — "run tests" should match test, not shell)
+    for sig in ("run test", "run the test", "pytest", "unittest", "test suite"):
+        if sig in stripped:
+            return TaskType.TEST_RUN
+    for sig in ("write test", "generate test", "add test", "create test"):
+        if sig in stripped:
+            return TaskType.TEST_GEN
+
+    # Shell
+    for sig in ("run ", "execute ", "shell ", "bash ", "$ "):
+        if stripped.startswith(sig):
+            return TaskType.SHELL
+
+    # Git
+    for sig in ("git ", "commit", "push", "pull request", "diff", "blame", "log "):
+        if sig in stripped:
+            return TaskType.GIT_OPS
+
+    # Build
+    for sig in ("build", "compile", "make ", "cargo ", "npm run", "pip install"):
+        if stripped.startswith(sig) or f" {sig}" in stripped:
+            return TaskType.BUILD
+
+    # Lint / type check
+    for sig in ("lint", "flake8", "ruff ", "eslint", "pylint", "clippy"):
+        if sig in stripped:
+            return TaskType.LINT
+    for sig in ("type check", "typecheck", "mypy", "pyright", "tsc "):
+        if sig in stripped:
+            return TaskType.TYPE_CHECK
+
+    # Code review
+    for sig in ("review ", "code review", "review this", "review the"):
+        if sig in stripped:
+            return TaskType.CODE_REVIEW
+
+    # Refactor
+    for sig in ("refactor", "clean up", "restructure", "reorganize"):
+        if sig in stripped:
+            return TaskType.REFACTOR
+
+    # Explain
+    for sig in ("explain", "what does", "what is", "how does", "why does", "what's this"):
+        if sig in stripped:
+            return TaskType.EXPLAIN
+
+    # Summarize
+    for sig in ("summarize", "summary", "tldr", "tl;dr", "condense"):
+        if sig in stripped:
+            return TaskType.SUMMARIZE
+
+    # Research
+    for sig in ("research", "search for", "look up", "find out", "google", "investigate"):
+        if sig in stripped:
+            return TaskType.RESEARCH
+
+    # Plan
+    for sig in ("plan ", "break down", "outline", "roadmap", "strategy for"):
+        if sig in stripped:
+            return TaskType.PLAN
+
+    # Draft / docs
+    for sig in ("write a doc", "draft ", "write docs", "document ", "readme", "spec "):
+        if sig in stripped:
+            return TaskType.DRAFT
+
+    # Translate
+    for sig in ("translate", "convert to ", "port to ", "rewrite in "):
+        if sig in stripped:
+            return TaskType.TRANSLATE
+
+    # Analyze
+    for sig in ("analyze", "analyse", "audit", "architecture"):
+        if sig in stripped:
+            return TaskType.ANALYZE
+
+    # Generate (broad — code generation)
+    for sig in ("write ", "create ", "implement ", "add ", "generate ", "make a ", "build a "):
+        if stripped.startswith(sig):
+            return TaskType.GENERATE
+
+    # File ops
+    for sig in ("read file", "write file", "find file", "list files", "search file", "grep "):
+        if sig in stripped:
+            return TaskType.FILE_OPS
+
+    return None
