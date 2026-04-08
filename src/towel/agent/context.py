@@ -88,10 +88,11 @@ def estimate_output_reserve(
         "detailed",
     )
     latest_lower = latest_user.lower()
-    if any(cue in latest_lower for cue in detailed_cues):
+    has_detailed_cue = any(cue in latest_lower for cue in detailed_cues)
+    if has_detailed_cue:
         reserve = max(reserve, 1536)
 
-    if len(messages) <= 2 and latest_user_tokens <= 32:
+    if len(messages) <= 2 and latest_user_tokens <= 32 and not has_detailed_cue:
         reserve = min(reserve, 768)
 
     return max(256, min(configured_max_tokens, reserve))
@@ -329,13 +330,16 @@ def fit_messages(
         if 0 <= i < len(messages):
             pinned_cost += msg_tokens[i]
 
+    # Reserve tokens for compaction summary when messages will be dropped
+    summary_reserve = min(30, budget.remaining // 4) if len(messages) > 4 else 0
+
     # Fill backwards with recent messages, skipping pinned (added separately)
     for i in range(len(messages) - 1, -1, -1):
         if i in pinned:
             continue  # pinned messages are added regardless
         cost = msg_tokens[i]
 
-        if tokens_used + cost + pinned_cost > budget.remaining:
+        if tokens_used + cost + pinned_cost + summary_reserve > budget.remaining:
             # Older tool outputs are often verbose and low-value once we have newer turns.
             if messages[i]["role"] == "tool":
                 continue
