@@ -1,4 +1,4 @@
-"""Automatic role assignment for heterogeneous cluster nodes.
+"""Automatic role and task assignment for heterogeneous cluster nodes.
 
 When a worker connects, the coordinator inspects its capabilities —
 GPU VRAM, model size, context window, tool support, estimated speed —
@@ -8,6 +8,10 @@ Roles are not exclusive: a powerful GPU node might be both INFERENCE
 and CLASSIFIER. A small node with tools enabled might be TOOL_WORKER
 and CLASSIFIER. The scheduler picks the best node for each role when
 routing a request.
+
+Tasks are higher-level workloads that map to roles + hardware fitness.
+The coordinator auto-assigns tasks based on capabilities but allows
+manual override per worker via the fleet UI.
 """
 
 from __future__ import annotations
@@ -29,6 +33,92 @@ class NodeRole(Enum):
 
     def __str__(self) -> str:
         return self.value
+
+
+class TaskType(Enum):
+    """Assignable task types for cluster workers.
+
+    Each task type represents a category of work that can be routed to
+    a suitable worker. Tasks map to roles + hardware requirements.
+    """
+
+    # ── Code quality ──────────────────────────────────────────────────
+    LINT = "lint"                        # Static analysis, style checks
+    CODE_REVIEW = "code_review"          # Review diffs, suggest improvements
+    REFACTOR = "refactor"               # Code restructuring, cleanup
+    TEST_GEN = "test_gen"               # Generate test cases
+    TEST_RUN = "test_run"               # Execute test suites (needs shell)
+    TYPE_CHECK = "type_check"           # Type analysis, annotation
+
+    # ── Research & analysis ───────────────────────────────────────────
+    RESEARCH = "research"               # Web search, read docs, summarize
+    SUMMARIZE = "summarize"             # Condense long text/conversations
+    EXPLAIN = "explain"                 # Explain code, concepts, errors
+    ANALYZE = "analyze"                 # Deep analysis, architecture review
+
+    # ── Generation ────────────────────────────────────────────────────
+    GENERATE = "generate"               # Write new code, features
+    DRAFT = "draft"                     # Write docs, specs, plans
+    TRANSLATE = "translate"             # Convert between languages/formats
+
+    # ── Tool-heavy ────────────────────────────────────────────────────
+    FETCH = "fetch"                     # URL fetching, API calls
+    SHELL = "shell"                     # Run shell commands, scripts
+    FILE_OPS = "file_ops"              # File read/write/search
+    GIT_OPS = "git_ops"                # Git operations, history analysis
+    BUILD = "build"                     # Compile, build, package
+
+    # ── Orchestration ─────────────────────────────────────────────────
+    TRIAGE = "triage"                   # Classify and route incoming requests
+    PLAN = "plan"                       # Break tasks into subtasks
+    CHAT = "chat"                       # Conversational, lightweight replies
+
+    def __str__(self) -> str:
+        return self.value
+
+
+# ── Task → requirements mapping ──────────────────────────────────────
+
+# Each task type specifies what it needs from a worker node.
+# roles: required NodeRole(s) — worker must have at least one
+# needs_tools: whether the task requires tool execution
+# min_vram_mb: minimum VRAM for good performance (0 = any)
+# min_context: minimum context window tokens (0 = any)
+# prefer_fast: prefer lowest latency over quality
+# prefer_quality: prefer largest model over speed
+
+TASK_REQUIREMENTS: dict[TaskType, dict[str, Any]] = {
+    # Code quality — moderate models, tools helpful
+    TaskType.LINT:        {"roles": [NodeRole.TOOL_WORKER, NodeRole.GENERAL], "needs_tools": True, "min_vram_mb": 0, "min_context": 8192, "prefer_fast": True},
+    TaskType.CODE_REVIEW: {"roles": [NodeRole.INFERENCE], "needs_tools": False, "min_vram_mb": 4000, "min_context": 32768, "prefer_quality": True},
+    TaskType.REFACTOR:    {"roles": [NodeRole.INFERENCE, NodeRole.TOOL_WORKER], "needs_tools": True, "min_vram_mb": 4000, "min_context": 32768, "prefer_quality": True},
+    TaskType.TEST_GEN:    {"roles": [NodeRole.INFERENCE], "needs_tools": False, "min_vram_mb": 4000, "min_context": 16384, "prefer_quality": True},
+    TaskType.TEST_RUN:    {"roles": [NodeRole.TOOL_WORKER], "needs_tools": True, "min_vram_mb": 0, "min_context": 8192, "prefer_fast": True},
+    TaskType.TYPE_CHECK:  {"roles": [NodeRole.TOOL_WORKER, NodeRole.GENERAL], "needs_tools": True, "min_vram_mb": 0, "min_context": 8192, "prefer_fast": True},
+
+    # Research & analysis — large context, quality models
+    TaskType.RESEARCH:    {"roles": [NodeRole.INFERENCE, NodeRole.TOOL_WORKER], "needs_tools": True, "min_vram_mb": 4000, "min_context": 32768, "prefer_quality": True},
+    TaskType.SUMMARIZE:   {"roles": [NodeRole.INFERENCE], "needs_tools": False, "min_vram_mb": 4000, "min_context": 65536, "prefer_quality": True},
+    TaskType.EXPLAIN:     {"roles": [NodeRole.INFERENCE], "needs_tools": False, "min_vram_mb": 2000, "min_context": 16384},
+    TaskType.ANALYZE:     {"roles": [NodeRole.INFERENCE], "needs_tools": False, "min_vram_mb": 8000, "min_context": 32768, "prefer_quality": True},
+
+    # Generation — quality models, decent context
+    TaskType.GENERATE:    {"roles": [NodeRole.INFERENCE, NodeRole.TOOL_WORKER], "needs_tools": True, "min_vram_mb": 4000, "min_context": 32768, "prefer_quality": True},
+    TaskType.DRAFT:       {"roles": [NodeRole.INFERENCE], "needs_tools": False, "min_vram_mb": 4000, "min_context": 16384, "prefer_quality": True},
+    TaskType.TRANSLATE:   {"roles": [NodeRole.INFERENCE], "needs_tools": False, "min_vram_mb": 2000, "min_context": 16384},
+
+    # Tool-heavy — needs tools, speed matters
+    TaskType.FETCH:       {"roles": [NodeRole.TOOL_WORKER], "needs_tools": True, "min_vram_mb": 0, "min_context": 8192, "prefer_fast": True},
+    TaskType.SHELL:       {"roles": [NodeRole.TOOL_WORKER], "needs_tools": True, "min_vram_mb": 0, "min_context": 8192, "prefer_fast": True},
+    TaskType.FILE_OPS:    {"roles": [NodeRole.TOOL_WORKER], "needs_tools": True, "min_vram_mb": 0, "min_context": 8192, "prefer_fast": True},
+    TaskType.GIT_OPS:     {"roles": [NodeRole.TOOL_WORKER], "needs_tools": True, "min_vram_mb": 0, "min_context": 16384, "prefer_fast": True},
+    TaskType.BUILD:       {"roles": [NodeRole.TOOL_WORKER], "needs_tools": True, "min_vram_mb": 0, "min_context": 8192, "prefer_fast": True},
+
+    # Orchestration — lightweight, fast
+    TaskType.TRIAGE:      {"roles": [NodeRole.CLASSIFIER], "needs_tools": False, "min_vram_mb": 0, "min_context": 4096, "prefer_fast": True},
+    TaskType.PLAN:        {"roles": [NodeRole.INFERENCE], "needs_tools": False, "min_vram_mb": 4000, "min_context": 32768, "prefer_quality": True},
+    TaskType.CHAT:        {"roles": [NodeRole.CLASSIFIER, NodeRole.GENERAL], "needs_tools": False, "min_vram_mb": 0, "min_context": 4096, "prefer_fast": True},
+}
 
 
 # ── Heuristic thresholds ───────────────────────────────────────────
@@ -93,6 +183,113 @@ def assign_roles(capabilities: dict[str, Any]) -> list[NodeRole]:
     roles.append(NodeRole.GENERAL)
 
     return roles
+
+
+def assign_tasks(
+    capabilities: dict[str, Any],
+    roles: list[NodeRole],
+) -> list[TaskType]:
+    """Auto-assign suitable tasks based on capabilities and roles.
+
+    Called when a worker registers. Returns tasks the worker is well-suited
+    for given its hardware, model, and tool support.
+    """
+    tasks: list[TaskType] = []
+
+    has_tools = bool(capabilities.get("tools", False))
+    context_window = capabilities.get("context_window", 0)
+    total_vram = capabilities.get("total_vram_mb", 0)
+    gpus = capabilities.get("gpus", [])
+    if not total_vram and gpus:
+        total_vram = sum(g.get("vram_mb", 0) for g in gpus)
+    backend = capabilities.get("backend", "")
+
+    for task_type, reqs in TASK_REQUIREMENTS.items():
+        # Check role match — worker must have at least one required role
+        required_roles = reqs.get("roles", [])
+        if not any(r in roles for r in required_roles):
+            continue
+
+        # Check tool requirement
+        if reqs.get("needs_tools") and not has_tools:
+            continue
+
+        # Check minimum VRAM
+        min_vram = reqs.get("min_vram_mb", 0)
+        if min_vram > 0 and total_vram < min_vram and backend != "claude":
+            continue
+
+        # Check minimum context window
+        min_ctx = reqs.get("min_context", 0)
+        if min_ctx > 0 and context_window < min_ctx and context_window > 0:
+            continue
+
+        tasks.append(task_type)
+
+    return tasks
+
+
+def best_node_for_task(
+    task: TaskType,
+    nodes: list[dict[str, Any]],
+    *,
+    exclude_busy: bool = True,
+    session_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Pick the best node to handle a specific task type.
+
+    Uses task requirements to filter and score candidates.
+    Nodes must have the task in their assigned_tasks list
+    (supports manual override — only considers explicitly assigned tasks).
+    """
+    reqs = TASK_REQUIREMENTS.get(task, {})
+
+    candidates = [
+        n for n in nodes
+        if task in (n.get("assigned_tasks") or [])
+        and n.get("enabled", True)
+        and not n.get("draining", False)
+        and (not exclude_busy or not n.get("busy", False))
+    ]
+
+    if not candidates:
+        # Fall back to role-based selection
+        required_roles = reqs.get("roles", [NodeRole.GENERAL])
+        for role in required_roles:
+            result = best_node_for_role(role, nodes, exclude_busy=exclude_busy, session_id=session_id)
+            if result:
+                return result
+        return None
+
+    if reqs.get("prefer_fast"):
+        # Prefer cheapest: local over API, lowest pressure
+        def fast_score(n: dict[str, Any]) -> tuple[int, float, int]:
+            caps = n.get("capabilities", {})
+            is_api = 1 if caps.get("backend") == "claude" else 0
+            pressure = n.get("context_pressure", 0.0)
+            locality = 0
+            if session_id:
+                slots = n.get("context_slots", [])
+                if any(s.get("session_id") == session_id for s in slots):
+                    locality = -1000
+            return (is_api, pressure, locality)
+
+        candidates.sort(key=fast_score)
+    elif reqs.get("prefer_quality"):
+        # Prefer most capable: biggest model, most VRAM
+        def quality_score(n: dict[str, Any]) -> tuple[int, int, float]:
+            caps = n.get("capabilities", {})
+            vram = caps.get("total_vram_mb", 0)
+            ctx = caps.get("context_window", 0)
+            pressure = n.get("context_pressure", 0.0)
+            return (-vram, -ctx, pressure)
+
+        candidates.sort(key=quality_score)
+    else:
+        # Default: least loaded
+        candidates.sort(key=lambda n: (n.get("context_pressure", 0.0), n.get("active_sessions", 0)))
+
+    return candidates[0]
 
 
 def best_node_for_role(

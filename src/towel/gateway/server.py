@@ -40,7 +40,15 @@ from towel.gateway.sessions import SessionManager
 from towel.gateway.workers import WorkerInfo, WorkerRegistry
 from towel.memory.cluster import ClusterMemorySync
 from towel.memory.store import MemoryStore
-from towel.nodes.roles import NodeRole, assign_roles, best_node_for_role, classify_message_intent
+from towel.nodes.roles import (
+    NodeRole,
+    TaskType,
+    assign_roles,
+    assign_tasks,
+    best_node_for_role,
+    best_node_for_task,
+    classify_message_intent,
+)
 from towel.nodes.tracker import NodeTracker
 from towel.persistence.session_pins import SessionPinStore
 from towel.persistence.store import ConversationStore
@@ -74,6 +82,7 @@ class GatewayServer:
     _session_jobs: dict[str, str] = field(default_factory=dict)
     _worker_states: dict[str, dict[str, bool]] = field(default_factory=dict)
     _node_roles: dict[str, list[NodeRole]] = field(default_factory=dict)
+    _node_tasks: dict[str, list[TaskType]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self._session_pins = self.pin_store.load()
@@ -154,13 +163,16 @@ class GatewayServer:
                     if role == "worker":
                         self._workers.register(conn_id, ws, capabilities)
                         self._node_tracker.register(conn_id, capabilities)
-                        # Auto-assign roles based on hardware capabilities
+                        # Auto-assign roles and tasks based on hardware capabilities
                         roles = assign_roles(capabilities)
                         self._node_roles[conn_id] = roles
+                        tasks = assign_tasks(capabilities, roles)
+                        self._node_tasks[conn_id] = tasks
                         log.info(
-                            "Worker %s assigned roles: %s",
+                            "Worker %s assigned roles: %s | tasks: %s",
                             conn_id,
                             ", ".join(str(r) for r in roles),
+                            ", ".join(str(t) for t in tasks),
                         )
                         state = self._worker_states.get(conn_id)
                         if state:
@@ -321,6 +333,7 @@ class GatewayServer:
                 self._workers.unregister(conn_id)
                 self._node_tracker.unregister(conn_id)
                 self._node_roles.pop(conn_id, None)
+                self._node_tasks.pop(conn_id, None)
                 self._context_sync.clear_worker(conn_id)
             # Cancel any running tasks for this connection
             for task in self._active_tasks.values():
@@ -360,9 +373,23 @@ class GatewayServer:
                 "context_pressure": node.context_pressure if node else 0.0,
                 "active_sessions": node.active_sessions if node else 0,
                 "context_slots": [s.to_dict() for s in node.context_slots] if node else [],
+                "assigned_tasks": self._node_tasks.get(worker.id, []),
             }
             nodes.append(nd)
         return nodes
+
+    def _worker_for_task(
+        self,
+        task: TaskType,
+        session_id: str | None = None,
+        exclude_busy: bool = True,
+    ) -> WorkerInfo | None:
+        """Find the best worker for a specific task type."""
+        nodes = self._build_node_dicts()
+        best = best_node_for_task(task, nodes, exclude_busy=exclude_busy, session_id=session_id)
+        if best:
+            return self._workers.get(best["id"])
+        return None
 
     def _worker_for_role(
         self,
@@ -1097,14 +1124,44 @@ class GatewayServer:
             for worker in self._workers.matching():
                 wd = worker.to_dict()
                 wd["roles"] = [str(r) for r in self._node_roles.get(worker.id, [])]
+                wd["assigned_tasks"] = [str(t) for t in self._node_tasks.get(worker.id, [])]
                 workers_data.append(wd)
             return JSONResponse(
                 {
                     "workers": workers_data,
+                    "all_tasks": [str(t) for t in TaskType],
                     "requirements": self._desired_worker_capabilities(),
                     "pins": dict(self._session_pins),
                 }
             )
+
+        async def worker_tasks_update(request: Request) -> JSONResponse:
+            """Override the auto-assigned tasks for a worker."""
+            worker_id = request.path_params["worker_id"]
+            worker = self._workers.get(worker_id)
+            if not worker:
+                return JSONResponse({"error": "Worker not found"}, status_code=404)
+            try:
+                body = await request.json()
+            except Exception:
+                return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+
+            task_names = body.get("tasks")
+            if task_names is None:
+                return JSONResponse({"error": "tasks list required"}, status_code=400)
+
+            # Validate task names
+            try:
+                tasks = [TaskType(t) for t in task_names]
+            except ValueError as e:
+                return JSONResponse({"error": f"Invalid task: {e}"}, status_code=400)
+
+            self._node_tasks[worker_id] = tasks
+            log.info("Worker %s tasks manually set: %s", worker_id, ", ".join(str(t) for t in tasks))
+            return JSONResponse({
+                "worker_id": worker_id,
+                "assigned_tasks": [str(t) for t in tasks],
+            })
 
         async def cluster_nodes(_request: Any) -> JSONResponse:
             return JSONResponse(self._node_tracker.to_dict())
@@ -1444,6 +1501,7 @@ class GatewayServer:
             Route("/sessions/{session_id}/pin-worker", session_unpin_worker, methods=["DELETE"]),
             Route("/workers", workers_list),
             Route("/workers/{worker_id}/state", worker_state_update, methods=["POST"]),
+            Route("/workers/{worker_id}/tasks", worker_tasks_update, methods=["POST"]),
             Route("/cluster/nodes", cluster_nodes),
             Route("/cluster/handoffs", cluster_handoffs),
             Route("/conversations", conversations_list, methods=["GET"]),

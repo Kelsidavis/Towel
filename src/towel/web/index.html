@@ -426,6 +426,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         sessions: sessions.sessions || [],
         requirements: workers.requirements || {},
         pins: workers.pins || {},
+        allTasks: workers.all_tasks || [],
         workerStats: health.workers || {},
         coordinator: health.coordinator || null
       };
@@ -482,11 +483,18 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         const model = String(caps.model || 'unknown').split('/').pop();
         const backend = caps.backend || 'unknown';
         const modes = (caps.modes || []).join(', ') || 'unknown';
+        const roles = (worker.roles || []).join(', ') || 'none';
+        const tasks = worker.assigned_tasks || [];
         const tools = caps.tools ? 'yes' : 'no';
         const currentSession = worker.current_session_id || '-';
         const availability = worker.enabled === false ? 'disabled' : 'enabled';
         const flow = worker.draining ? 'draining' : 'ready';
         const busy = worker.busy ? 'busy' : 'idle';
+        const allTasks = fleetState.allTasks || [];
+        const taskOptions = allTasks.map(function(t) {
+          const selected = tasks.indexOf(t) >= 0 ? ' selected' : '';
+          return '<option value="' + escHtml(t) + '"' + selected + '>' + escHtml(t) + '</option>';
+        }).join('');
         return `
           <div class="fleet-card">
             <div class="fleet-card-head">
@@ -499,10 +507,17 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
               <span class="fleet-badge">${escHtml(model)}</span>
             </div>
             <div class="fleet-meta">
+              <span>roles: ${escHtml(roles)}</span>
               <span>session: ${escHtml(currentSession)}</span>
               <span>tools: ${escHtml(tools)}</span>
               <span>context: ${escHtml(String(caps.context_window || '-'))}</span>
-              <span>max out: ${escHtml(String(caps.max_tokens || '-'))}</span>
+            </div>
+            <div class="fleet-tasks">
+              <label style="font-size:0.75em;opacity:0.7">Assigned tasks:</label>
+              <select multiple size="5" class="fleet-task-select" data-worker-id="${escHtml(worker.id)}" style="width:100%;font-size:0.75em;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:2px">
+                ${taskOptions}
+              </select>
+              <button class="fleet-btn" data-worker-id="${escHtml(worker.id)}" data-worker-op="save-tasks" style="margin-top:4px;font-size:0.7em">save tasks</button>
             </div>
             <div class="fleet-controls">
               <button class="fleet-btn warn" data-worker-id="${escHtml(worker.id)}" data-worker-op="${worker.draining ? 'undrain' : 'drain'}">${worker.draining ? 'undrain' : 'drain'}</button>
@@ -897,6 +912,13 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       if (op === 'undrain') await updateWorkerState(workerId, { draining: false });
       if (op === 'disable') await updateWorkerState(workerId, { enabled: false });
       if (op === 'enable') await updateWorkerState(workerId, { enabled: true });
+      if (op === 'save-tasks') {
+        const select = btn.closest('.fleet-card').querySelector('.fleet-task-select');
+        const tasks = Array.from(select.selectedOptions).map(function(o){return o.value;});
+        await apiPost('/workers/' + encodeURIComponent(workerId) + '/tasks', { tasks: tasks });
+        loadFleetState();
+        return;
+      }
     } catch (err) {
       alert(err.message || 'Failed to update worker.');
     }
