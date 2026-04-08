@@ -26,7 +26,7 @@ from towel.skills.registry import SkillRegistry
 
 log = logging.getLogger("towel.agent.claude")
 
-MAX_TOOL_ITERATIONS = 10
+MAX_TOOL_ITERATIONS = 999
 
 # Model alias map — short names to full model IDs
 MODEL_ALIASES: dict[str, str] = {

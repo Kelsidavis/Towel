@@ -21,7 +21,7 @@ from towel.skills.registry import SkillRegistry
 
 log = logging.getLogger("towel.agent")
 
-MAX_TOOL_ITERATIONS = 10
+MAX_TOOL_ITERATIONS = 999
 
 
 def mlx_tokenizer_config() -> dict[str, Any]:
