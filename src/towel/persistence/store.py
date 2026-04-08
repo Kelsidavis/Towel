@@ -62,6 +62,14 @@ class ConversationStore:
             return True
         return False
 
+    def delete_all(self) -> int:
+        """Delete all conversations. Returns count deleted."""
+        count = 0
+        for path in self.store_dir.glob("*.json"):
+            path.unlink()
+            count += 1
+        return count
+
     def list_conversations(self, limit: int = 50) -> list[ConversationSummary]:
         """List saved conversations, most recent first."""
         summaries: list[ConversationSummary] = []

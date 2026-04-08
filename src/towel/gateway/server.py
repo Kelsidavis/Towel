@@ -731,6 +731,11 @@ class GatewayServer:
         )
         self._node_tracker.open_context_slot(worker.id, session_id, token_estimate)
 
+        # Load project context from coordinator's CWD so workers get it
+        from towel.agent.project import load_project_context
+
+        project_ctx = load_project_context()
+
         # Delta sync: only send new messages if worker has seen this session
         delta = self._context_sync.compute_delta(worker.id, session_id, conversation)
         if delta.is_full_sync:
@@ -752,6 +757,9 @@ class GatewayServer:
                 "conversation": conversation.to_dict(),
                 "delta": delta.to_dict(),
             }
+
+        if project_ctx:
+            payload["project_context"] = project_ctx
 
         await worker.ws.send(json.dumps(payload))
 
@@ -1273,6 +1281,16 @@ class GatewayServer:
             self.sessions.remove(conv_id)
             return JSONResponse({"deleted": deleted})
 
+        async def conversations_delete_all(request: Request) -> JSONResponse:
+            """Delete all conversations."""
+            store = self.sessions.store
+            if not store:
+                return JSONResponse({"error": "No store"}, status_code=500)
+            count = store.delete_all()
+            self.sessions.clear()
+            self._session_workers.clear()
+            return JSONResponse({"deleted": count})
+
         async def conversation_export(request: Request) -> HTMLResponse:
             """Export a conversation to markdown."""
             from starlette.responses import Response
@@ -1428,7 +1446,8 @@ class GatewayServer:
             Route("/workers/{worker_id}/state", worker_state_update, methods=["POST"]),
             Route("/cluster/nodes", cluster_nodes),
             Route("/cluster/handoffs", cluster_handoffs),
-            Route("/conversations", conversations_list),
+            Route("/conversations", conversations_list, methods=["GET"]),
+            Route("/conversations", conversations_delete_all, methods=["DELETE"]),
             Route("/conversations/{conv_id}", conversation_detail, methods=["GET"]),
             Route("/conversations/{conv_id}", conversation_delete, methods=["DELETE"]),
             Route("/conversations/{conv_id}/rename", conversation_rename, methods=["POST"]),
