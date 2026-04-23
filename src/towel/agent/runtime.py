@@ -27,11 +27,11 @@ MAX_TOOL_ITERATIONS = 999
 def mlx_tokenizer_config() -> dict[str, Any]:
     """Return tokenizer config overrides for MLX loads.
 
-    `fix_mistral_regex=True` suppresses the known incorrect-regex warning for
-    affected converted tokenizers and applies the corrected tokenizer behavior.
-    Transformers ignores this for unaffected tokenizers.
+    `fix_mistral_regex` was previously passed here, but newer transformers
+    versions handle it internally and error if it's forwarded as a kwarg
+    (duplicate positional + keyword argument in _patch_mistral_regex).
     """
-    return {"fix_mistral_regex": False}
+    return {}
 
 
 _TOOL_ERROR_PATTERNS = (
