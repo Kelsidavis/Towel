@@ -2424,7 +2424,7 @@ def bench(prompt: str, tokens: int, rounds: int) -> None:
 
         model, tokenizer = load(
             model_name,
-            tokenizer_config={"fix_mistral_regex": True},
+            tokenizer_config={},
         )
     except Exception as e:
         console.print(f"[red]Failed to load model:[/red] {e}")
