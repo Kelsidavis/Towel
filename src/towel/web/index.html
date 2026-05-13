@@ -282,6 +282,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       </div>
       <div id="fleet-actions">
         <button class="tb-btn" id="fleet-launch-btn" title="Spawn a worker on a remote host running towel launcher">+ launch</button>
+        <button class="tb-btn" id="fleet-roll-btn" title="Roll a new model/code across every worker with a remembered launcher URL">roll</button>
         <button class="tb-btn" id="fleet-refresh-btn" title="Refresh fleet state">refresh</button>
         <button class="tb-btn" id="fleet-restart-btn" title="Restart coordinator (reloads config)" style="color:var(--yellow)">restart</button>
         <button class="tb-btn" id="fleet-close-btn" title="Close fleet panel">close</button>
@@ -423,6 +424,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   const fleetRefreshBtn = document.getElementById('fleet-refresh-btn');
   const fleetRestartBtn = document.getElementById('fleet-restart-btn');
   const fleetLaunchBtn = document.getElementById('fleet-launch-btn');
+  const fleetRollBtn = document.getElementById('fleet-roll-btn');
   const fleetLaunchForm = document.getElementById('fleet-launch-form');
   const launchUrlEl = document.getElementById('launch-url');
   const launchTokenEl = document.getElementById('launch-token');
@@ -1227,6 +1229,97 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       alert('Upgrade failed: ' + err.message);
     }
   }
+
+  async function rollFleet() {
+    // Build the target list from every connected worker that has a
+    // remembered launcher URL — operators must have replaced/upgraded
+    // that worker at least once this session for it to be eligible.
+    const candidates = [];
+    for (const w of fleetState.workers || []) {
+      const url = rememberedLauncherUrl(w.id);
+      if (url) candidates.push({worker_id: w.id, launcher_url: url});
+    }
+    if (!candidates.length) {
+      alert(
+        'No workers with remembered launcher URLs. Use "replace" or ' +
+        '"upgrade" on individual workers first so the UI knows where ' +
+        'each one\'s launcher lives.'
+      );
+      return;
+    }
+    const summary = candidates.map(function(c) {
+      return ' • ' + c.worker_id + ' → ' + c.launcher_url;
+    }).join('\n');
+    if (!confirm(
+      `Roll new model/code across ${candidates.length} worker(s)?\n\n` +
+      summary + '\n\nEach worker will be drained, asked to shut down, ' +
+      'and respawned via its launcher, one at a time.'
+    )) return;
+
+    const newModel = prompt(
+      'New model identifier (leave blank to keep config default):',
+      ''
+    );
+    if (newModel === null) return;
+    const token = prompt(
+      'Shared launcher bearer token (or blank, with per-worker tokens in env):',
+      rememberedLauncherToken()
+    );
+    if (token === null) return;
+    const delayStr = prompt('Delay between targets (seconds):', '5');
+    if (delayStr === null) return;
+    const delay = parseInt(delayStr, 10);
+    if (isNaN(delay) || delay < 0) {
+      alert('Delay must be a non-negative integer.');
+      return;
+    }
+    if (token) rememberLauncherToken(token);
+
+    const worker = {};
+    if (newModel.trim()) worker.model = newModel.trim();
+
+    fleetRollBtn.disabled = true;
+    fleetRollBtn.textContent = 'rolling…';
+    try {
+      const resp = await fetch(apiBase + '/fleet/rolling-replace', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          targets: candidates.map(function(c) {
+            return {target_worker_id: c.worker_id, launcher_url: c.launcher_url};
+          }),
+          launcher_token: token,
+          worker: worker,
+          delay_between_seconds: delay,
+        }),
+      });
+      const data = await resp.json();
+      const results = data.results || [];
+      const ok = results.filter(function(r) { return r.ok; }).length;
+      const failed = results.filter(function(r) { return !r.ok; });
+      const failedSummary = failed.length
+        ? '\n\nFailures:\n' + failed.map(function(r) {
+            const id = r.replaced_worker_id || r.target_worker_id ||
+                       ('target #' + r.index);
+            const err = r.error ||
+                        (r.launcher_response && r.launcher_response.error) ||
+                        ('status ' + r.status);
+            return ' • ' + id + ': ' + err;
+          }).join('\n')
+        : '';
+      alert(
+        `Rollout finished: ${ok}/${results.length} worker(s) replaced.` +
+        failedSummary
+      );
+      await loadFleetState();
+    } catch (err) {
+      alert('Rollout failed: ' + err.message);
+    } finally {
+      fleetRollBtn.disabled = false;
+      fleetRollBtn.textContent = 'roll';
+    }
+  }
+  fleetRollBtn.addEventListener('click', rollFleet);
 
   fleetWorkersListEl.addEventListener('click', async function(e) {
     const btn = e.target.closest('[data-worker-op]');
