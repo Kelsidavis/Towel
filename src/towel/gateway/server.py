@@ -61,6 +61,34 @@ from towel.persistence.worker_state import WorkerStateStore
 log = logging.getLogger("towel.gateway")
 
 
+def _guess_model_param_b(name: str) -> float | None:
+    """Pull a rough parameter count out of a model name.
+
+    Recognises common patterns like ``Llama-3.3-70B-Instruct-4bit``,
+    ``qwen3.6:27b``, ``Phi-3.5-mini-3.8B``. Returns the float (in billions)
+    or ``None`` when nothing matches — the caller treats unknown as "we
+    can't tell, don't reject the worker."
+    """
+    import re as _re
+
+    if not name:
+        return None
+    # Match an integer or decimal followed by a B (case-insensitive). The
+    # b must NOT be followed by another letter — "4bit" is a quant tag,
+    # not a parameter count, so we reject "4b" in that context with a
+    # negative-lookahead.
+    for match in _re.finditer(r"(\d+(?:\.\d+)?)\s*[bB](?![a-zA-Z])", name):
+        try:
+            value = float(match.group(1))
+        except ValueError:
+            continue
+        # 0.x and very small numbers are probably "4bit" / "8bit" quant
+        # tags, not param counts. Param-count Bs are >= 0.5 in practice.
+        if value >= 0.5:
+            return value
+    return None
+
+
 @dataclass
 class GatewayServer:
     """WebSocket + HTTP gateway."""
@@ -1610,6 +1638,99 @@ class GatewayServer:
                 }
             )
 
+        async def fleet_suggest_targets(request: Request) -> JSONResponse:
+            """For a given model name, classify each worker's readiness.
+
+            Lets the operator pick rollout targets sensibly in a
+            heterogeneous fleet — a 70B model can't fit on a Pi, and a
+            target a worker already has cached doesn't pay the
+            download cost on /fleet/spawn.
+
+            Body::
+
+                {"model": "qwen3.6:27b"}        # required
+                {"model": "...", "min_param_b": 7.0}  # only show workers
+                                                       # that can fit ≥7B
+
+            Returns one entry per connected worker with:
+
+              - ``has_model_cached`` — exact match in ``available_models``
+              - ``fits`` — ``max_param_b_est`` >= the model's apparent size
+                (heuristic from the name, defaults to "unknown -> True")
+              - ``quality_tier`` — the same low/medium/high bucket the UI shows
+              - ``max_param_b_est`` and ``available_model_count`` for context
+
+            Plus a ``recommended`` list of worker ids that have the model
+            cached, ordered by quality tier desc.
+            """
+            try:
+                body = await request.json()
+            except Exception as exc:
+                return JSONResponse({"error": f"invalid JSON: {exc}"}, status_code=400)
+            if not isinstance(body, dict):
+                return JSONResponse(
+                    {"error": "payload must be a JSON object"}, status_code=400
+                )
+            model = (body.get("model") or "").strip()
+            if not model:
+                return JSONResponse(
+                    {"error": "model is required"}, status_code=400
+                )
+            try:
+                min_param_b = float(body.get("min_param_b", 0))
+            except (TypeError, ValueError):
+                return JSONResponse(
+                    {"error": "min_param_b must be a number"}, status_code=400
+                )
+
+            # Rough param-count guess from the model name — e.g. "qwen3-7b"
+            # => 7.0, "Llama-3.3-70B-Instruct-4bit" => 70.0. When we can't
+            # tell, treat the model as "small enough to maybe fit" so we
+            # don't over-eagerly reject workers.
+            est_size = _guess_model_param_b(model)
+
+            tier_rank = {"high": 0, "medium": 1, "low": 2}
+            analyses: list[dict[str, Any]] = []
+            for worker in self._workers.list():
+                caps = worker.capabilities or {}
+                inventory = caps.get("available_models") or []
+                cached = model in inventory
+                worker_cap = float(caps.get("max_param_b_est") or 0.0)
+                fits = est_size is None or worker_cap >= est_size
+                tier = worker_quality_tier(caps)
+                if min_param_b and worker_cap < min_param_b:
+                    continue
+                analyses.append(
+                    {
+                        "worker_id": worker.id,
+                        "has_model_cached": cached,
+                        "fits": fits,
+                        "quality_tier": tier,
+                        "max_param_b_est": worker_cap,
+                        "available_model_count": len(inventory),
+                        "backend": caps.get("backend"),
+                    }
+                )
+
+            # Cached + fits + highest tier first.
+            analyses.sort(
+                key=lambda a: (
+                    not a["has_model_cached"],
+                    not a["fits"],
+                    tier_rank.get(a["quality_tier"], 9),
+                    a["worker_id"],
+                )
+            )
+            recommended = [a["worker_id"] for a in analyses if a["has_model_cached"] and a["fits"]]
+            return JSONResponse(
+                {
+                    "model": model,
+                    "estimated_param_b": est_size,
+                    "workers": analyses,
+                    "recommended": recommended,
+                }
+            )
+
         async def fleet_upgrade(request: Request) -> JSONResponse:
             """Proxy a software-upgrade command to a remote launcher.
 
@@ -2359,6 +2480,7 @@ class GatewayServer:
             Route("/fleet/spawn", fleet_spawn, methods=["POST"]),
             Route("/fleet/replace-worker", fleet_replace_worker, methods=["POST"]),
             Route("/fleet/upgrade", fleet_upgrade, methods=["POST"]),
+            Route("/fleet/suggest-targets", fleet_suggest_targets, methods=["POST"]),
             Route("/fleet/rolling-replace", fleet_rolling_replace, methods=["POST"]),
             Route("/conversations", conversations_list, methods=["GET"]),
             Route("/conversations", conversations_delete_all, methods=["DELETE"]),
