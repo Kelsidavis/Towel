@@ -361,6 +361,12 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         </div>
         <div class="fleet-section">
           <h3>Cached models across the fleet</h3>
+          <input type="text" id="fleet-inventory-filter"
+                 placeholder="filter by model name…"
+                 style="width:100%;background:var(--bg-input);color:var(--text);
+                        border:1px solid var(--border);border-radius:4px;
+                        padding:6px 8px;margin-bottom:8px;font-family:var(--mono);
+                        font-size:0.8em">
           <div class="fleet-list" id="fleet-inventory-list"></div>
         </div>
       </div>
@@ -445,6 +451,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   const fleetRoutesListEl = document.getElementById('fleet-routes-list');
   const fleetDispatchListEl = document.getElementById('fleet-dispatch-list');
   const fleetInventoryListEl = document.getElementById('fleet-inventory-list');
+  const fleetInventoryFilterEl = document.getElementById('fleet-inventory-filter');
 
   let ws = null, isStreaming = false;
   let currentAssistantEl = null, currentContentEl = null;
@@ -644,10 +651,26 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
 
   function renderFleetInventory() {
     if (!fleetInventoryListEl) return;
-    const items = fleetState.inventory || [];
-    if (!items.length) {
+    const all = fleetState.inventory || [];
+    if (!all.length) {
       fleetInventoryListEl.innerHTML =
         '<div class="fleet-empty">No cached models reported by any worker.</div>';
+      return;
+    }
+    // Optional substring filter — case-insensitive, matches both the full
+    // model id and any worker id in the entry.
+    const q = (fleetInventoryFilterEl ? fleetInventoryFilterEl.value : '').trim().toLowerCase();
+    const items = q
+      ? all.filter(function(m) {
+          if (m.name && m.name.toLowerCase().includes(q)) return true;
+          return (m.workers || []).some(function(w) {
+            return w.toLowerCase().includes(q);
+          });
+        })
+      : all;
+    if (!items.length) {
+      fleetInventoryListEl.innerHTML =
+        '<div class="fleet-empty">No models match "' + escHtml(q) + '".</div>';
       return;
     }
     fleetInventoryListEl.innerHTML = items.map(function(m) {
@@ -1512,6 +1535,9 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     }
   }
   fleetRollBtn.addEventListener('click', rollFleet);
+  if (fleetInventoryFilterEl) {
+    fleetInventoryFilterEl.addEventListener('input', renderFleetInventory);
+  }
 
   fleetWorkersListEl.addEventListener('click', async function(e) {
     const btn = e.target.closest('[data-worker-op]');
