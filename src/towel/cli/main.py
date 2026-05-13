@@ -686,9 +686,14 @@ def status() -> None:
             availability = "enabled" if worker.get("enabled", True) else "disabled"
             flow = "draining" if worker.get("draining") else "ready"
             session_id = worker.get("current_session_id") or "-"
+            tier = worker.get("quality_tier") or "?"
+            fits = caps.get("max_param_b_est")
+            tier_part = f" tier={tier}"
+            if isinstance(fits, (int, float)) and fits > 0:
+                tier_part += f" (~{fits:.1f}B max)"
             worker_lines.append(
                 f"  - {worker['id']} [{state}/{availability}/{flow}] "
-                f"{backend} {modes} {model} session={session_id}"
+                f"{backend} {modes} {model} session={session_id}{tier_part}"
             )
         workers_block = "\n".join(worker_lines) if worker_lines else "  - none"
         pin_lines = [
