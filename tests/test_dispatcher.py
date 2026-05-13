@@ -338,6 +338,58 @@ class TestObservability:
 # --------------------------------------------------------------------------- #
 
 
+class TestAffinityMiss:
+    def test_affinity_miss_flagged_when_previous_worker_busy(self):
+        workers = WorkerRegistry()
+        _make_worker(workers, "stale_affinity", busy=True)
+        _make_worker(workers, "replacement")
+        d = _make_dispatcher(
+            workers,
+            roles={"replacement": [NodeRole.INFERENCE]},
+            session_workers={"s1": "stale_affinity"},  # session was on stale_affinity
+        )
+        decision = d.select_for_session("s1", intent="chat")
+        assert decision.worker is not None
+        assert decision.worker.id == "replacement"
+        assert decision.affinity_missed is True
+        assert decision.previous_worker_id == "stale_affinity"
+
+    def test_affinity_miss_flagged_when_previous_worker_draining(self):
+        workers = WorkerRegistry()
+        _make_worker(workers, "draining_affinity", draining=True)
+        _make_worker(workers, "replacement")
+        d = _make_dispatcher(
+            workers,
+            roles={"replacement": [NodeRole.INFERENCE]},
+            session_workers={"s1": "draining_affinity"},
+        )
+        decision = d.select_for_session("s1", intent="chat")
+        assert decision.affinity_missed is True
+        assert decision.previous_worker_id == "draining_affinity"
+
+    def test_affinity_miss_false_when_no_prior_affinity(self):
+        workers = WorkerRegistry()
+        _make_worker(workers, "w1")
+        d = _make_dispatcher(workers, roles={"w1": [NodeRole.INFERENCE]})
+        decision = d.select_for_session("brand_new_session", intent="chat")
+        assert decision.affinity_missed is False
+        assert decision.previous_worker_id is None
+
+    def test_affinity_miss_serializes_to_dict(self):
+        workers = WorkerRegistry()
+        _make_worker(workers, "stale", busy=True)
+        _make_worker(workers, "active")
+        d = _make_dispatcher(
+            workers,
+            roles={"active": [NodeRole.INFERENCE]},
+            session_workers={"s1": "stale"},
+        )
+        decision = d.select_for_session("s1", intent="chat")
+        as_dict = decision.to_dict()
+        assert as_dict["affinity_missed"] is True
+        assert as_dict["previous_worker_id"] == "stale"
+
+
 class TestExclusions:
     def test_excluded_workers_never_selected(self):
         workers = WorkerRegistry()

@@ -66,6 +66,12 @@ class DispatchDecision:
     session_id: str | None = None
     timestamp: float = field(default_factory=time.time)
     preempted_idle: bool = False
+    # True when the session had a recorded affinity worker but it couldn't be
+    # used (busy, draining, disabled, or missing the session's context slot),
+    # forcing a migration to a different worker. Operators can grep
+    # ``/dispatch/recent`` for these to spot a thrashing session.
+    affinity_missed: bool = False
+    previous_worker_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -78,6 +84,8 @@ class DispatchDecision:
             "session_id": self.session_id,
             "timestamp": self.timestamp,
             "preempted_idle": self.preempted_idle,
+            "affinity_missed": self.affinity_missed,
+            "previous_worker_id": self.previous_worker_id,
         }
 
 
@@ -295,6 +303,7 @@ class Dispatcher:
 
         # Layer 2: session affinity
         affinity_id = self._session_workers.get(session_id)
+        affinity_missed = False
         if affinity_id and affinity_id not in excluded:
             affinity_worker = self._workers.get(affinity_id)
             if affinity_worker and self._is_routable(affinity_worker):
@@ -307,7 +316,15 @@ class Dispatcher:
                         notes=f"context loaded on worker {affinity_id}",
                         candidates_considered=1,
                         session_id=session_id,
+                        previous_worker_id=affinity_id,
                     )
+                # Worker is reachable but doesn't currently hold the context;
+                # falling through means a cold transfer — flag it as a miss.
+                affinity_missed = True
+            else:
+                # Affinity worker exists but is busy/draining/disabled — also
+                # a context migration event worth surfacing to operators.
+                affinity_missed = True
 
         # Layer 3: task-type preference
         if task_type is not None:
@@ -321,6 +338,8 @@ class Dispatcher:
                     notes=f"worker assigned task {task_type}",
                     candidates_considered=self._candidate_count(),
                     session_id=session_id,
+                    affinity_missed=affinity_missed,
+                    previous_worker_id=affinity_id if affinity_missed else None,
                 )
 
         # Layer 4: role match for the request intent
@@ -336,6 +355,8 @@ class Dispatcher:
                     notes=f"role={role}",
                     candidates_considered=self._candidate_count(),
                     session_id=session_id,
+                    affinity_missed=affinity_missed,
+                    previous_worker_id=affinity_id if affinity_missed else None,
                 )
 
         # Try the GENERAL role before falling all the way through to "any
@@ -351,6 +372,8 @@ class Dispatcher:
                 notes="role=general (fallback)",
                 candidates_considered=self._candidate_count(),
                 session_id=session_id,
+                affinity_missed=affinity_missed,
+                previous_worker_id=affinity_id if affinity_missed else None,
             )
 
         # Layer 5: capability fallback — any idle, non-draining worker.
@@ -364,6 +387,8 @@ class Dispatcher:
                 notes="no preferred-type worker available; using any idle worker",
                 candidates_considered=len(self._idle_workers(excluded)),
                 session_id=session_id,
+                affinity_missed=affinity_missed,
+                previous_worker_id=affinity_id if affinity_missed else None,
             )
 
         # Layer 7 (preempt is layer 6, handled by caller in async variant)
@@ -375,6 +400,8 @@ class Dispatcher:
             notes="all workers busy or absent",
             candidates_considered=0,
             session_id=session_id,
+            affinity_missed=affinity_missed,
+            previous_worker_id=affinity_id if affinity_missed else None,
         )
 
     # ─── Selection helpers ───────────────────────────────────────────────
@@ -452,6 +479,13 @@ class Dispatcher:
             decision.worker.id if decision.worker else "<none>",
             decision.notes,
         )
+        if decision.affinity_missed:
+            log.warning(
+                "affinity-miss: session=%s previous=%s now=%s — context will be migrated",
+                decision.session_id,
+                decision.previous_worker_id,
+                decision.worker.id if decision.worker else "<none>",
+            )
 
 
 def _role_for_intent(intent: str) -> NodeRole | None:
