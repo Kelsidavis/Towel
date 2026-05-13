@@ -547,12 +547,19 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     }
 
     const stats = fleetState.workerStats || {};
+    // Derive a fleet-wide "hot" count from live_resources reported on each
+    // heartbeat. A worker counts as hot when cpu_pressure ≥ 0.8.
+    let hot = 0;
+    for (const w of fleetState.workers) {
+      const cp = ((w.capabilities || {}).live_resources || {}).cpu_pressure;
+      if (typeof cp === 'number' && cp >= 0.8) hot += 1;
+    }
     const statItems = [
       ['Workers', stats.total || 0],
       ['Idle', stats.idle || 0],
       ['Busy', stats.busy || 0],
-      ['Draining', stats.draining || 0],
-      ['Disabled', stats.disabled || 0]
+      ['Hot', hot],
+      ['Draining', stats.draining || 0]
     ];
     fleetSummaryEl.innerHTML = statItems.map(function(item) {
       return '<div class="fleet-stat"><span class="k">' + escHtml(item[0]) + '</span><span class="v">' + escHtml(String(item[1])) + '</span></div>';
@@ -644,13 +651,29 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     }
   }
 
+  // Poll fleet state while the panel is open so dispatch decisions and
+  // live worker load update without the operator clicking refresh.
+  let fleetRefreshTimer = null;
+  const FLEET_REFRESH_INTERVAL_MS = 5000;
+
   function openFleetPanel() {
     fleetOverlay.classList.add('visible');
     loadFleetState();
+    if (fleetRefreshTimer === null) {
+      fleetRefreshTimer = setInterval(function() {
+        if (fleetOverlay.classList.contains('visible')) {
+          loadFleetState();
+        }
+      }, FLEET_REFRESH_INTERVAL_MS);
+    }
   }
 
   function closeFleetPanel() {
     fleetOverlay.classList.remove('visible');
+    if (fleetRefreshTimer !== null) {
+      clearInterval(fleetRefreshTimer);
+      fleetRefreshTimer = null;
+    }
   }
 
   async function updateWorkerState(workerId, payload) {
