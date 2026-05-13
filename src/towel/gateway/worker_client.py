@@ -393,6 +393,19 @@ def _detect_live_resources() -> dict[str, Any]:
         # Live RAM sampling is best-effort — never block the heartbeat path.
         pass
 
+    # Disk free space on the user's home filesystem (where HF cache and
+    # ~/.ollama live). Lets the coordinator warn before scheduling a
+    # download that won't fit.
+    try:
+        import shutil
+        from pathlib import Path
+
+        usage = shutil.disk_usage(str(Path.home()))
+        out["disk_free_gb"] = round(usage.free / (1024**3), 1)
+        out["disk_total_gb"] = round(usage.total / (1024**3), 1)
+    except Exception:
+        pass
+
     return out
 
 

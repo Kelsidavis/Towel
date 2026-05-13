@@ -1690,6 +1690,8 @@ class GatewayServer:
             est_size = _guess_model_param_b(model)
 
             tier_rank = {"high": 0, "medium": 1, "low": 2}
+            # Rough download size at 4-bit quant: ≈0.6 GB / B params.
+            est_download_gb = round(est_size * 0.6, 1) if est_size else None
             analyses: list[dict[str, Any]] = []
             for worker in self._workers.list():
                 caps = worker.capabilities or {}
@@ -1700,6 +1702,20 @@ class GatewayServer:
                 tier = worker_quality_tier(caps)
                 if min_param_b and worker_cap < min_param_b:
                     continue
+                # Disk-fit check — only relevant for workers that would
+                # need to download. Cached workers don't pay the cost.
+                live = caps.get("live_resources") or {}
+                disk_free_gb = live.get("disk_free_gb")
+                disk_fits: bool | None
+                if cached or est_download_gb is None or not isinstance(
+                    disk_free_gb, (int, float)
+                ):
+                    # Can't tell, or doesn't apply — leave as None so the
+                    # client can treat "unknown" differently from a hard no.
+                    disk_fits = None
+                else:
+                    # Need at least the download size plus a 2 GB working margin.
+                    disk_fits = bool(disk_free_gb >= est_download_gb + 2.0)
                 analyses.append(
                     {
                         "worker_id": worker.id,
@@ -1709,6 +1725,8 @@ class GatewayServer:
                         "max_param_b_est": worker_cap,
                         "available_model_count": len(inventory),
                         "backend": caps.get("backend"),
+                        "disk_free_gb": disk_free_gb,
+                        "disk_fits": disk_fits,
                     }
                 )
 
@@ -1726,6 +1744,7 @@ class GatewayServer:
                 {
                     "model": model,
                     "estimated_param_b": est_size,
+                    "estimated_download_gb": est_download_gb,
                     "workers": analyses,
                     "recommended": recommended,
                 }

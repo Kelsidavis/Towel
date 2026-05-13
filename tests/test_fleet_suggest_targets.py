@@ -168,3 +168,77 @@ class TestSuggestTargets:
         data = resp.json()
         assert data["workers"] == []
         assert data["recommended"] == []
+
+    def test_download_size_estimate_and_disk_fit(self, gateway):
+        """A 70B model needs ~42 GB download. A worker with 100 GB free can
+        fit it; a worker with 30 GB can't. Cached workers don't pay the
+        cost so their disk_fits is left as None."""
+        _register(
+            gateway, "spacious",
+            backend="ollama",
+            max_param_b_est=80.0,
+            available_models=[],
+            live_resources={"disk_free_gb": 100.0},
+        )
+        _register(
+            gateway, "cramped",
+            backend="ollama",
+            max_param_b_est=80.0,
+            available_models=[],
+            live_resources={"disk_free_gb": 30.0},
+        )
+        _register(
+            gateway, "cached-but-tiny-disk",
+            backend="ollama",
+            max_param_b_est=80.0,
+            available_models=["mlx-community/Llama-3.3-70B-Instruct-4bit"],
+            live_resources={"disk_free_gb": 1.0},  # full disk doesn't matter
+        )
+
+        client = TestClient(gateway._build_http_app())
+        resp = client.post(
+            "/fleet/suggest-targets",
+            json={"model": "mlx-community/Llama-3.3-70B-Instruct-4bit"},
+        )
+        data = resp.json()
+        assert data["estimated_param_b"] == 70.0
+        # 70 * 0.6 = 42 GB
+        assert data["estimated_download_gb"] == 42.0
+        per_worker = {w["worker_id"]: w for w in data["workers"]}
+        assert per_worker["spacious"]["disk_fits"] is True
+        assert per_worker["cramped"]["disk_fits"] is False
+        # Cached worker: disk_fits is None — can't fail what won't happen.
+        assert per_worker["cached-but-tiny-disk"]["disk_fits"] is None
+
+    def test_disk_fits_is_none_when_size_is_unknown(self, gateway):
+        # "haiku" can't be parsed to a size, so we have no download estimate
+        # and therefore can't say whether disk fits.
+        _register(
+            gateway, "any",
+            backend="claude",
+            max_param_b_est=50.0,
+            available_models=["sonnet"],
+            live_resources={"disk_free_gb": 100.0},
+        )
+        client = TestClient(gateway._build_http_app())
+        resp = client.post("/fleet/suggest-targets", json={"model": "haiku"})
+        data = resp.json()
+        assert data["estimated_download_gb"] is None
+        assert data["workers"][0]["disk_fits"] is None
+
+    def test_disk_fits_is_none_when_worker_does_not_report_disk(self, gateway):
+        # Older workers won't have disk_free_gb in live_resources — must
+        # treat as "unknown" rather than "definitely won't fit".
+        _register(
+            gateway, "old-worker",
+            backend="ollama",
+            max_param_b_est=80.0,
+            available_models=[],
+            live_resources={},  # no disk telemetry
+        )
+        client = TestClient(gateway._build_http_app())
+        resp = client.post(
+            "/fleet/suggest-targets", json={"model": "Llama-3.3-70B"}
+        )
+        data = resp.json()
+        assert data["workers"][0]["disk_fits"] is None

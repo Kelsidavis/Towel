@@ -539,6 +539,16 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       const gb = (live.ram_available_mb / 1024).toFixed(1);
       parts.push('free RAM: ' + gb + ' GB');
     }
+    if (typeof live.disk_free_gb === 'number') {
+      // Colour-code free disk: < 5 GB red, < 50 GB yellow, else green.
+      let dcls = 'ok';
+      if (live.disk_free_gb < 5) dcls = 'err';
+      else if (live.disk_free_gb < 50) dcls = 'warn';
+      parts.push(
+        '<span class="fleet-badge ' + dcls + '">free disk: ' +
+        live.disk_free_gb.toFixed(1) + ' GB</span>'
+      );
+    }
     if (!parts.length) return '';
     return '<div class="fleet-meta">' + parts.map(function(p) {
       return '<span>' + p + '</span>';
@@ -1212,7 +1222,16 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
             if (me.has_model_cached) {
               lines.push('✓ Already cached on this worker — spin-up will be fast.');
             } else {
-              lines.push('↓ NOT cached — the worker will need to download it.');
+              let dlNote = '';
+              if (sdata.estimated_download_gb) {
+                dlNote = ' (~' + sdata.estimated_download_gb + ' GB)';
+              }
+              lines.push('↓ NOT cached — the worker will need to download it' + dlNote + '.');
+              if (me.disk_fits === false) {
+                lines.push(
+                  `⚠ Only ${me.disk_free_gb || 0} GB free on disk — download may fail.`
+                );
+              }
             }
             if (!me.fits) {
               lines.push(
@@ -1368,10 +1387,14 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
             return !w.has_model_cached && w.fits;
           });
           const tooSmall = analyses.filter(function(w) { return !w.fits; });
+          const noDiskRoom = needsDl.filter(function(w) { return w.disk_fits === false; });
           const lines = [];
           lines.push(`Model: ${worker.model}`);
           if (sdata.estimated_param_b) {
             lines.push(`Estimated size: ~${sdata.estimated_param_b}B params`);
+          }
+          if (sdata.estimated_download_gb) {
+            lines.push(`Estimated download: ~${sdata.estimated_download_gb} GB`);
           }
           lines.push('');
           lines.push(`Already cached on ${cached.length} worker(s):`);
@@ -1379,7 +1402,16 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
           if (needsDl.length) {
             lines.push('');
             lines.push(`Will need to DOWNLOAD on ${needsDl.length} worker(s):`);
-            needsDl.forEach(function(w) { lines.push('  ↓ ' + w.worker_id); });
+            needsDl.forEach(function(w) {
+              const diskNote = w.disk_fits === false
+                ? ' [⚠ only ' + (w.disk_free_gb || 0) + ' GB free]'
+                : '';
+              lines.push('  ↓ ' + w.worker_id + diskNote);
+            });
+          }
+          if (noDiskRoom.length) {
+            lines.push('');
+            lines.push(`⚠ ${noDiskRoom.length} worker(s) probably lack disk space — download may fail.`);
           }
           if (tooSmall.length) {
             lines.push('');
