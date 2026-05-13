@@ -994,6 +994,48 @@ skills_dirs = ["~/.towel/skills", "./skills"]
 
 
 @cli.command()
+@click.option("--host", default="0.0.0.0", help="Bind address for the launcher")
+@click.option("--port", default=18751, type=int, help="Port for the launcher HTTP server")
+def launcher(host: str, port: int) -> None:
+    """Run a launcher daemon that spawns workers on demand.
+
+    Reads the shared bearer token from $TOWEL_TRIGGER_TOKEN. Refuses to start
+    if the env var is unset. POST /launch with the token + a JSON body
+    describing the worker parameters (controller URL, backend, model, etc.)
+    and the launcher spawns ``towel worker`` as a detached subprocess.
+    """
+    from towel.launcher import TOKEN_ENV, run
+
+    if not os.environ.get(TOKEN_ENV, "").strip():
+        console.print(
+            Panel(
+                f"[bold red]{TOKEN_ENV} is unset.[/bold red]\n\n"
+                "The launcher refuses to start without a shared bearer token. "
+                f"Export {TOKEN_ENV}=<random-string> before running this "
+                "command. Use the same value as the Authorization: Bearer header on "
+                "every /launch request.",
+                border_style="red",
+            )
+        )
+        raise click.Abort()
+
+    console.print(
+        Panel(
+            f"[bold green]Towel launcher[/bold green]\n\n"
+            f"  URL:  [cyan]http://{host}:{port}[/cyan]\n"
+            f"  Token: from $[cyan]{TOKEN_ENV}[/cyan]\n"
+            f"  Stop with Ctrl-C.",
+            border_style="green",
+            title="Don't Panic.",
+        )
+    )
+    try:
+        run(host=host, port=port)
+    except KeyboardInterrupt:
+        console.print("[dim]Launcher stopped.[/dim]")
+
+
+@cli.command()
 @click.option("--port", default=18749, type=int, help="Port for the setup web server")
 @click.option("--no-open", is_flag=True, help="Don't auto-open the browser")
 def setup(port: int, no_open: bool) -> None:
