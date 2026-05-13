@@ -780,9 +780,16 @@ def workers(as_json: bool) -> None:
         availability = "enabled" if worker.get("enabled", True) else "disabled"
         flow = "draining" if worker.get("draining") else "ready"
         session_id = worker.get("current_session_id") or "-"
+        tier = worker.get("quality_tier") or "?"
+        fits = caps.get("max_param_b_est")
+        tier_part = f" tier={tier}"
+        if isinstance(fits, (int, float)) and fits > 0:
+            tier_part += f"(~{fits:.1f}B)"
+        cached_count = len(caps.get("available_models") or [])
+        cache_part = f" cached={cached_count}" if cached_count else ""
         lines.append(
             f"  - {worker['id']} [{state}/{availability}/{flow}] backend={backend} mode={modes} "
-            f"model={model} tools={tools} session={session_id}"
+            f"model={model} tools={tools} session={session_id}{tier_part}{cache_part}"
         )
 
     console.print(
