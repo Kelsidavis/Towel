@@ -496,4 +496,85 @@ def default_worker_capabilities(
     except Exception:
         pass
 
+    # Model inventory — what this worker could actually run without a fresh
+    # download. Lets the coordinator pick a model the worker already has,
+    # and avoid sending a 70B request to a Pi.
+    caps["available_models"] = _detect_available_models(backend, llama_url)
+    # Rough size cap derived from advertised VRAM + RAM. A 4-bit quant
+    # needs ≈ 0.6 GB per billion params; we leave 50% headroom for the
+    # KV cache and activations. RAM-only nodes can still run small CPU
+    # models, just slower.
+    vram_mb = int(caps.get("total_vram_mb") or 0)
+    ram_mb = int((caps.get("resources") or {}).get("ram_total_mb") or 0)
+    # Prefer VRAM where it exists; fall back to half of system RAM.
+    usable_mb = vram_mb if vram_mb else (ram_mb // 2)
+    if usable_mb:
+        caps["max_param_b_est"] = round(usable_mb / 1024.0 / 0.6, 1)
+    else:
+        caps["max_param_b_est"] = 0.0
+
     return caps
+
+
+def _detect_available_models(backend: str, llama_url: str) -> list[str]:
+    """Enumerate models the worker can run *without* a fresh download.
+
+    Lets the coordinator pick a target the worker has already cached and
+    skip launching ``towel worker --model X`` against a host that would
+    need to pull tens of gigabytes first. Returned list is best-effort —
+    empty doesn't mean "nothing supported", just "couldn't enumerate".
+    """
+    found: list[str] = []
+    try:
+        if backend == "ollama":
+            import httpx
+
+            url = "http://localhost:11434"
+            try:
+                resp = httpx.get(f"{url}/api/tags", timeout=2.0)
+                if resp.status_code == 200:
+                    for entry in resp.json().get("models") or []:
+                        name = entry.get("name")
+                        if name:
+                            found.append(name)
+            except Exception:
+                pass
+        elif backend == "mlx":
+            import os
+            from pathlib import Path
+
+            roots = [
+                Path.home() / ".cache" / "huggingface" / "hub",
+                Path(os.environ.get("HF_HOME", "")) / "hub"
+                if os.environ.get("HF_HOME")
+                else None,
+            ]
+            for root in roots:
+                if not root or not root.is_dir():
+                    continue
+                for entry in root.iterdir():
+                    if entry.name.startswith("models--"):
+                        stripped = entry.name[len("models--") :]
+                        if "--" in stripped:
+                            org, _, name = stripped.partition("--")
+                            found.append(f"{org}/{name}")
+        elif backend == "llama" and llama_url:
+            # llama-server exposes /v1/models; we already query it for model
+            # metadata in _detect_llama_model. Reuse that signal.
+            meta = _detect_llama_model(llama_url)
+            if meta and meta.get("model_id"):
+                found.append(meta["model_id"])
+        elif backend == "claude":
+            # Claude API supports a fixed set of model aliases.
+            found.extend(["sonnet", "opus", "haiku"])
+    except Exception:
+        pass
+
+    # Dedupe while preserving order.
+    seen: set[str] = set()
+    unique: list[str] = []
+    for name in found:
+        if name and name not in seen:
+            seen.add(name)
+            unique.append(name)
+    return unique

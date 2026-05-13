@@ -17,6 +17,66 @@ from towel.gateway.worker_client import (
 )
 
 
+class TestModelInventory:
+    """Worker capabilities include a list of locally-available models so the
+    coordinator can pick replace/upgrade targets that won't need a fresh
+    download, and a rough param-cap estimate so it knows a Pi-class node
+    shouldn't get 70B requests."""
+
+    def test_claude_inventory_is_the_three_aliases(self):
+        from towel.gateway.worker_client import _detect_available_models
+
+        assert _detect_available_models("claude", "") == ["sonnet", "opus", "haiku"]
+
+    def test_unknown_backend_returns_empty_list(self):
+        from towel.gateway.worker_client import _detect_available_models
+
+        assert _detect_available_models("nope", "") == []
+
+    def test_dedupes_while_preserving_order(self):
+        from unittest.mock import patch
+
+        from towel.gateway.worker_client import _detect_available_models
+
+        # MLX scans the HF cache. Patch the cache to return duplicates and
+        # confirm de-dup keeps insertion order.
+        with patch("pathlib.Path.is_dir", return_value=True), \
+             patch("pathlib.Path.iterdir") as iterdir:
+            class _Entry:
+                def __init__(self, name): self.name = name
+            iterdir.return_value = [
+                _Entry("models--mlx-community--A"),
+                _Entry("models--other--B"),
+                _Entry("models--mlx-community--A"),  # dup
+                _Entry("models--other--C"),
+            ]
+            result = _detect_available_models("mlx", "")
+            assert result == [
+                "mlx-community/A",
+                "other/B",
+                "other/C",
+            ]
+
+    def test_capabilities_include_max_param_b_est(self):
+        # The full default_worker_capabilities path stitches the inventory +
+        # the rough VRAM-or-RAM-derived param cap together.
+        from towel.gateway.worker_client import default_worker_capabilities
+
+        class _Model:
+            name = "x"
+            context_window = 8192
+            max_tokens = 1024
+
+        class _Cfg:
+            model = _Model
+
+        caps = default_worker_capabilities(_Cfg, "claude", allow_tools=False)
+        assert "available_models" in caps
+        assert "max_param_b_est" in caps
+        # Claude returns its alias list regardless of local cache.
+        assert "sonnet" in caps["available_models"]
+
+
 class TestDetector:
     def test_returns_dict_of_numeric_fields(self):
         live = _detect_live_resources()

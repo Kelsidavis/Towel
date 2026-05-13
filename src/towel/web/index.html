@@ -482,6 +482,31 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   async function apiDelete(p) { return (await fetch(apiBase+p,{method:'DELETE'})).json(); }
   async function apiPost(p,b) { return (await fetch(apiBase+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})).json(); }
 
+  function renderModelCapacity(caps) {
+    // Rough "biggest model this host can hold" — derived from VRAM (or
+    // half of system RAM for CPU-only nodes) assuming a 4-bit quant. A
+    // Pi-class node shows ~3B, an RTX 5090 shows ~30B, an Apple Silicon
+    // unified-memory box shows whatever its RAM allows.
+    if (!caps) return '';
+    const est = caps.max_param_b_est;
+    if (typeof est !== 'number' || est <= 0) return '';
+    return '<span title="Approx. largest 4-bit quant the box can hold; CPU-only nodes use half of system RAM">fits up to ~' +
+           est.toFixed(1) + 'B</span>';
+  }
+
+  function renderAvailableModels(models) {
+    // Local model inventory — what the worker can run *without* a fresh
+    // download. Used by operators to pick replace/upgrade targets that
+    // are already cached on the host.
+    if (!Array.isArray(models) || !models.length) return '';
+    const tail = models.length > 4 ? ` (+${models.length - 4} more)` : '';
+    const shown = models.slice(0, 4).map(function(m) {
+      return '<span class="fleet-badge">' + escHtml(m.split('/').pop()) + '</span>';
+    }).join('');
+    return '<div class="fleet-badges" style="margin-top:4px" title="' +
+           escHtml(models.join('\n')) + '">' + shown + tail + '</div>';
+  }
+
   function renderQualityBadge(tier) {
     // Coordinator-derived bucket ('high' / 'medium' / 'low') from the
     // worker's advertised VRAM + context window. Colour-coded so a fleet
@@ -683,8 +708,10 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
               <span>session: ${escHtml(currentSession)}</span>
               <span>tools: ${escHtml(tools)}</span>
               <span>context: ${escHtml(String(caps.context_window || '-'))}</span>
+              ${renderModelCapacity(caps)}
             </div>
             ${renderLiveResources(caps.live_resources)}
+            ${renderAvailableModels(caps.available_models)}
             <div class="fleet-tasks">
               <label style="font-size:0.75em;opacity:0.7">Assigned tasks:</label>
               <select multiple size="5" class="fleet-task-select" data-worker-id="${escHtml(worker.id)}" style="width:100%;font-size:0.75em;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:2px">
