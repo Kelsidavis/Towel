@@ -12,7 +12,8 @@ These helpers normalise the conversion so runtimes don't reimplement it.
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 
 def _empty_object_schema() -> dict[str, Any]:

@@ -12,21 +12,51 @@ from towel.skills.registry import SkillRegistry
 
 
 class TestMlxTokenizerConfig:
-    def test_enables_mistral_regex_fix(self):
-        assert mlx_tokenizer_config() == {"fix_mistral_regex": True}
+    def test_returns_empty_config(self):
+        # ``fix_mistral_regex`` was dropped because newer transformers patch
+        # the regex internally and reject the kwarg as a duplicate argument.
+        assert mlx_tokenizer_config() == {}
 
 
 class TestToolFeedback:
     def test_classifies_common_tool_errors(self):
         assert tool_result_is_error("File not found: /tmp/missing.txt")
         assert tool_result_is_error("Unknown tool: read_files")
+        assert tool_result_is_error("Not a directory: /tmp")
+        assert tool_result_is_error("HTTP error: 503 backend down")
+        assert tool_result_is_error("[404] resource missing")
         assert not tool_result_is_error("Written 12 bytes to /tmp/test.txt")
 
     def test_formats_recovery_guidance_for_errors(self):
         text = format_tool_feedback("read_file", "File not found: x.txt", is_error=True)
         assert "[read_file]" in text
         assert "status: error" in text
-        assert "Retry with one corrected valid tool call" in text
+        # Current policy is conservative: tell the model to stop retrying after
+        # an error rather than burning iterations on the same failing tool.
+        assert "Do NOT retry the same tool" in text
+
+    def test_formats_recovery_guidance_for_success(self):
+        text = format_tool_feedback("read_file", "ok: 3 lines", is_error=False)
+        assert "status: ok" in text
+        assert "result:\nok: 3 lines" in text
+        assert "Use this result to answer the user concretely" in text
+
+    def test_typo_tool_name_gets_retry_guidance(self):
+        # When the registry returns "Unknown tool: X. Did you mean: Y?",
+        # the model should retry with the corrected name — NOT back off.
+        text = format_tool_feedback(
+            "read_files",
+            "Error executing read_files: Unknown tool: read_files. Did you mean: read_file?",
+            is_error=True,
+        )
+        assert "Retry ONCE with the corrected tool name" in text
+        assert "Do NOT retry" not in text
+
+    def test_unrecoverable_error_keeps_conservative_guidance(self):
+        text = format_tool_feedback(
+            "read_file", "File not found: /nope.txt", is_error=True
+        )
+        assert "Do NOT retry the same tool" in text
 
 
 class TestSystemPrompt:

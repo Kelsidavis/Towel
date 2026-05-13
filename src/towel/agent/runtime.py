@@ -35,16 +35,20 @@ def mlx_tokenizer_config() -> dict[str, Any]:
     return {}
 
 
+# The trailing-colon patterns previously used ``\b`` (e.g. ``^Unknown tool:\b``)
+# which never fires — ``\b`` after ``:`` requires a following word character,
+# but the matching strings always have a space there. Use the colon as the
+# boundary instead.
 _TOOL_ERROR_PATTERNS = (
     re.compile(r"^Error executing\b", re.IGNORECASE),
-    re.compile(r"^Unknown tool:\b", re.IGNORECASE),
-    re.compile(r"^File not found:\b", re.IGNORECASE),
-    re.compile(r"^Not a directory:\b", re.IGNORECASE),
-    re.compile(r"^Invalid index:\b", re.IGNORECASE),
+    re.compile(r"^Unknown tool:", re.IGNORECASE),
+    re.compile(r"^File not found:", re.IGNORECASE),
+    re.compile(r"^Not a directory:", re.IGNORECASE),
+    re.compile(r"^Invalid index:", re.IGNORECASE),
     re.compile(r"^File too large\b", re.IGNORECASE),
-    re.compile(r"^HTTP error:\b", re.IGNORECASE),
-    re.compile(r"^\[4\d\d\]", re.IGNORECASE),   # HTTP 4xx client errors
-    re.compile(r"^\[5\d\d\]", re.IGNORECASE),   # HTTP 5xx server errors
+    re.compile(r"^HTTP error:", re.IGNORECASE),
+    re.compile(r"^\[4\d\d\]"),  # HTTP 4xx client errors
+    re.compile(r"^\[5\d\d\]"),  # HTTP 5xx server errors
     re.compile(r"^Error calling\b", re.IGNORECASE),
     re.compile(r"^No module named\b", re.IGNORECASE),
 )
@@ -55,15 +59,42 @@ def tool_result_is_error(result: str) -> bool:
     return any(pattern.search(result) for pattern in _TOOL_ERROR_PATTERNS)
 
 
+_RETRYABLE_ERROR_HINTS = (
+    "Did you mean:",  # registry's close-match suggestion for typo'd tool names
+    "Unknown tool:",  # bare unknown-tool errors are usually correctable
+)
+
+
+def _is_retryable_error(result: str) -> bool:
+    """Decide whether a tool error is the kind the model should retry once.
+
+    Typo'd tool names and unknown-tool errors are usually fixable by re-emitting
+    the call with a corrected name. File-not-found / 4xx / permission errors,
+    by contrast, won't change on retry — so the default error policy stays
+    conservative and only retryable cases get the encouraging guidance.
+    """
+    return any(hint in result for hint in _RETRYABLE_ERROR_HINTS)
+
+
 def format_tool_feedback(tool_name: str, result: str, is_error: bool) -> str:
     """Format tool feedback so the next model step can recover reliably."""
     status = "error" if is_error else "ok"
-    next_step = (
-        "The tool failed. Do NOT retry the same tool or try alternative tools to work around this. "
-        "Answer the user directly using what you already know, and mention the limitation briefly."
-        if is_error
-        else "Use this result to answer the user concretely. Do not stop at saying you will check."
-    )
+    if not is_error:
+        next_step = (
+            "Use this result to answer the user concretely. Do not stop at "
+            "saying you will check."
+        )
+    elif _is_retryable_error(result):
+        next_step = (
+            "The tool name was wrong but a close match was suggested. Retry "
+            "ONCE with the corrected tool name (or stop if nothing applies)."
+        )
+    else:
+        next_step = (
+            "The tool failed. Do NOT retry the same tool or try alternative "
+            "tools to work around this. Answer the user directly using what "
+            "you already know, and mention the limitation briefly."
+        )
     return (
         f"[{tool_name}]\n"
         f"status: {status}\n"
@@ -527,7 +558,7 @@ class AgentRuntime:
         return system
 
     def _tools_for_chat_template(self) -> list[dict[str, Any]]:
-        """Render registered tools as OpenAI-function dicts for ``apply_chat_template(tools=...)``."""
+        """OpenAI-function dicts for ``apply_chat_template(tools=...)``."""
         return tools_as_openai_functions(self.skills.tool_definitions())
 
     def _detect_native_tools_support(self) -> bool:

@@ -13,8 +13,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from towel.agent.claude_runtime import ClaudeCodeRuntime, _extract_anthropic_tool_calls
 from towel.agent.llama_runtime import LlamaRuntime, _normalize_openai_tool_calls
 from towel.agent.ollama_runtime import OllamaRuntime, _normalize_ollama_tool_calls
