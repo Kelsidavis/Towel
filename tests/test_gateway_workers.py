@@ -136,6 +136,73 @@ class TestWorkerRegistry:
 
         assert picked is None
 
+    def test_prefers_less_loaded_worker_when_capability_tied(self):
+        """When two workers are otherwise identical, the live cpu_pressure
+        from the latest heartbeat should break the tie toward the calmer one."""
+        registry = WorkerRegistry()
+        base = {"backend": "ollama", "modes": ["ollama_chat"]}
+        registry.register("hot", DummyWS(), {**base, "live_resources": {"cpu_pressure": 0.95}})
+        registry.register("cool", DummyWS(), {**base, "live_resources": {"cpu_pressure": 0.05}})
+
+        picked = registry.acquire(requirements={"backend": "ollama", "mode": "ollama_chat"})
+
+        assert picked is not None
+        assert picked.id == "cool"
+
+    def test_cpu_pressure_penalty_does_not_override_required_backend(self):
+        """A worker on the wrong backend must never win, no matter how idle —
+        the cpu_pressure penalty is bounded at -15 while a backend mismatch
+        costs -100."""
+        registry = WorkerRegistry()
+        registry.register(
+            "wrong_backend_idle",
+            DummyWS(),
+            {"backend": "claude", "modes": ["anthropic_messages"],
+             "live_resources": {"cpu_pressure": 0.0}},
+        )
+        registry.register(
+            "right_backend_busyish",
+            DummyWS(),
+            {"backend": "ollama", "modes": ["ollama_chat"],
+             "live_resources": {"cpu_pressure": 0.9}},
+        )
+
+        picked = registry.acquire(requirements={"backend": "ollama", "mode": "ollama_chat"})
+
+        assert picked is not None
+        assert picked.id == "right_backend_busyish"
+
+    def test_missing_live_resources_does_not_crash_scoring(self):
+        """Old workers (or ones running on hosts where the detector returned
+        an empty dict) won't have ``live_resources`` in their capabilities.
+        The scorer must tolerate that."""
+        registry = WorkerRegistry()
+        registry.register(
+            "no_telemetry",
+            DummyWS(),
+            {"backend": "ollama", "modes": ["ollama_chat"]},  # no live_resources key
+        )
+        picked = registry.acquire(requirements={"backend": "ollama", "mode": "ollama_chat"})
+        assert picked is not None
+        assert picked.id == "no_telemetry"
+
+    def test_garbage_cpu_pressure_value_is_ignored(self):
+        """A misbehaving worker reporting a non-numeric cpu_pressure shouldn't
+        crash dispatch."""
+        registry = WorkerRegistry()
+        registry.register(
+            "garbage",
+            DummyWS(),
+            {
+                "backend": "ollama",
+                "modes": ["ollama_chat"],
+                "live_resources": {"cpu_pressure": "not-a-number"},
+            },
+        )
+        picked = registry.acquire(requirements={"backend": "ollama", "mode": "ollama_chat"})
+        assert picked is not None
+        assert picked.id == "garbage"
+
 
 class TestGatewayWorkerVisibility:
     def test_health_reports_worker_stats(self, gateway):

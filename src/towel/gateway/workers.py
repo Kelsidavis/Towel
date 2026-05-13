@@ -209,6 +209,21 @@ class WorkerRegistry:
                 if target_session and node.get_context_slot(target_session) is not None:
                     score += 25
 
+        # ── Live-load scoring ───────────────────────────────────────
+        # Workers report ``cpu_pressure`` (1-min load avg / cpu_count, capped
+        # at 1.0) on every heartbeat. A worker with its ``busy`` flag clear
+        # can still be hot from background work or a sibling process. Apply
+        # a small penalty proportional to load so dispatch breaks ties in
+        # favour of the less-loaded box — bounded at -15 so it can't
+        # override the context-locality bonus or backend match.
+        live = caps.get("live_resources") or {}
+        try:
+            cpu_pressure = float(live.get("cpu_pressure") or 0.0)
+        except (TypeError, ValueError):
+            cpu_pressure = 0.0
+        if cpu_pressure > 0:
+            score -= int(min(cpu_pressure, 1.0) * 15)
+
         return (score, worker.last_seen, worker.id)
 
     def acquire(
