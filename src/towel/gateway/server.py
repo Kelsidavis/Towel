@@ -1638,6 +1638,58 @@ class GatewayServer:
                 }
             )
 
+        async def fleet_inventory(_request: Request) -> JSONResponse:
+            """Aggregate ``available_models`` across the whole fleet.
+
+            Answers "where can I find model X?" and "which models are most
+            broadly cached?" with a single GET. Useful for picking rollout
+            targets when you have a model in mind but don't know which
+            workers already have it.
+
+            Returns::
+
+                {
+                  "models": [
+                    {
+                      "name": "qwen3.6:27b",
+                      "workers": ["mac-studio", "rtx5090"],
+                      "cached_count": 2
+                    },
+                    ...
+                  ],
+                  "total_unique": 14,
+                  "total_workers": 4,
+                  "fleet_max_param_b": 70.0
+                }
+
+            Sorted by ``cached_count`` desc, then name asc.
+            """
+            inventory: dict[str, list[str]] = {}
+            max_param_b = 0.0
+            for worker in self._workers.list():
+                caps = worker.capabilities or {}
+                models = caps.get("available_models") or []
+                for name in models:
+                    if not isinstance(name, str) or not name:
+                        continue
+                    inventory.setdefault(name, []).append(worker.id)
+                cap = caps.get("max_param_b_est")
+                if isinstance(cap, (int, float)) and cap > max_param_b:
+                    max_param_b = float(cap)
+            entries = [
+                {"name": name, "workers": sorted(workers), "cached_count": len(workers)}
+                for name, workers in inventory.items()
+            ]
+            entries.sort(key=lambda e: (-e["cached_count"], e["name"]))
+            return JSONResponse(
+                {
+                    "models": entries,
+                    "total_unique": len(entries),
+                    "total_workers": len(self._workers.list()),
+                    "fleet_max_param_b": max_param_b,
+                }
+            )
+
         async def fleet_suggest_targets(request: Request) -> JSONResponse:
             """For a given model name, classify each worker's readiness.
 
@@ -2500,6 +2552,7 @@ class GatewayServer:
             Route("/fleet/replace-worker", fleet_replace_worker, methods=["POST"]),
             Route("/fleet/upgrade", fleet_upgrade, methods=["POST"]),
             Route("/fleet/suggest-targets", fleet_suggest_targets, methods=["POST"]),
+            Route("/fleet/inventory", fleet_inventory),
             Route("/fleet/rolling-replace", fleet_rolling_replace, methods=["POST"]),
             Route("/conversations", conversations_list, methods=["GET"]),
             Route("/conversations", conversations_delete_all, methods=["DELETE"]),
