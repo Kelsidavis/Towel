@@ -903,13 +903,38 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     ws.onmessage = function(e) { handleEvent(JSON.parse(e.data)); };
   }
 
+  // Accumulator for the raw streamed token text. We re-render the visible
+  // content on each token after passing it through ``stripToolCallMarkup``
+  // so half-emitted ``<tool_call>{...}</tool_call>`` blocks never flash on
+  // screen — the structured ``tool_call`` event handler renders a clean
+  // "→ tool(args)" entry instead.
+  let streamingRawText = '';
+
+  function stripToolCallMarkup(text) {
+    if (!text) return text;
+    // Complete blocks in any of the three common formats.
+    let s = text;
+    s = s.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '');
+    s = s.replace(/<\|tool_call\|>[\s\S]*?<\|\/tool_call\|>/g, '');
+    s = s.replace(/✿FUNCTION✿[\s\S]*?(?:✿RESULT✿|$)/g, '');
+    // Suppress an open-but-not-yet-closed block while it's still streaming.
+    s = s.replace(/<tool_call>[\s\S]*$/, '');
+    s = s.replace(/<\|tool_call\|>[\s\S]*$/, '');
+    s = s.replace(/✿FUNCTION✿[\s\S]*$/, '');
+    // Hide a partial opening token so we don't render "<tool_cal" while the
+    // next chunk is still in flight.
+    s = s.replace(/<(?:t|to|too|tool|tool_|tool_c|tool_ca|tool_cal|tool_call)?$/, '');
+    return s;
+  }
+
   // ── Events ──
   function handleEvent(msg) {
     switch (msg.type) {
       case 'registered': break;
       case 'token':
         if (!currentContentEl) startAssistantMessage();
-        currentContentEl.textContent += msg.content;
+        streamingRawText += msg.content;
+        currentContentEl.textContent = stripToolCallMarkup(streamingRawText);
         scrollToBottom(); break;
       case 'tool_call': {
         if (!currentAssistantEl) startAssistantMessage();
@@ -927,10 +952,12 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       }
       case 'response_complete': {
         const c = currentAssistantEl?.querySelector('.cursor'); if(c) c.remove();
-        // Re-render accumulated text as markdown
+        // Re-render accumulated text as markdown. Strip any residual
+        // tool-call markup the server didn't already filter out so the final
+        // bubble matches what the user saw during streaming.
         if (currentContentEl && msg.content) {
           currentContentEl.classList.add('md-content');
-          currentContentEl.innerHTML = renderMarkdown(msg.content);
+          currentContentEl.innerHTML = renderMarkdown(stripToolCallMarkup(msg.content));
         }
         if (msg.metadata && msg.metadata.tps) {
           const el = document.createElement('div'); el.className = 'stats';
@@ -971,6 +998,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   }
   function startAssistantMessage() {
     removeWelcome();
+    streamingRawText = '';  // reset the tool-call-stripping accumulator
     const el=document.createElement('div'); el.className='message assistant';
     el.innerHTML=`<div class="avatar">T</div><div class="body"><div class="role">towel</div><div class="content"></div><span class="cursor"></span></div>`;
     messagesEl.appendChild(el); currentAssistantEl=el; currentContentEl=el.querySelector('.content');
