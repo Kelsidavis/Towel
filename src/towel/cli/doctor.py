@@ -362,6 +362,25 @@ def _probe_fleet_endpoints(c: Check, host: str, http_port: int) -> None:
     except Exception as exc:
         c.warn(f"/skills probe failed: {exc.__class__.__name__}")
 
+    # /fleet/inventory — total cached model coverage across the fleet
+    try:
+        data = httpx.get(f"{base}/fleet/inventory", timeout=2).json()
+        unique = data.get("total_unique", 0)
+        models = data.get("models", [])
+        if unique:
+            top = models[0] if models else None
+            note = f"Inventory: {unique} unique model(s)"
+            if top and top.get("cached_count", 0) > 1:
+                note += (
+                    f"; most replicated: {top['name']} "
+                    f"({top['cached_count']}× cached)"
+                )
+            c.ok(note)
+        else:
+            c.ok("Inventory: no cached models reported")
+    except Exception as exc:
+        c.warn(f"/fleet/inventory probe failed: {exc.__class__.__name__}")
+
     # /dispatch/recent — confirm the dispatcher exists and has been used
     try:
         data = httpx.get(f"{base}/dispatch/recent?limit=1", timeout=2).json()

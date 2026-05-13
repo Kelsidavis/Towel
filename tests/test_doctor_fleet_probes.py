@@ -45,6 +45,15 @@ class TestProbeFleetEndpoints:
                 ],
             },
             "/skills": {"skills": [{"name": "fs"}, {"name": "git"}], "total_tools": 7},
+            "/fleet/inventory": {
+                "models": [
+                    {"name": "qwen3.6:27b", "workers": ["w-cool", "w-busy"], "cached_count": 2},
+                    {"name": "haiku", "workers": ["w-hot"], "cached_count": 1},
+                ],
+                "total_unique": 2,
+                "total_workers": 3,
+                "fleet_max_param_b": 70.0,
+            },
             "/dispatch/recent?limit=1": {
                 "decisions": [{"reason": "task_type_match", "worker_id": "w-cool"}],
             },
@@ -73,6 +82,10 @@ class TestProbeFleetEndpoints:
         # Size range: smallest 3B, largest 70B.
         assert "Fits: ~3.0B" in joined
         assert "70.0B params" in joined
+        # Inventory rolls up to a one-liner with the most-replicated model.
+        assert "Inventory: 2 unique model(s)" in joined
+        assert "qwen3.6:27b" in joined
+        assert "2× cached" in joined
         # Skills count.
         assert "Skills: 2 loaded (7 tools available)" in joined
         # Last dispatch decision.
@@ -97,6 +110,10 @@ class TestProbeFleetEndpoints:
                 ],
             },
             "/skills": {"skills": [], "total_tools": 0},
+            "/fleet/inventory": {
+                "models": [], "total_unique": 0, "total_workers": 2,
+                "fleet_max_param_b": 32.0,
+            },
             "/dispatch/recent?limit=1": {"decisions": []},
         }
 
@@ -114,11 +131,17 @@ class TestProbeFleetEndpoints:
         assert "Tiers: 2 high" in joined
         # Same size on every worker uses the singular phrasing.
         assert "up to ~32.0B params on every worker" in joined
+        # No cached models reported → friendly "no cached models" line.
+        assert "Inventory: no cached models reported" in joined
 
     def test_empty_fleet_does_not_emit_hot_count(self):
         responses = {
             "/workers": {"workers": []},
             "/skills": {"skills": [], "total_tools": 0},
+            "/fleet/inventory": {
+                "models": [], "total_unique": 0, "total_workers": 0,
+                "fleet_max_param_b": 0.0,
+            },
             "/dispatch/recent?limit=1": {"decisions": []},
         }
 
@@ -144,7 +167,8 @@ class TestProbeFleetEndpoints:
         c = Check("test")
         with patch("httpx.get", side_effect=Exception("boom")):
             _probe_fleet_endpoints(c, "localhost", 18743)
-        assert len(c.warnings) == 3
+        # One warning per probe (workers, skills, inventory, dispatch).
+        assert len(c.warnings) == 4
         assert all("probe failed" in w for w in c.warnings)
 
     def test_garbage_cpu_pressure_does_not_count_as_hot(self):
@@ -160,6 +184,10 @@ class TestProbeFleetEndpoints:
                 ],
             },
             "/skills": {"skills": [], "total_tools": 0},
+            "/fleet/inventory": {
+                "models": [], "total_unique": 0, "total_workers": 1,
+                "fleet_max_param_b": 0.0,
+            },
             "/dispatch/recent?limit=1": {"decisions": []},
         }
 
