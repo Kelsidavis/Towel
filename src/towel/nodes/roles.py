@@ -226,6 +226,29 @@ def assign_tasks(
     return tasks
 
 
+def node_meets_task_requirements(node: dict[str, Any], task: TaskType) -> bool:
+    """Return True iff ``node`` meets the declared minimums for ``task``.
+
+    Checked against ``capabilities.total_vram_mb`` and ``capabilities.context_window``.
+    Missing values are treated as zero — i.e. workers that don't advertise their
+    VRAM/context are assumed to be on the low end and will fail any task with a
+    non-zero requirement. This is the "filter out the 3B model" gate: a worker
+    running a small fast model must opt-in to a quality task by advertising
+    that it's actually capable.
+    """
+    reqs = TASK_REQUIREMENTS.get(task, {})
+    caps = node.get("capabilities") or {}
+    min_vram = int(reqs.get("min_vram_mb") or 0)
+    min_ctx = int(reqs.get("min_context") or 0)
+    have_vram = int(caps.get("total_vram_mb") or 0)
+    have_ctx = int(caps.get("context_window") or 0)
+    if min_vram and have_vram < min_vram:
+        return False
+    if min_ctx and have_ctx < min_ctx:
+        return False
+    return True
+
+
 def best_node_for_task(
     task: TaskType,
     nodes: list[dict[str, Any]],
@@ -235,19 +258,40 @@ def best_node_for_task(
 ) -> dict[str, Any] | None:
     """Pick the best node to handle a specific task type.
 
-    Uses task requirements to filter and score candidates.
+    Filters by declared task requirements (``min_vram_mb`` / ``min_context``)
+    first, then by enabled/draining/busy state, then sorts by the task's
+    quality/speed preference. If no worker meets the requirements we fall
+    back to the full candidate set rather than refuse — the coordinator is
+    expected to be adaptable to the fleet it has. Callers can detect
+    degradation via :func:`node_meets_task_requirements` on the returned
+    node and surface it in their decision log.
+
     Nodes must have the task in their assigned_tasks list
     (supports manual override — only considers explicitly assigned tasks).
     """
     reqs = TASK_REQUIREMENTS.get(task, {})
 
-    candidates = [
+    base_candidates = [
         n for n in nodes
         if task in (n.get("assigned_tasks") or [])
         and n.get("enabled", True)
         and not n.get("draining", False)
         and (not exclude_busy or not n.get("busy", False))
     ]
+
+    # Prefer workers that actually meet the declared minimums.
+    qualified = [n for n in base_candidates if node_meets_task_requirements(n, task)]
+    if qualified:
+        candidates = qualified
+    else:
+        candidates = base_candidates
+        if base_candidates:
+            log.warning(
+                "No worker meets the declared requirements for %s; falling back to "
+                "%d under-spec candidate(s). Quality may degrade.",
+                task,
+                len(base_candidates),
+            )
 
     if not candidates:
         # Fall back to role-based selection

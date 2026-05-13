@@ -338,6 +338,182 @@ class TestObservability:
 # --------------------------------------------------------------------------- #
 
 
+def _make_worker_with_caps(
+    registry: WorkerRegistry,
+    worker_id: str,
+    *,
+    vram_mb: int = 0,
+    context_window: int = 0,
+    role: NodeRole = NodeRole.INFERENCE,
+    tasks: list[TaskType] | None = None,
+) -> WorkerInfo:
+    """Variant of ``_make_worker`` that lets a test set VRAM + context."""
+    from unittest.mock import MagicMock as _MagicMock
+    worker = registry.register(
+        worker_id,
+        ws=_MagicMock(),
+        capabilities={
+            "roles": [role.value if hasattr(role, "value") else str(role)],
+            "tasks": [t.value if hasattr(t, "value") else str(t) for t in (tasks or [])],
+            "backend": "ollama",
+            "modes": ["ollama_chat"],
+            "total_vram_mb": vram_mb,
+            "context_window": context_window,
+        },
+    )
+    return worker
+
+
+def _node_dicts_with_caps(
+    workers: WorkerRegistry,
+    roles: dict[str, list[NodeRole]] | None = None,
+    tasks: dict[str, list[TaskType]] | None = None,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": w.id,
+            "busy": w.busy,
+            "enabled": w.enabled,
+            "draining": w.draining,
+            "roles": list((roles or {}).get(w.id, [])),
+            "assigned_tasks": list((tasks or {}).get(w.id, [])),
+            "capabilities": w.capabilities,
+            "active_sessions": 0,
+            "context_pressure": 0.0,
+            "last_seen": w.last_seen.isoformat(),
+        }
+        for w in workers.list()
+    ]
+
+
+class TestQualityDegradation:
+    def test_flags_when_routed_worker_is_under_spec(self):
+        """A SHELL task on a worker with no VRAM and a 4k context is fine
+        (SHELL doesn't demand much). A CODE_REVIEW on that same worker
+        should be flagged as quality_degraded because CODE_REVIEW declares
+        min_vram_mb=4000 and min_context=32768.
+        """
+        workers = WorkerRegistry()
+        _make_worker_with_caps(
+            workers, "tiny_worker",
+            vram_mb=0, context_window=4096,
+            tasks=[TaskType.CODE_REVIEW, TaskType.SHELL],
+        )
+
+        d = Dispatcher(
+            workers=workers,
+            node_dicts_builder=lambda: _node_dicts_with_caps(
+                workers,
+                roles={"tiny_worker": [NodeRole.INFERENCE]},
+                tasks={"tiny_worker": [TaskType.CODE_REVIEW, TaskType.SHELL]},
+            ),
+            session_workers={},
+            session_pins={},
+        )
+
+        # SHELL has min_vram_mb=0 and min_context=8192. The tiny worker has
+        # context=4096 so SHELL is also degraded.
+        shell_decision = d.select_for_session(
+            "s1", intent="tool", task_type=TaskType.SHELL
+        )
+        assert shell_decision.worker is not None
+        assert shell_decision.quality_degraded is True
+
+        # CODE_REVIEW is even more demanding — also flagged.
+        review_decision = d.select_for_session(
+            "s2", intent="task", task_type=TaskType.CODE_REVIEW
+        )
+        assert review_decision.worker is not None
+        assert review_decision.quality_degraded is True
+
+    def test_clean_when_worker_meets_requirements(self):
+        workers = WorkerRegistry()
+        _make_worker_with_caps(
+            workers, "beefy_worker",
+            vram_mb=24000, context_window=131072,
+            tasks=[TaskType.CODE_REVIEW],
+        )
+        d = Dispatcher(
+            workers=workers,
+            node_dicts_builder=lambda: _node_dicts_with_caps(
+                workers,
+                roles={"beefy_worker": [NodeRole.INFERENCE]},
+                tasks={"beefy_worker": [TaskType.CODE_REVIEW]},
+            ),
+            session_workers={},
+            session_pins={},
+        )
+        decision = d.select_for_session(
+            "s1", intent="task", task_type=TaskType.CODE_REVIEW
+        )
+        assert decision.worker is not None
+        assert decision.quality_degraded is False
+
+    def test_prefers_qualified_worker_over_under_spec(self):
+        """When the fleet has both a tiny and a beefy worker, the dispatcher
+        should pick the beefy one even if the tiny one was registered first."""
+        workers = WorkerRegistry()
+        _make_worker_with_caps(
+            workers, "tiny",
+            vram_mb=0, context_window=4096,
+            tasks=[TaskType.CODE_REVIEW],
+        )
+        _make_worker_with_caps(
+            workers, "beefy",
+            vram_mb=24000, context_window=131072,
+            tasks=[TaskType.CODE_REVIEW],
+        )
+        d = Dispatcher(
+            workers=workers,
+            node_dicts_builder=lambda: _node_dicts_with_caps(
+                workers,
+                roles={"tiny": [NodeRole.INFERENCE], "beefy": [NodeRole.INFERENCE]},
+                tasks={
+                    "tiny": [TaskType.CODE_REVIEW],
+                    "beefy": [TaskType.CODE_REVIEW],
+                },
+            ),
+            session_workers={},
+            session_pins={},
+        )
+        decision = d.select_for_session(
+            "s1", intent="task", task_type=TaskType.CODE_REVIEW
+        )
+        assert decision.worker is not None
+        assert decision.worker.id == "beefy"
+        assert decision.quality_degraded is False
+
+    def test_falls_back_to_under_spec_when_no_qualified_worker(self):
+        """The coordinator must be adaptable: if only a tiny worker is online,
+        route to it but flag the degradation so operators see what's
+        happening."""
+        workers = WorkerRegistry()
+        _make_worker_with_caps(
+            workers, "only_tiny",
+            vram_mb=0, context_window=4096,
+            tasks=[TaskType.CODE_REVIEW],
+        )
+        d = Dispatcher(
+            workers=workers,
+            node_dicts_builder=lambda: _node_dicts_with_caps(
+                workers,
+                roles={"only_tiny": [NodeRole.INFERENCE]},
+                tasks={"only_tiny": [TaskType.CODE_REVIEW]},
+            ),
+            session_workers={},
+            session_pins={},
+        )
+        decision = d.select_for_session(
+            "s1", intent="task", task_type=TaskType.CODE_REVIEW
+        )
+        assert decision.worker is not None
+        assert decision.worker.id == "only_tiny"
+        assert decision.quality_degraded is True
+        # The notes string must mention the degradation so operators reading
+        # /dispatch/recent can see what happened without inspecting the flag.
+        assert "under-spec" in decision.notes
+
+
 class TestAffinityMiss:
     def test_affinity_miss_flagged_when_previous_worker_busy(self):
         workers = WorkerRegistry()

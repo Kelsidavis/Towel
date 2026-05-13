@@ -29,7 +29,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from towel.gateway.workers import WorkerInfo, WorkerRegistry
-from towel.nodes.roles import NodeRole, TaskType, best_node_for_role, best_node_for_task
+from towel.nodes.roles import (
+    NodeRole,
+    TaskType,
+    best_node_for_role,
+    best_node_for_task,
+    node_meets_task_requirements,
+)
 
 log = logging.getLogger("towel.gateway.dispatcher")
 
@@ -72,6 +78,12 @@ class DispatchDecision:
     # ``/dispatch/recent`` for these to spot a thrashing session.
     affinity_missed: bool = False
     previous_worker_id: str | None = None
+    # True when the selected worker doesn't meet the task's declared
+    # ``min_vram_mb`` / ``min_context`` minimums — the coordinator had to
+    # adapt to the fleet it has rather than refuse, but operators should
+    # see the degradation and either upgrade a worker or accept the
+    # quality drop.
+    quality_degraded: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -86,6 +98,7 @@ class DispatchDecision:
             "preempted_idle": self.preempted_idle,
             "affinity_missed": self.affinity_missed,
             "previous_worker_id": self.previous_worker_id,
+            "quality_degraded": self.quality_degraded,
         }
 
 
@@ -330,16 +343,19 @@ class Dispatcher:
         if task_type is not None:
             worker = self._best_for_task(task_type, session_id, excluded)
             if worker is not None:
+                degraded = self._worker_is_under_spec(worker, task_type)
                 return DispatchDecision(
                     worker=worker,
                     intent=intent,
                     task_type=task_type,
                     reason=REASON_TASK_MATCH,
-                    notes=f"worker assigned task {task_type}",
+                    notes=f"worker assigned task {task_type}"
+                    + (" (under-spec — quality degraded)" if degraded else ""),
                     candidates_considered=self._candidate_count(),
                     session_id=session_id,
                     affinity_missed=affinity_missed,
                     previous_worker_id=affinity_id if affinity_missed else None,
+                    quality_degraded=degraded,
                 )
 
         # Layer 4: role match for the request intent
@@ -347,16 +363,19 @@ class Dispatcher:
         if role is not None:
             worker = self._best_for_role(role, session_id, excluded)
             if worker is not None:
+                degraded = self._worker_is_under_spec(worker, task_type)
                 return DispatchDecision(
                     worker=worker,
                     intent=intent,
                     task_type=task_type,
                     reason=REASON_ROLE_MATCH,
-                    notes=f"role={role}",
+                    notes=f"role={role}"
+                    + (" (under-spec — quality degraded)" if degraded else ""),
                     candidates_considered=self._candidate_count(),
                     session_id=session_id,
                     affinity_missed=affinity_missed,
                     previous_worker_id=affinity_id if affinity_missed else None,
+                    quality_degraded=degraded,
                 )
 
         # Try the GENERAL role before falling all the way through to "any
@@ -379,16 +398,19 @@ class Dispatcher:
         # Layer 5: capability fallback — any idle, non-draining worker.
         worker = self._capability_fallback(estimated_tokens, excluded, session_id)
         if worker is not None:
+            degraded = self._worker_is_under_spec(worker, task_type)
             return DispatchDecision(
                 worker=worker,
                 intent=intent,
                 task_type=task_type,
                 reason=REASON_CAPABILITY_FALLBACK,
-                notes="no preferred-type worker available; using any idle worker",
+                notes="no preferred-type worker available; using any idle worker"
+                + (" (under-spec — quality degraded)" if degraded else ""),
                 candidates_considered=len(self._idle_workers(excluded)),
                 session_id=session_id,
                 affinity_missed=affinity_missed,
                 previous_worker_id=affinity_id if affinity_missed else None,
+                quality_degraded=degraded,
             )
 
         # Layer 7 (preempt is layer 6, handled by caller in async variant)
@@ -469,6 +491,19 @@ class Dispatcher:
     def _candidate_count(self) -> int:
         return sum(1 for w in self._workers.list() if self._is_routable(w))
 
+    def _worker_is_under_spec(self, worker: WorkerInfo, task: TaskType | None) -> bool:
+        """Return True iff this worker doesn't meet ``task``'s declared minimums.
+
+        Used to set ``DispatchDecision.quality_degraded`` so operators can see
+        when the coordinator had to adapt down (e.g. routed a CODE_REVIEW to
+        a small-model worker because no bigger one was available).
+        """
+        if task is None:
+            return False
+        # Build the dict shape ``node_meets_task_requirements`` expects.
+        node = {"capabilities": worker.capabilities or {}}
+        return not node_meets_task_requirements(node, task)
+
     def _record(self, decision: DispatchDecision) -> None:
         self._history.append(decision)
         log.info(
@@ -484,6 +519,13 @@ class Dispatcher:
                 "affinity-miss: session=%s previous=%s now=%s — context will be migrated",
                 decision.session_id,
                 decision.previous_worker_id,
+                decision.worker.id if decision.worker else "<none>",
+            )
+        if decision.quality_degraded:
+            log.warning(
+                "quality-degraded: task=%s routed to under-spec worker=%s — "
+                "no fleet member meets the declared minimums",
+                decision.task_type,
                 decision.worker.id if decision.worker else "<none>",
             )
 

@@ -521,6 +521,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       const flags = [];
       if (d.affinity_missed) flags.push('<span class="fleet-badge warn">affinity-miss</span>');
       if (d.preempted_idle) flags.push('<span class="fleet-badge warn">preempted-idle</span>');
+      if (d.quality_degraded) flags.push('<span class="fleet-badge err">quality-degraded</span>');
       const prev = d.previous_worker_id
         ? '<span> (from ' + escHtml(d.previous_worker_id) + ')</span>'
         : '';
