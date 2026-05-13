@@ -303,6 +303,10 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
           <h3>Routes</h3>
           <div class="fleet-list" id="fleet-routes-list"></div>
         </div>
+        <div class="fleet-section">
+          <h3>Recent dispatch decisions</h3>
+          <div class="fleet-list" id="fleet-dispatch-list"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -372,6 +376,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   const fleetSummaryEl = document.getElementById('fleet-summary');
   const fleetWorkersListEl = document.getElementById('fleet-workers-list');
   const fleetRoutesListEl = document.getElementById('fleet-routes-list');
+  const fleetDispatchListEl = document.getElementById('fleet-dispatch-list');
 
   let ws = null, isStreaming = false;
   let currentAssistantEl = null, currentContentEl = null;
@@ -414,12 +419,86 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   async function apiDelete(p) { return (await fetch(apiBase+p,{method:'DELETE'})).json(); }
   async function apiPost(p,b) { return (await fetch(apiBase+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})).json(); }
 
+  function renderLiveResources(live) {
+    // Worker heartbeats include load_avg_1min / cpu_pressure / ram_available_mb.
+    // Older workers (or hosts where the detector returned an empty dict)
+    // ship no live_resources key — in that case we render nothing.
+    if (!live || typeof live !== 'object') return '';
+    const parts = [];
+    if (typeof live.load_avg_1min === 'number') {
+      parts.push('load: ' + live.load_avg_1min.toFixed(2));
+    }
+    if (typeof live.cpu_pressure === 'number') {
+      // Colour-code: ≥0.8 = red, ≥0.5 = yellow, else green.
+      const pct = Math.round(live.cpu_pressure * 100);
+      let cls = 'ok';
+      if (live.cpu_pressure >= 0.8) cls = 'err';
+      else if (live.cpu_pressure >= 0.5) cls = 'warn';
+      parts.push('<span class="fleet-badge ' + cls + '">cpu: ' + pct + '%</span>');
+    }
+    if (typeof live.ram_available_mb === 'number') {
+      const gb = (live.ram_available_mb / 1024).toFixed(1);
+      parts.push('free RAM: ' + gb + ' GB');
+    }
+    if (!parts.length) return '';
+    return '<div class="fleet-meta">' + parts.map(function(p) {
+      return '<span>' + p + '</span>';
+    }).join('') + '</div>';
+  }
+
+  function renderDispatchDecisions() {
+    if (!fleetDispatchListEl) return;
+    const decisions = fleetState.dispatch || [];
+    if (!decisions.length) {
+      fleetDispatchListEl.innerHTML =
+        '<div class="fleet-empty">No dispatch decisions recorded yet.</div>';
+      return;
+    }
+    // Newest first.
+    const ordered = decisions.slice().reverse();
+    fleetDispatchListEl.innerHTML = ordered.map(function(d) {
+      const ago = d.timestamp ? Math.max(0, Math.round(Date.now() / 1000 - d.timestamp)) : null;
+      const when = ago === null ? '' : ago + 's ago';
+      const session = d.session_id || '-';
+      const worker = d.worker_id || '<coordinator>';
+      const reason = d.reason || 'unknown';
+      const reasonCls = reason === 'no_workers_available' ? 'err' :
+                        (reason === 'capability_fallback' ? 'warn' : 'ok');
+      const flags = [];
+      if (d.affinity_missed) flags.push('<span class="fleet-badge warn">affinity-miss</span>');
+      if (d.preempted_idle) flags.push('<span class="fleet-badge warn">preempted-idle</span>');
+      const prev = d.previous_worker_id
+        ? '<span> (from ' + escHtml(d.previous_worker_id) + ')</span>'
+        : '';
+      const notes = d.notes ? '<div class="fleet-route-meta">' + escHtml(d.notes) + '</div>' : '';
+      return `
+        <div class="fleet-card">
+          <div class="fleet-card-head">
+            <div class="fleet-card-title">${escHtml(session)} → ${escHtml(worker)}${prev}</div>
+            <div class="fleet-badge ${reasonCls}">${escHtml(reason)}</div>
+          </div>
+          ${flags.length ? '<div class="fleet-badges">' + flags.join('') + '</div>' : ''}
+          ${notes}
+          <div class="fleet-meta">
+            <span>intent: ${escHtml(d.intent || '-')}</span>
+            ${d.task_type ? '<span>task: ' + escHtml(d.task_type) + '</span>' : ''}
+            <span>candidates: ${escHtml(String(d.candidates_considered || 0))}</span>
+            ${when ? '<span>' + escHtml(when) + '</span>' : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
   async function loadFleetState() {
     try {
-      const [health, workers, sessions] = await Promise.all([
+      const [health, workers, sessions, dispatch] = await Promise.all([
         apiGet('/health'),
         apiGet('/workers'),
-        apiGet('/sessions')
+        apiGet('/sessions'),
+        // /dispatch/recent is new — tolerate older coordinators by falling
+        // through to an empty list rather than tripping Promise.all.
+        apiGet('/dispatch/recent?limit=10').catch(() => ({ decisions: [] }))
       ]);
       fleetState = {
         workers: workers.workers || [],
@@ -428,13 +507,17 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         pins: workers.pins || {},
         allTasks: workers.all_tasks || [],
         workerStats: health.workers || {},
-        coordinator: health.coordinator || null
+        coordinator: health.coordinator || null,
+        dispatch: dispatch.decisions || []
       };
       renderFleet();
     } catch (e) {
       fleetSummaryEl.innerHTML = '';
       fleetWorkersListEl.innerHTML = '<div class="fleet-empty">Fleet data unavailable.</div>';
       fleetRoutesListEl.innerHTML = '<div class="fleet-empty">Routes unavailable.</div>';
+      if (fleetDispatchListEl) {
+        fleetDispatchListEl.innerHTML = '<div class="fleet-empty">Dispatch log unavailable.</div>';
+      }
     }
   }
 
@@ -512,6 +595,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
               <span>tools: ${escHtml(tools)}</span>
               <span>context: ${escHtml(String(caps.context_window || '-'))}</span>
             </div>
+            ${renderLiveResources(caps.live_resources)}
             <div class="fleet-tasks">
               <label style="font-size:0.75em;opacity:0.7">Assigned tasks:</label>
               <select multiple size="5" class="fleet-task-select" data-worker-id="${escHtml(worker.id)}" style="width:100%;font-size:0.75em;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:2px">
@@ -527,6 +611,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         `;
       }).join('');
     }
+
+    renderDispatchDecisions();
 
     if (!fleetState.sessions.length) {
       fleetRoutesListEl.innerHTML = '<div class="fleet-empty">No active routes.</div>';
