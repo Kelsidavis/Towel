@@ -80,6 +80,12 @@ def _build_worker_argv(payload: dict[str, Any]) -> tuple[list[str], str | None]:
         val = payload.get(opt)
         if val:
             argv.extend([f"--{opt.replace('_', '-')}", str(val)])
+    # ``model`` overrides the worker's config.model.name at startup — the
+    # primary knob the coordinator uses to distribute different models to
+    # different workers.
+    model = payload.get("model")
+    if model:
+        argv.extend(["--model", str(model)])
     worker_id = payload.get("worker_id")
     if worker_id:
         argv.extend(["--worker-id", str(worker_id)])

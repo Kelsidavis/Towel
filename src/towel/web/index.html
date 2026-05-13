@@ -332,6 +332,12 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
                                   border:1px solid var(--border);border-radius:4px;padding:4px 6px">
                   </label>
                 </div>
+                <label>Model (optional — overrides worker config)
+                  <input id="launch-model" type="text"
+                         placeholder="e.g. mlx-community/Llama-3.3-70B-Instruct-4bit or qwen3.6:27b"
+                         style="width:100%;background:var(--bg-input);color:var(--text);
+                                border:1px solid var(--border);border-radius:4px;padding:4px 6px">
+                </label>
               </div>
               <div class="fleet-controls" style="margin-top:10px">
                 <button class="fleet-btn" id="launch-submit-btn">spawn</button>
@@ -422,6 +428,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   const launchTokenEl = document.getElementById('launch-token');
   const launchBackendEl = document.getElementById('launch-backend');
   const launchWorkerIdEl = document.getElementById('launch-worker-id');
+  const launchModelEl = document.getElementById('launch-model');
   const launchSubmitBtn = document.getElementById('launch-submit-btn');
   const launchCancelBtn = document.getElementById('launch-cancel-btn');
   const launchStatusEl = document.getElementById('launch-status');
@@ -1203,6 +1210,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     if (backend) worker.backend = backend;
     const workerId = launchWorkerIdEl.value.trim();
     if (workerId) worker.worker_id = workerId;
+    const modelName = launchModelEl.value.trim();
+    if (modelName) worker.model = modelName;
 
     const payload = {
       launcher_url: launcherUrl,
@@ -1233,6 +1242,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       // Clear sensitive token but keep host so the operator can spawn another.
       launchTokenEl.value = '';
       launchWorkerIdEl.value = '';
+      launchModelEl.value = '';
       // Trigger an immediate refresh so the worker shows up as it connects.
       await loadFleetState();
     } catch (err) {

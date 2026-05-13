@@ -64,6 +64,38 @@ class TestArgvBuilder:
         assert "--ollama-url" not in argv
         assert "--worker-id" not in argv
         assert "--no-tools" not in argv
+        # Most importantly: no --model when not specified, so the worker
+        # uses its config.toml default rather than being forced onto a
+        # stale value.
+        assert "--model" not in argv
+
+    def test_model_field_forwarded_as_dash_dash_model(self):
+        """The coordinator distributes different models by passing the
+        ``model`` field in the launch payload — the launcher must forward
+        it as ``--model`` to ``towel worker``."""
+        argv, err = _build_worker_argv(
+            {
+                "controller": "ws://x",
+                "backend": "ollama",
+                "model": "qwen3.6:35b-a3b",
+            }
+        )
+        assert err is None
+        assert "--model" in argv
+        idx = argv.index("--model")
+        assert argv[idx + 1] == "qwen3.6:35b-a3b"
+
+    def test_mlx_huggingface_model_id_passes_through(self):
+        # MLX models are HF identifiers like "mlx-community/Foo-4bit". The
+        # launcher must not mangle or reject them.
+        argv, _ = _build_worker_argv(
+            {
+                "controller": "ws://x",
+                "model": "mlx-community/Llama-3.3-70B-Instruct-4bit",
+            }
+        )
+        idx = argv.index("--model")
+        assert argv[idx + 1] == "mlx-community/Llama-3.3-70B-Instruct-4bit"
 
 
 class TestAuth:

@@ -322,6 +322,17 @@ async def _start(agent: Any, gateway: Any) -> None:
     help="Path to a .gguf model file (auto-detected if omitted)",
 )
 @click.option(
+    "--model",
+    "model_override",
+    default=None,
+    help=(
+        "Override the model name from config.toml. Lets the coordinator "
+        "distribute different models to different workers — pass an MLX "
+        "Hugging Face identifier (mlx-community/…), an Ollama tag "
+        "(qwen3.6:27b), or any value the chosen backend understands."
+    ),
+)
+@click.option(
     "--allow-tools/--no-allow-tools",
     default=False,
     help="Allow tools to run on the remote worker machine",
@@ -337,6 +348,7 @@ def worker(
     ollama_url: str | None,
     llama_url: str | None,
     llama_model: str | None,
+    model_override: str | None,
     allow_tools: bool,
 ) -> None:
     """Start a remote worker that executes jobs for a controller."""
@@ -364,6 +376,12 @@ def worker(
     config.model = model_config
     config.identity = identity
     _apply_turboquant_overrides(config, turboquant, tq_bits)
+
+    # --model overrides whatever the config / agent profile would have used.
+    # Lets the coordinator (or operator) distribute different models to
+    # different workers without rewriting config.toml on each host.
+    if model_override:
+        config.model.name = model_override
 
     # Auto-detect backend if not specified
     if not backend:
