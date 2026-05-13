@@ -1,17 +1,19 @@
 """Towel CLI — the command-line interface.
 
 Usage:
-    towel serve          Start the gateway + agent
-    towel chat           Interactive chat session
+    towel setup           Browser GUI to pick backend + model (recommended)
+    towel serve           Start the gateway + agent
+    towel chat            Interactive chat session
     towel ask <prompt>    One-shot query (scriptable, pipeable)
     towel search <query>  Search across all conversations
-    towel history        List saved conversations
-    towel show <id>      Show a saved conversation
-    towel resume <id>    Resume a saved conversation
-    towel status         Show gateway status
-    towel skills         List installed skills
-    towel doctor         Diagnose your setup
-    towel init           Initialize ~/.towel config
+    towel history         List saved conversations
+    towel show <id>       Show a saved conversation
+    towel resume <id>     Resume a saved conversation
+    towel status          Show gateway status
+    towel skills          List installed skills
+    towel doctor          Diagnose your setup
+    towel init            Initialize ~/.towel config
+    towel launcher        Run a daemon that spawns workers on demand
 """
 
 from __future__ import annotations

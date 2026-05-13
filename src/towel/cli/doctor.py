@@ -132,7 +132,7 @@ def check_config(config: TowelConfig) -> Check:
         c.ok(f"Config: {config_path}")
     else:
         c.warn(f"No config file at {config_path} (using defaults)")
-        c.suggestions.append("Run: towel init")
+        c.suggestions.append("Run: towel setup  (browser GUI)  or  towel init")
 
     c.ok(f"Model: {config.model.name}")
     c.ok(f"Context window: {config.model.context_window} tokens")
@@ -467,6 +467,6 @@ def check_storage() -> Check:
         c.ok(f"Towel home: {TOWEL_HOME}")
     else:
         c.ok(f"Towel home not initialized ({TOWEL_HOME})")
-        c.suggestions.append("Run: towel init")
+        c.suggestions.append("Run: towel setup  (browser GUI)  or  towel init")
 
     return c
