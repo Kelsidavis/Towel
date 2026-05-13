@@ -1474,6 +1474,48 @@ class GatewayServer:
                 }
             )
 
+        async def skills_list(_request: Request) -> JSONResponse:
+            """Return the skills loaded on this coordinator and their tools.
+
+            Operator-facing introspection — answers "which skills did the
+            agent discover at startup, and what tools does each expose?". A
+            common failure mode is the model not calling a tool the operator
+            *thought* was available; this endpoint shows the ground truth.
+            """
+            registry = getattr(self.agent, "skills", None)
+            if registry is None:
+                return JSONResponse({"skills": [], "total_tools": 0})
+            skills_data = []
+            for skill_name in registry.list_skills():
+                skill = registry.get_skill(skill_name)
+                if skill is None:
+                    continue
+                tools = []
+                for tool in skill.tools():
+                    params = tool.parameters or {}
+                    props = (params.get("properties") or {}) if isinstance(params, dict) else {}
+                    tools.append(
+                        {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "parameters": list(props.keys()),
+                        }
+                    )
+                skills_data.append(
+                    {
+                        "name": skill_name,
+                        "description": skill.description,
+                        "tool_count": len(tools),
+                        "tools": tools,
+                    }
+                )
+            return JSONResponse(
+                {
+                    "skills": skills_data,
+                    "total_tools": len(registry.tool_names()),
+                }
+            )
+
         async def cluster_handoffs(_request: Any) -> JSONResponse:
             return JSONResponse(
                 {
@@ -1826,6 +1868,7 @@ class GatewayServer:
             Route("/cluster/idle", idle_tasks_status),
             Route("/dispatch/recent", dispatch_recent),
             Route("/dispatch/explain", dispatch_explain),
+            Route("/skills", skills_list),
             Route("/conversations", conversations_list, methods=["GET"]),
             Route("/conversations", conversations_delete_all, methods=["DELETE"]),
             Route("/conversations/{conv_id}", conversation_detail, methods=["GET"]),
