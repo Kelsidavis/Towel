@@ -226,6 +226,30 @@ def assign_tasks(
     return tasks
 
 
+def worker_quality_tier(capabilities: dict[str, Any]) -> str:
+    """Bucket a worker into ``high`` / ``medium`` / ``low`` for at-a-glance UX.
+
+    The tier is derived from the same signals the dispatcher uses for
+    per-task gating, so a worker that's labelled ``low`` won't surprise
+    anyone by being filtered out of a CODE_REVIEW. Rules:
+
+    - ``high``:   ≥8 GB VRAM, or ≥64k context, or backend is ``claude``
+                  (Anthropic API is always strong inference)
+    - ``medium``: ≥4 GB VRAM, or ≥32k context
+    - ``low``:    everything else (small CPU-only nodes, tiny models)
+
+    Workers that don't advertise VRAM or context default to ``low``.
+    """
+    vram = int(capabilities.get("total_vram_mb") or 0)
+    ctx = int(capabilities.get("context_window") or 0)
+    backend = capabilities.get("backend") or ""
+    if vram >= _LARGE_VRAM_MB or ctx >= 65536 or backend == "claude":
+        return "high"
+    if vram >= _MEDIUM_VRAM_MB or ctx >= 32768:
+        return "medium"
+    return "low"
+
+
 def node_meets_task_requirements(node: dict[str, Any], task: TaskType) -> bool:
     """Return True iff ``node`` meets the declared minimums for ``task``.
 

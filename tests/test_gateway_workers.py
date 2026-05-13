@@ -186,6 +186,19 @@ class TestWorkerRegistry:
         assert picked is not None
         assert picked.id == "no_telemetry"
 
+    def test_quality_tier_helper_buckets_workers_correctly(self):
+        from towel.nodes.roles import worker_quality_tier
+
+        assert worker_quality_tier({"backend": "claude"}) == "high"
+        assert worker_quality_tier(
+            {"total_vram_mb": 24000, "context_window": 131072}
+        ) == "high"
+        assert worker_quality_tier(
+            {"total_vram_mb": 6000, "context_window": 32768}
+        ) == "medium"
+        assert worker_quality_tier({"context_window": 8192}) == "low"
+        assert worker_quality_tier({}) == "low"
+
     def test_garbage_cpu_pressure_value_is_ignored(self):
         """A misbehaving worker reporting a non-numeric cpu_pressure shouldn't
         crash dispatch."""

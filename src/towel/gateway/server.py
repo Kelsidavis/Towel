@@ -51,6 +51,7 @@ from towel.nodes.roles import (
     best_node_for_task,
     classify_message_intent,
     classify_task_type,
+    worker_quality_tier,
 )
 from towel.nodes.tracker import NodeTracker
 from towel.persistence.session_pins import SessionPinStore
@@ -1370,6 +1371,10 @@ class GatewayServer:
                 wd = worker.to_dict()
                 wd["roles"] = [str(r) for r in self._node_roles.get(worker.id, [])]
                 wd["assigned_tasks"] = [str(t) for t in self._node_tasks.get(worker.id, [])]
+                # Derived quality bucket — same rules the dispatcher uses for
+                # task gating, surfaced so operators see "low/medium/high" at
+                # a glance without having to inspect capabilities by hand.
+                wd["quality_tier"] = worker_quality_tier(worker.capabilities or {})
                 workers_data.append(wd)
             return JSONResponse(
                 {

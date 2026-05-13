@@ -473,6 +473,17 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   async function apiDelete(p) { return (await fetch(apiBase+p,{method:'DELETE'})).json(); }
   async function apiPost(p,b) { return (await fetch(apiBase+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})).json(); }
 
+  function renderQualityBadge(tier) {
+    // Coordinator-derived bucket ('high' / 'medium' / 'low') from the
+    // worker's advertised VRAM + context window. Colour-coded so a fleet
+    // dominated by low-tier workers is immediately visible.
+    if (!tier) return '';
+    let cls = 'ok';
+    if (tier === 'medium') cls = 'warn';
+    else if (tier === 'low') cls = 'err';
+    return '<span class="fleet-badge ' + cls + '" title="Capability tier — gates which tasks the dispatcher will send here">tier: ' + escHtml(tier) + '</span>';
+  }
+
   function renderLiveResources(live) {
     // Worker heartbeats include load_avg_1min / cpu_pressure / ram_available_mb.
     // Older workers (or hosts where the detector returned an empty dict)
@@ -609,12 +620,18 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       const cp = ((w.capabilities || {}).live_resources || {}).cpu_pressure;
       if (typeof cp === 'number' && cp >= 0.8) hot += 1;
     }
+    // Recent quality_degraded count — how many of the last 10 routing
+    // decisions had to fall back to an under-spec worker. A non-zero count
+    // means the fleet's capability profile doesn't match the workload.
+    const degraded = (fleetState.dispatch || []).filter(function(d) {
+      return d && d.quality_degraded;
+    }).length;
     const statItems = [
       ['Workers', stats.total || 0],
       ['Idle', stats.idle || 0],
       ['Busy', stats.busy || 0],
       ['Hot', hot],
-      ['Draining', stats.draining || 0]
+      ['Degraded', degraded]
     ];
     fleetSummaryEl.innerHTML = statItems.map(function(item) {
       return '<div class="fleet-stat"><span class="k">' + escHtml(item[0]) + '</span><span class="v">' + escHtml(String(item[1])) + '</span></div>';
@@ -650,6 +667,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
               <span class="fleet-badge">${escHtml(backend)}</span>
               <span class="fleet-badge">${escHtml(modes)}</span>
               <span class="fleet-badge">${escHtml(model)}</span>
+              ${renderQualityBadge(worker.quality_tier)}
             </div>
             <div class="fleet-meta">
               <span>roles: ${escHtml(roles)}</span>
