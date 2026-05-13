@@ -46,6 +46,7 @@ HELP_TEXT = """[bold]Chat commands:[/bold]
   [green]/clear[/green]                Clear conversation history
   [green]/agent[/green] [name]         Switch agent / show current
   [green]/agents[/green]               List available agents
+  [green]/skills[/green]                List loaded skills and their tools
   [green]/memory[/green]               Show all memories
   [green]/remember[/green] <key> <val> Save a memory
   [green]/forget[/green] <key>         Remove a memory
@@ -144,6 +145,9 @@ def handle_slash(user_input: str, ctx: SlashContext) -> bool | None:
 
         case "/agents":
             _cmd_agents(ctx)
+
+        case "/skills":
+            _cmd_skills(ctx)
 
         case "/memory":
             _cmd_memory(ctx)
@@ -488,6 +492,31 @@ def _cmd_agents(ctx: SlashContext) -> None:
         if profile.description:
             console.print(f"    {profile.description}")
         console.print(f"    [dim]{profile.model.name}[/dim]")
+
+
+def _cmd_skills(ctx: SlashContext) -> None:
+    """In-chat shortcut for ``towel skills`` — list loaded skills + tools.
+
+    Operators often want to verify "did my tool actually load?" without
+    leaving the conversation. Mirrors the CLI command + the /skills HTTP
+    endpoint exposed by the gateway.
+    """
+    skills = getattr(ctx.agent, "skills", None)
+    if skills is None:
+        console.print("[dim]No skill registry attached to this agent.[/dim]")
+        return
+    names = skills.list_skills()
+    if not names:
+        console.print("[dim]No skills loaded.[/dim]")
+        return
+    console.print(f"[bold]Loaded skills ({len(names)}):[/bold]")
+    for name in names:
+        skill = skills.get_skill(name)
+        if not skill:
+            continue
+        tool_names = ", ".join(t.name for t in skill.tools()) or "(no tools)"
+        console.print(f"  [green]{skill.name}[/green] — {skill.description}")
+        console.print(f"    [dim]tools: {tool_names}[/dim]")
 
 
 def _cmd_memory(ctx: SlashContext) -> None:
