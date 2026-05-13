@@ -35,9 +35,9 @@ from towel.agent.runtime import (
 from towel.agent.tool_parser import parse_tool_calls
 from towel.config import TowelConfig
 from towel.gateway.context_sync import ContextSyncManager
-from towel.gateway.dispatcher import Dispatcher, REASON_NO_WORKERS
+from towel.gateway.dispatcher import REASON_NO_WORKERS, Dispatcher
 from towel.gateway.handoff import HandoffManager, HandoffReason
-from towel.gateway.idle_tasks import IDLE_TASK_PROMPTS, IdleTask, IdleTaskManager
+from towel.gateway.idle_tasks import IDLE_TASK_PROMPTS, IdleTaskManager
 from towel.gateway.sessions import SessionManager
 from towel.gateway.workers import WorkerInfo, WorkerRegistry
 from towel.memory.cluster import ClusterMemorySync
@@ -495,8 +495,8 @@ class GatewayServer:
         Sends a minimal classification prompt and expects 'task', 'chat', or 'tool'.
         Falls back to 'task' on any error.
         """
-        from towel.agent.conversation import Conversation, Message
-
+        # The actual wire payload below builds plain dict messages — no
+        # Conversation/Message construction is needed here.
         classify_prompt = (
             "Classify this user message. Reply with exactly one word:\n"
             "- 'chat' if it's casual conversation, greetings, acknowledgements, small talk\n"
@@ -504,7 +504,6 @@ class GatewayServer:
             "- 'task' if it's a question, instruction, coding, analysis, or creative request\n\n"
             f"Message: {message[:400]}\n\nClassification:"
         )
-        conv = Conversation(messages=[Message(role=Role.USER, content=classify_prompt)])
 
         job_id = uuid.uuid4().hex[:12]
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -558,7 +557,6 @@ class GatewayServer:
 
         Returns a TaskType or None if classification fails.
         """
-        from towel.agent.conversation import Conversation, Message
 
         task_labels = ", ".join(f"'{t.value}'" for t in TaskType)
         classify_prompt = (
@@ -879,7 +877,7 @@ class GatewayServer:
         job_id = uuid.uuid4().hex[:12]
         session_id = f"_idle_{worker.id}_{task.value}"
 
-        from towel.agent.conversation import Conversation, Message
+        from towel.agent.conversation import Conversation
 
         conv = Conversation(id=session_id)
         conv.add(Role.USER, prompt)
@@ -927,7 +925,7 @@ class GatewayServer:
                         )
                         break
                     # job_event — ignore streaming tokens for idle tasks
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self._idle_manager.complete_task(worker.id, "Timed out", error=True)
             except asyncio.CancelledError:
                 self._idle_manager.cancel_task(worker.id)
@@ -960,7 +958,13 @@ class GatewayServer:
         job_id = worker.current_job_id
         if job_id:
             await worker.ws.send(
-                json.dumps({"type": "cancel_job", "job_id": job_id, "session": worker.current_session_id or ""})
+                json.dumps(
+                    {
+                        "type": "cancel_job",
+                        "job_id": job_id,
+                        "session": worker.current_session_id or "",
+                    }
+                )
             )
             self._job_queues.pop(job_id, None)
             self._workers.release(worker.id)
@@ -1044,7 +1048,10 @@ class GatewayServer:
                     elif not result.get("text"):
                         # Non-streaming: extract last assistant message
                         resp = msg.get("response", {})
-                        result = {"text": resp.get("content", ""), "metadata": resp.get("metadata", {})}
+                        result = {
+                            "text": resp.get("content", ""),
+                            "metadata": resp.get("metadata", {}),
+                        }
                     return result
                 elif msg_type == "job_error":
                     raise RuntimeError(msg.get("message", "Remote worker failed"))
@@ -1329,8 +1336,13 @@ class GatewayServer:
                         "backend": backend,
                         "context_window": getattr(self.config.model, "context_window", 0),
                         "max_tokens": getattr(self.config.model, "max_tokens", 0),
-                        "gateway_ws": f"ws://{self.config.gateway.host}:{self.config.gateway.port}",
-                        "gateway_http": f"http://{self.config.gateway.host}:{self.config.gateway.port + 1}",
+                        "gateway_ws": (
+                            f"ws://{self.config.gateway.host}:{self.config.gateway.port}"
+                        ),
+                        "gateway_http": (
+                            f"http://{self.config.gateway.host}:"
+                            f"{self.config.gateway.port + 1}"
+                        ),
                     },
                 }
             )
@@ -1390,7 +1402,11 @@ class GatewayServer:
                 return JSONResponse({"error": f"Invalid task: {e}"}, status_code=400)
 
             self._node_tasks[worker_id] = tasks
-            log.info("Worker %s tasks manually set: %s", worker_id, ", ".join(str(t) for t in tasks))
+            log.info(
+                "Worker %s tasks manually set: %s",
+                worker_id,
+                ", ".join(str(t) for t in tasks),
+            )
             return JSONResponse({
                 "worker_id": worker_id,
                 "assigned_tasks": [str(t) for t in tasks],
