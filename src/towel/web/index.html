@@ -1305,6 +1305,58 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     const worker = {};
     if (newModel.trim()) worker.model = newModel.trim();
 
+    // If the operator named a specific model, ask the coordinator which
+    // workers already have it cached and which would need to download. Show
+    // the breakdown in a second confirm so they can bail before kicking off
+    // an N-GB pull across the cluster.
+    if (worker.model) {
+      try {
+        const suggest = await fetch(apiBase + '/fleet/suggest-targets', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({model: worker.model}),
+        });
+        if (suggest.ok) {
+          const sdata = await suggest.json();
+          const inFleet = new Set(candidates.map(function(c) { return c.worker_id; }));
+          const analyses = (sdata.workers || []).filter(function(w) {
+            return inFleet.has(w.worker_id);
+          });
+          const cached = analyses.filter(function(w) { return w.has_model_cached; });
+          const needsDl = analyses.filter(function(w) {
+            return !w.has_model_cached && w.fits;
+          });
+          const tooSmall = analyses.filter(function(w) { return !w.fits; });
+          const lines = [];
+          lines.push(`Model: ${worker.model}`);
+          if (sdata.estimated_param_b) {
+            lines.push(`Estimated size: ~${sdata.estimated_param_b}B params`);
+          }
+          lines.push('');
+          lines.push(`Already cached on ${cached.length} worker(s):`);
+          cached.forEach(function(w) { lines.push('  ✓ ' + w.worker_id); });
+          if (needsDl.length) {
+            lines.push('');
+            lines.push(`Will need to DOWNLOAD on ${needsDl.length} worker(s):`);
+            needsDl.forEach(function(w) { lines.push('  ↓ ' + w.worker_id); });
+          }
+          if (tooSmall.length) {
+            lines.push('');
+            lines.push(`Probably too small (won't fit) on ${tooSmall.length} worker(s):`);
+            tooSmall.forEach(function(w) {
+              lines.push(`  ✗ ${w.worker_id} (fits up to ~${w.max_param_b_est}B)`);
+            });
+          }
+          lines.push('');
+          lines.push('Proceed?');
+          if (!confirm(lines.join('\n'))) return;
+        }
+      } catch (err) {
+        // suggest-targets is best-effort; if the call fails, proceed
+        // anyway rather than blocking the rollout on an introspection hop.
+      }
+    }
+
     fleetRollBtn.disabled = true;
     fleetRollBtn.textContent = 'rolling…';
     try {
