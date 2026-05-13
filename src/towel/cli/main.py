@@ -488,6 +488,24 @@ def chat(
     llama_model: str | None,
 ) -> None:
     """Interactive chat with Towel."""
+    # Detect the "never ran setup" case before the banner so the hint is
+    # the first thing users see. Don't refuse — they may have a working
+    # config in a non-default location, or want to run with pure defaults.
+    config_path = TOWEL_HOME / "config.toml"
+    if not config_path.exists():
+        console.print(
+            Panel(
+                "[yellow]No config found at "
+                f"{config_path}.[/yellow]\n\n"
+                "Towel will use defaults, but you'll probably want to pick a "
+                "backend and model first:\n\n"
+                "  [cyan]towel setup[/cyan]   Browser GUI (recommended)\n"
+                "  [cyan]towel init[/cyan]    Create a starter config.toml",
+                border_style="yellow",
+                title="First time?",
+            )
+        )
+
     console.print(
         Panel(
             "[bold green]Towel[/bold green] — Don't Panic.\n"
@@ -1099,9 +1117,10 @@ def init() -> None:
             f"  Memory:         [cyan]{TOWEL_HOME / 'memory'}[/cyan]\n"
             f"  Conversations:  [cyan]{TOWEL_HOME / 'conversations'}[/cyan]\n\n"
             "[dim]Next steps:[/dim]\n"
-            "  1. towel doctor        Check your setup\n"
-            "  2. towel chat          Start chatting\n"
-            "  3. towel context -c    Add project context",
+            "  1. towel setup         Pick backend + model in a browser GUI\n"
+            "  2. towel doctor        Check your setup\n"
+            "  3. towel chat          Start chatting\n"
+            "  4. towel context -c    Add project context",
             border_style="green",
             title="Don't Panic.",
         )
