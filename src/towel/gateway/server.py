@@ -1519,6 +1519,91 @@ class GatewayServer:
                 }
             )
 
+        async def fleet_spawn(request: Request) -> JSONResponse:
+            """Proxy a worker-spawn request to a remote launcher.
+
+            Operators run ``towel launcher`` on each candidate worker host;
+            this endpoint forwards a launch request to a named launcher and
+            auto-fills the ``controller`` URL with this coordinator's own WS
+            address so the operator doesn't have to repeat themselves.
+
+            Body shape::
+
+                {
+                  "launcher_url":  "http://host:18751",
+                  "launcher_token": "<bearer>",        # optional, forwarded as Authorization
+                  "worker": {
+                    "backend": "ollama",               # everything else passes through
+                    "ollama_url": "http://localhost:11434",
+                    "worker_id": "gpu-box-1"
+                  }
+                }
+
+            Returns the launcher's response body and HTTP status code.
+            """
+            try:
+                body = await request.json()
+            except Exception as exc:
+                return JSONResponse(
+                    {"error": f"invalid JSON: {exc}"}, status_code=400
+                )
+            if not isinstance(body, dict):
+                return JSONResponse(
+                    {"error": "payload must be a JSON object"}, status_code=400
+                )
+            launcher_url = (body.get("launcher_url") or "").strip()
+            if not launcher_url:
+                return JSONResponse(
+                    {"error": "launcher_url is required"}, status_code=400
+                )
+            worker_payload = body.get("worker") or {}
+            if not isinstance(worker_payload, dict):
+                return JSONResponse(
+                    {"error": "worker must be a JSON object"}, status_code=400
+                )
+            # Auto-fill controller with this coordinator's own WS URL when the
+            # operator hasn't pre-set one.
+            worker_payload.setdefault(
+                "controller",
+                f"ws://{self.config.gateway.host}:{self.config.gateway.port}",
+            )
+
+            launcher_token = body.get("launcher_token") or ""
+            headers = {"Content-Type": "application/json"}
+            if launcher_token:
+                headers["Authorization"] = f"Bearer {launcher_token}"
+
+            import httpx
+
+            target = launcher_url.rstrip("/") + "/launch"
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.post(target, json=worker_payload, headers=headers)
+            except httpx.RequestError as exc:
+                log.warning("fleet/spawn: launcher %s unreachable (%s)", target, exc)
+                return JSONResponse(
+                    {"error": f"launcher unreachable: {exc}"}, status_code=502
+                )
+            try:
+                forwarded = resp.json()
+            except ValueError:
+                forwarded = {"text": resp.text}
+            log.info(
+                "fleet/spawn → %s status=%d worker_id=%s",
+                target,
+                resp.status_code,
+                worker_payload.get("worker_id"),
+            )
+            return JSONResponse(
+                {
+                    "launcher_url": launcher_url,
+                    "launcher_status": resp.status_code,
+                    "launcher_response": forwarded,
+                    "controller_used": worker_payload["controller"],
+                },
+                status_code=200 if resp.is_success else 502,
+            )
+
         async def memory_forget(request: Request) -> JSONResponse:
             """Delete a single memory by key.
 
@@ -1937,6 +2022,7 @@ class GatewayServer:
             Route("/skills", skills_list),
             Route("/memory", memory_list),
             Route("/memory/{key}", memory_forget, methods=["DELETE"]),
+            Route("/fleet/spawn", fleet_spawn, methods=["POST"]),
             Route("/conversations", conversations_list, methods=["GET"]),
             Route("/conversations", conversations_delete_all, methods=["DELETE"]),
             Route("/conversations/{conv_id}", conversation_detail, methods=["GET"]),
