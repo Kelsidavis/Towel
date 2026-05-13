@@ -340,6 +340,12 @@ class GatewayServer:
             if conn_id and conn_id in self._connections:
                 del self._connections[conn_id]
             if conn_id:
+                # Wake any coordinator coroutine waiting on this worker's
+                # in-flight job. Without this, classify/quick-infer/run paths
+                # block on their queue.get() until the per-call timeout
+                # (5s-300s) before they realise the worker is gone.
+                self._notify_in_flight_disconnect(conn_id)
+
                 # Trigger handoffs for sessions on this worker before unregistering
                 sessions_to_handoff = self._handoff_manager.sessions_needing_handoff(
                     conn_id, self._session_workers
@@ -348,7 +354,7 @@ class GatewayServer:
                     self._handoff_manager.plan_handoff(
                         sid, conn_id, HandoffReason.WORKER_DISCONNECTED
                     )
-                    # Clear affinity so _select_worker picks a new one
+                    # Clear affinity so the dispatcher picks a new one.
                     self._session_workers.pop(sid, None)
                     # Complete handoff — next request will land on a new worker
                     self._handoff_manager.complete_handoff(sid, success=True)
@@ -362,6 +368,42 @@ class GatewayServer:
             for task in self._active_tasks.values():
                 if not task.done():
                     task.cancel()
+
+    def _notify_in_flight_disconnect(self, worker_id: str) -> None:
+        """Push a synthetic ``job_error`` into the queue for any in-flight job.
+
+        Coordinator coroutines that sent a job to ``worker_id`` and are blocked
+        on ``queue.get()`` would otherwise wait for their per-call timeout
+        before noticing the worker died. We resolve them immediately with an
+        explicit error so the user sees a fast fallback (classify defaults to
+        ``"task"``, infer paths re-route) rather than a stall.
+        """
+        worker = self._workers.get(worker_id)
+        if worker is None:
+            return
+        job_id = worker.current_job_id
+        if not job_id:
+            return
+        queue = self._job_queues.get(job_id)
+        if queue is None:
+            return
+        try:
+            queue.put_nowait(
+                {
+                    "type": "job_error",
+                    "job_id": job_id,
+                    "worker_id": worker_id,
+                    "error": "Worker disconnected mid-job",
+                }
+            )
+        except asyncio.QueueFull:
+            # Queues here are unbounded (no maxsize), but be defensive — a
+            # bounded queue in a future refactor shouldn't break this path.
+            log.warning(
+                "Could not notify waiter for job %s about worker %s disconnect",
+                job_id,
+                worker_id,
+            )
 
     async def _reap_stale_workers(self, interval: float = 30.0, timeout: float = 60.0) -> None:
         """Periodically close connections to workers that missed heartbeats."""
