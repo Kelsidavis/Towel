@@ -19,9 +19,12 @@ Towel is best on Apple Silicon, and also supports Linux.
 
 ```bash
 pip install -e ".[all]"
-towel init
-towel chat
+towel setup    # browser GUI — pick backend (MLX / Ollama / llama-server / Claude) + model
+towel chat     # start chatting
 ```
+
+Skipping setup? `towel init` writes a starter `~/.towel/config.toml` you can edit by hand.
+Or run `towel doctor` any time to verify the environment.
 
 Launch scripts:
 
