@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from towel.skills.base import Skill, ToolDefinition
@@ -181,7 +181,7 @@ class GCalSkill(Skill):
         import asyncio
         svc = await asyncio.to_thread(self._get_service)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         time_max = now + timedelta(hours=hours)
 
         events_result = await asyncio.to_thread(
@@ -210,7 +210,7 @@ class GCalSkill(Skill):
         import asyncio
         svc = await asyncio.to_thread(self._get_service)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end_of_day = start_of_day + timedelta(days=1)
 
@@ -240,7 +240,7 @@ class GCalSkill(Skill):
         import asyncio
         svc = await asyncio.to_thread(self._get_service)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         events_result = await asyncio.to_thread(
             lambda: svc.events().list(

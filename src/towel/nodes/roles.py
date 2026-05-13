@@ -150,9 +150,6 @@ def assign_roles(capabilities: dict[str, Any]) -> list[NodeRole]:
     if not total_vram and gpus:
         total_vram = sum(g.get("vram_mb", 0) for g in gpus)
 
-    # RAM info (for CPU-only nodes like Pi)
-    ram_total = capabilities.get("resources", {}).get("ram_total_mb", 0)
-
     # ── Inference: can this node do quality text generation? ────────
     # GPU nodes with good VRAM, or large-model CPU nodes
     if total_vram >= _LARGE_VRAM_MB:

@@ -189,7 +189,10 @@ class GmailSkill(Skill):
             subject = self._header(headers, "Subject")
             date = self._header(headers, "Date")
             snippet = msg.get("snippet", "")
-            lines.append(f"- **{subject}**\n  From: {sender} | {date}\n  {snippet}\n  ID: `{msg['id']}`\n")
+            lines.append(
+                f"- **{subject}**\n  From: {sender} | {date}\n"
+                f"  {snippet}\n  ID: `{msg['id']}`\n"
+            )
 
         return "\n".join(lines)
 

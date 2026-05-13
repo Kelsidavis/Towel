@@ -20,8 +20,6 @@ from towel.skills.builtin.claude_skill import ClaudeSkill
 from towel.skills.builtin.clipboard import ClipboardSkill
 from towel.skills.builtin.clipboard_history_skill import ClipboardHistorySkill
 from towel.skills.builtin.codex_skill import CodexSkill
-from towel.skills.builtin.gcal_skill import GCalSkill
-from towel.skills.builtin.gmail_skill import GmailSkill
 from towel.skills.builtin.color_skill import ColorSkill
 from towel.skills.builtin.convert_skill import ConvertSkill
 from towel.skills.builtin.country_skill import CountrySkill
@@ -41,10 +39,12 @@ from towel.skills.builtin.emoji_skill import EmojiSkill
 from towel.skills.builtin.env_skill import EnvSkill
 from towel.skills.builtin.figlet_skill import FigletSkill
 from towel.skills.builtin.filesystem import FileSystemSkill
+from towel.skills.builtin.gcal_skill import GCalSkill
 from towel.skills.builtin.git import GitSkill
 from towel.skills.builtin.github_actions_skill import GithubActionsSkill
 from towel.skills.builtin.github_skill import GithubSkill
 from towel.skills.builtin.gitignore_skill import GitignoreSkill
+from towel.skills.builtin.gmail_skill import GmailSkill
 from towel.skills.builtin.hackernews_skill import HackerNewsSkill
 from towel.skills.builtin.hash_skill import HashSkill
 from towel.skills.builtin.http_header_skill import HttpHeaderSkill
