@@ -693,6 +693,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
             <div class="fleet-controls">
               <button class="fleet-btn warn" data-worker-id="${escHtml(worker.id)}" data-worker-op="${worker.draining ? 'undrain' : 'drain'}">${worker.draining ? 'undrain' : 'drain'}</button>
               <button class="fleet-btn err" data-worker-id="${escHtml(worker.id)}" data-worker-op="${worker.enabled === false ? 'enable' : 'disable'}">${worker.enabled === false ? 'enable' : 'disable'}</button>
+              <button class="fleet-btn" data-worker-id="${escHtml(worker.id)}" data-worker-op="replace" title="Drain and respawn this worker via its launcher (optionally with a new model)">replace</button>
+              <button class="fleet-btn" data-worker-id="${escHtml(worker.id)}" data-worker-op="upgrade" title="Run an upgrade command on this worker's host via its launcher">upgrade</button>
             </div>
           </div>
         `;
@@ -1119,6 +1121,113 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   function autoResize(){inputEl.style.height='auto';inputEl.style.height=Math.min(inputEl.scrollHeight,160)+'px';}
   function escHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 
+  // Sticky launcher credentials so the operator doesn't retype on every
+  // replace/upgrade. URL is persistent (localStorage); token lives only
+  // for this browser session.
+  function rememberedLauncherUrl(workerId) {
+    return localStorage.getItem('towel.launcher.' + workerId + '.url') || '';
+  }
+  function rememberLauncherUrl(workerId, url) {
+    if (url) localStorage.setItem('towel.launcher.' + workerId + '.url', url);
+  }
+  function rememberedLauncherToken() {
+    return sessionStorage.getItem('towel.launcher.token') || '';
+  }
+  function rememberLauncherToken(token) {
+    if (token) sessionStorage.setItem('towel.launcher.token', token);
+  }
+
+  async function replaceWorker(workerId) {
+    const defaultUrl = rememberedLauncherUrl(workerId);
+    const launcherUrl = prompt(
+      `Replace worker "${workerId}" — launcher URL on its host:`,
+      defaultUrl
+    );
+    if (!launcherUrl) return;
+    const token = prompt(
+      'Launcher bearer token (matches $TOWEL_TRIGGER_TOKEN on target):',
+      rememberedLauncherToken()
+    );
+    if (token === null) return;
+    const newModel = prompt(
+      'New model identifier (leave blank to keep config default):',
+      ''
+    );
+    if (newModel === null) return;
+    rememberLauncherUrl(workerId, launcherUrl);
+    rememberLauncherToken(token);
+    const worker = {};
+    if (newModel.trim()) worker.model = newModel.trim();
+    worker.worker_id = workerId;  // ask launcher to reuse the same id
+    try {
+      const resp = await fetch(apiBase + '/fleet/replace-worker', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          target_worker_id: workerId,
+          launcher_url: launcherUrl,
+          launcher_token: token,
+          worker: worker,
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        const inner = (data.launcher_response && data.launcher_response.error) ||
+                      data.error || resp.statusText;
+        alert('Replace failed: ' + inner);
+        return;
+      }
+      alert(`Worker ${workerId} replaced. New PID: ${(data.launcher_response || {}).pid || '?'}`);
+      await loadFleetState();
+    } catch (err) {
+      alert('Replace failed: ' + err.message);
+    }
+  }
+
+  async function upgradeWorker(workerId) {
+    const defaultUrl = rememberedLauncherUrl(workerId);
+    const launcherUrl = prompt(
+      `Upgrade software on worker "${workerId}" — launcher URL on its host:`,
+      defaultUrl
+    );
+    if (!launcherUrl) return;
+    const token = prompt(
+      'Launcher bearer token:',
+      rememberedLauncherToken()
+    );
+    if (token === null) return;
+    const strategy = prompt(
+      'Upgrade strategy (pip / git-pull / uv):',
+      'pip'
+    );
+    if (!strategy) return;
+    rememberLauncherUrl(workerId, launcherUrl);
+    rememberLauncherToken(token);
+    try {
+      const resp = await fetch(apiBase + '/fleet/upgrade', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          launcher_url: launcherUrl,
+          launcher_token: token,
+          strategy: strategy.trim(),
+        }),
+      });
+      const data = await resp.json();
+      const inner = data.launcher_response || {};
+      if (!resp.ok || inner.ok === false) {
+        const err = inner.error || inner.stderr || data.error || resp.statusText;
+        alert('Upgrade failed (exit ' + (inner.returncode ?? '?') + '): ' + err);
+        return;
+      }
+      const tail = (inner.stdout || '').split('\n').slice(-3).join('\n');
+      alert(`Upgrade OK on ${workerId}.\n\nLast lines:\n${tail}\n\n` +
+            'Click "replace" on this worker to put the new code into rotation.');
+    } catch (err) {
+      alert('Upgrade failed: ' + err.message);
+    }
+  }
+
   fleetWorkersListEl.addEventListener('click', async function(e) {
     const btn = e.target.closest('[data-worker-op]');
     if (!btn) return;
@@ -1129,6 +1238,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       if (op === 'undrain') await updateWorkerState(workerId, { draining: false });
       if (op === 'disable') await updateWorkerState(workerId, { enabled: false });
       if (op === 'enable') await updateWorkerState(workerId, { enabled: true });
+      if (op === 'replace') { await replaceWorker(workerId); return; }
+      if (op === 'upgrade') { await upgradeWorker(workerId); return; }
       if (op === 'save-tasks') {
         const select = btn.closest('.fleet-card').querySelector('.fleet-task-select');
         const tasks = Array.from(select.selectedOptions).map(function(o){return o.value;});
