@@ -776,6 +776,92 @@ class GatewayServer:
                 except Exception:
                     pass
 
+    async def _replace_worker_impl(
+        self,
+        target_id: str,
+        launcher_url: str,
+        launcher_token: str,
+        worker_payload: dict[str, Any],
+        reason: str = "replace-worker",
+    ) -> tuple[dict[str, Any], int]:
+        """Core replace-worker flow shared by single-replace and rolling-replace.
+
+        Returns ``(response_body, http_status)`` matching the
+        ``/fleet/replace-worker`` endpoint contract: 404 if the worker is
+        unknown, 502 if the launcher can't be reached, 200/502 mirroring the
+        launcher's own status otherwise.
+        """
+        existing = self._workers.get(target_id)
+        if existing is None:
+            return ({"error": f"unknown worker: {target_id}"}, 404)
+
+        # Drain → migrate sessions off this worker.
+        self._workers.set_draining(target_id, True)
+        await self._initiate_handoffs_for_worker(
+            target_id, HandoffReason.WORKER_DRAINING
+        )
+
+        # Ask the worker to exit gracefully.
+        shutdown_sent = False
+        try:
+            await existing.ws.send(
+                json.dumps({"type": "shutdown", "reason": reason})
+            )
+            shutdown_sent = True
+        except Exception as exc:
+            log.warning(
+                "replace-worker: shutdown for %s failed: %s", target_id, exc
+            )
+
+        # Forward to the launcher.
+        worker_payload.setdefault(
+            "controller",
+            f"ws://{self.config.gateway.host}:{self.config.gateway.port}",
+        )
+        headers = {"Content-Type": "application/json"}
+        if launcher_token:
+            headers["Authorization"] = f"Bearer {launcher_token}"
+
+        import httpx
+
+        target = launcher_url.rstrip("/") + "/launch"
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(target, json=worker_payload, headers=headers)
+        except httpx.RequestError as exc:
+            log.warning(
+                "replace-worker: launcher %s unreachable (%s)", target, exc
+            )
+            return (
+                {
+                    "error": f"launcher unreachable: {exc}",
+                    "drained_worker_id": target_id,
+                    "shutdown_sent": shutdown_sent,
+                },
+                502,
+            )
+        try:
+            forwarded = resp.json()
+        except ValueError:
+            forwarded = {"text": resp.text}
+        log.info(
+            "replace-worker: %s replaced via %s status=%d shutdown_sent=%s",
+            target_id,
+            target,
+            resp.status_code,
+            shutdown_sent,
+        )
+        return (
+            {
+                "replaced_worker_id": target_id,
+                "shutdown_sent": shutdown_sent,
+                "launcher_status": resp.status_code,
+                "launcher_response": forwarded,
+                "controller_used": worker_payload["controller"],
+            },
+            200 if resp.is_success else 502,
+        )
+
     async def _initiate_handoffs_for_worker(
         self, worker_id: str, reason: HandoffReason
     ) -> list[str]:
@@ -1645,82 +1731,126 @@ class GatewayServer:
                     {"error": "worker must be a JSON object"}, status_code=400
                 )
 
-            existing = self._workers.get(target_id)
-            if existing is None:
-                return JSONResponse(
-                    {"error": f"unknown worker: {target_id}"}, status_code=404
-                )
-
-            # Drain → migrate sessions off this worker.
-            self._workers.set_draining(target_id, True)
-            await self._initiate_handoffs_for_worker(
-                target_id, HandoffReason.WORKER_DRAINING
-            )
-
-            # Ask the worker to exit. Best-effort: if the socket is already
-            # gone we proceed to the respawn anyway.
-            shutdown_sent = False
-            reason = body.get("reason") or "replace-worker"
-            try:
-                await existing.ws.send(
-                    json.dumps({"type": "shutdown", "reason": reason})
-                )
-                shutdown_sent = True
-            except Exception as exc:
-                log.warning(
-                    "fleet/replace-worker: shutdown for %s failed: %s",
-                    target_id,
-                    exc,
-                )
-
-            # Forward to the launcher (same flow as /fleet/spawn).
-            worker_payload.setdefault(
-                "controller",
-                f"ws://{self.config.gateway.host}:{self.config.gateway.port}",
-            )
             launcher_token = body.get("launcher_token") or ""
-            headers = {"Content-Type": "application/json"}
-            if launcher_token:
-                headers["Authorization"] = f"Bearer {launcher_token}"
-
-            import httpx
-
-            target = launcher_url.rstrip("/") + "/launch"
-            try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    resp = await client.post(target, json=worker_payload, headers=headers)
-            except httpx.RequestError as exc:
-                log.warning(
-                    "fleet/replace-worker: launcher %s unreachable (%s)", target, exc
-                )
-                return JSONResponse(
-                    {
-                        "error": f"launcher unreachable: {exc}",
-                        "drained_worker_id": target_id,
-                        "shutdown_sent": shutdown_sent,
-                    },
-                    status_code=502,
-                )
-            try:
-                forwarded = resp.json()
-            except ValueError:
-                forwarded = {"text": resp.text}
-            log.info(
-                "fleet/replace-worker: %s replaced via %s status=%d shutdown_sent=%s",
-                target_id,
-                target,
-                resp.status_code,
-                shutdown_sent,
+            reason = body.get("reason") or "replace-worker"
+            result, status = await self._replace_worker_impl(
+                target_id=target_id,
+                launcher_url=launcher_url,
+                launcher_token=launcher_token,
+                worker_payload=worker_payload,
+                reason=reason,
             )
-            return JSONResponse(
+            return JSONResponse(result, status_code=status)
+
+        async def fleet_rolling_replace(request: Request) -> JSONResponse:
+            """Walk through a list of workers and replace each sequentially.
+
+            Used to roll a model change or code upgrade across the fleet
+            without taking everything down at once. The coordinator drains
+            and replaces one worker, optionally waits a configurable delay
+            so the new worker has time to connect and pick up traffic, then
+            proceeds to the next target.
+
+            Body::
+
                 {
-                    "replaced_worker_id": target_id,
-                    "shutdown_sent": shutdown_sent,
-                    "launcher_status": resp.status_code,
-                    "launcher_response": forwarded,
-                    "controller_used": worker_payload["controller"],
-                },
-                status_code=200 if resp.is_success else 502,
+                  "targets": [
+                    {"target_worker_id": "w1", "launcher_url": "http://h1:18751"},
+                    {"target_worker_id": "w2", "launcher_url": "http://h2:18751"}
+                  ],
+                  "launcher_token": "shared-bearer",  // optional, applied to all
+                  "worker": {"backend": "mlx", "model": "new/model"},
+                  "delay_between_seconds": 5
+                }
+
+            Returns ``{"results": [...]}`` with one entry per target in order,
+            each carrying the per-worker replace result. Continues through
+            partial failures rather than aborting — operators can rerun for
+            just the failed workers.
+            """
+            try:
+                body = await request.json()
+            except Exception as exc:
+                return JSONResponse({"error": f"invalid JSON: {exc}"}, status_code=400)
+            if not isinstance(body, dict):
+                return JSONResponse(
+                    {"error": "payload must be a JSON object"}, status_code=400
+                )
+            targets = body.get("targets")
+            if not isinstance(targets, list) or not targets:
+                return JSONResponse(
+                    {"error": "targets must be a non-empty list"}, status_code=400
+                )
+            shared_token = body.get("launcher_token") or ""
+            worker_template = body.get("worker") or {}
+            if not isinstance(worker_template, dict):
+                return JSONResponse(
+                    {"error": "worker must be a JSON object"}, status_code=400
+                )
+            try:
+                delay = float(body.get("delay_between_seconds", 5))
+            except (TypeError, ValueError):
+                return JSONResponse(
+                    {"error": "delay_between_seconds must be a number"},
+                    status_code=400,
+                )
+            if delay < 0 or delay > 600:
+                return JSONResponse(
+                    {"error": "delay_between_seconds must be in [0, 600]"},
+                    status_code=400,
+                )
+
+            results: list[dict[str, Any]] = []
+            for idx, target in enumerate(targets):
+                if not isinstance(target, dict):
+                    results.append(
+                        {"index": idx, "ok": False, "error": "target must be an object"}
+                    )
+                    continue
+                tid = (target.get("target_worker_id") or "").strip()
+                lurl = (target.get("launcher_url") or "").strip()
+                if not tid or not lurl:
+                    results.append(
+                        {
+                            "index": idx,
+                            "ok": False,
+                            "error": "target needs target_worker_id and launcher_url",
+                            "target_worker_id": tid or None,
+                        }
+                    )
+                    continue
+                tok = target.get("launcher_token") or shared_token
+                # Each target gets a fresh copy of the worker template — we
+                # don't want one worker's modification (controller auto-fill,
+                # worker_id) to leak into the next.
+                worker_payload = dict(worker_template)
+                # Keep the worker id stable across the replace.
+                worker_payload.setdefault("worker_id", tid)
+                result, status = await self._replace_worker_impl(
+                    target_id=tid,
+                    launcher_url=lurl,
+                    launcher_token=tok,
+                    worker_payload=worker_payload,
+                    reason="rolling-replace",
+                )
+                results.append(
+                    {
+                        "index": idx,
+                        "ok": 200 <= status < 300,
+                        "status": status,
+                        **result,
+                    }
+                )
+                # Wait before the next target so the new worker has a chance
+                # to connect and pick up traffic. Skip the delay after the
+                # last target.
+                if delay > 0 and idx < len(targets) - 1:
+                    await asyncio.sleep(delay)
+
+            overall_ok = all(r.get("ok") for r in results)
+            return JSONResponse(
+                {"results": results, "ok": overall_ok},
+                status_code=200 if overall_ok else 502,
             )
 
         async def fleet_spawn(request: Request) -> JSONResponse:
@@ -2229,6 +2359,7 @@ class GatewayServer:
             Route("/fleet/spawn", fleet_spawn, methods=["POST"]),
             Route("/fleet/replace-worker", fleet_replace_worker, methods=["POST"]),
             Route("/fleet/upgrade", fleet_upgrade, methods=["POST"]),
+            Route("/fleet/rolling-replace", fleet_rolling_replace, methods=["POST"]),
             Route("/conversations", conversations_list, methods=["GET"]),
             Route("/conversations", conversations_delete_all, methods=["DELETE"]),
             Route("/conversations/{conv_id}", conversation_detail, methods=["GET"]),

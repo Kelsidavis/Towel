@@ -353,6 +353,196 @@ class TestFleetReplaceWorker:
             json={"launcher_url": "http://x", "worker": {}},
         )
         assert resp.status_code == 400
+
+
+class TestFleetRollingReplace:
+    """Walks N workers serially, replacing each."""
+
+    def _register(self, gateway, worker_id: str) -> MagicMock:
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        gateway._workers.register(
+            worker_id, ws=ws, capabilities={"backend": "mlx"}
+        )
+        return ws
+
+    def test_walks_through_targets_in_order(self, gateway):
+        client = TestClient(gateway._build_http_app())
+        self._register(gateway, "w1")
+        self._register(gateway, "w2")
+        post = _mock_post(payload={"ok": True, "pid": 100})
+        with patch("httpx.AsyncClient.post", post), \
+             patch("asyncio.sleep", new_callable=AsyncMock):
+            resp = client.post(
+                "/fleet/rolling-replace",
+                json={
+                    "targets": [
+                        {"target_worker_id": "w1", "launcher_url": "http://h1:18751"},
+                        {"target_worker_id": "w2", "launcher_url": "http://h2:18751"},
+                    ],
+                    "launcher_token": "shared",
+                    "worker": {"backend": "mlx", "model": "new/model"},
+                    "delay_between_seconds": 0,  # no real wait
+                },
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert len(data["results"]) == 2
+        assert [r["replaced_worker_id"] for r in data["results"]] == ["w1", "w2"]
+        # Each result reuses the worker_id from the target so the launcher
+        # spawns the replacement with the same identifier.
+        for r in data["results"]:
+            assert r["ok"] is True
+        # Two launcher POSTs in sequence, each to a different host.
+        urls = [call.args[0] for call in post.call_args_list]
+        assert urls == ["http://h1:18751/launch", "http://h2:18751/launch"]
+
+    def test_continues_past_partial_failures(self, gateway):
+        """A 502 on one target shouldn't abort the rest of the rollout —
+        the operator wants to know which workers actually succeeded."""
+        client = TestClient(gateway._build_http_app())
+        self._register(gateway, "good")
+        self._register(gateway, "bad")
+        self._register(gateway, "also-good")
+
+        # Make the middle target's launcher 401.
+        call_count = {"n": 0}
+
+        async def faking_post(*args, **kwargs):
+            call_count["n"] += 1
+            resp = MagicMock()
+            if call_count["n"] == 2:
+                resp.status_code = 401
+                resp.is_success = False
+                resp.json.return_value = {"error": "invalid token"}
+            else:
+                resp.status_code = 200
+                resp.is_success = True
+                resp.json.return_value = {"ok": True, "pid": 999}
+            resp.text = ""
+            return resp
+
+        with patch("httpx.AsyncClient.post", side_effect=faking_post), \
+             patch("asyncio.sleep", new_callable=AsyncMock):
+            resp = client.post(
+                "/fleet/rolling-replace",
+                json={
+                    "targets": [
+                        {"target_worker_id": "good", "launcher_url": "http://h1"},
+                        {"target_worker_id": "bad", "launcher_url": "http://h2"},
+                        {"target_worker_id": "also-good", "launcher_url": "http://h3"},
+                    ],
+                    "worker": {"backend": "mlx"},
+                    "delay_between_seconds": 0,
+                },
+            )
+        # Overall 502 because at least one target failed.
+        assert resp.status_code == 502
+        data = resp.json()
+        assert data["ok"] is False
+        results = data["results"]
+        assert results[0]["ok"] is True
+        assert results[1]["ok"] is False
+        assert results[2]["ok"] is True
+
+    def test_validation_errors_per_target(self, gateway):
+        client = TestClient(gateway._build_http_app())
+        self._register(gateway, "real")
+        post = _mock_post(payload={"ok": True, "pid": 1})
+        with patch("httpx.AsyncClient.post", post), \
+             patch("asyncio.sleep", new_callable=AsyncMock):
+            resp = client.post(
+                "/fleet/rolling-replace",
+                json={
+                    "targets": [
+                        {"target_worker_id": "real", "launcher_url": "http://h1"},
+                        {},  # missing both required fields
+                        "garbage",  # not even an object
+                    ],
+                    "worker": {"backend": "mlx"},
+                    "delay_between_seconds": 0,
+                },
+            )
+        # Real target succeeded; bad targets surface as failed results.
+        assert resp.status_code == 502  # overall ok is False
+        results = resp.json()["results"]
+        assert results[0]["ok"] is True
+        assert results[1]["ok"] is False
+        assert "target_worker_id" in results[1]["error"]
+        assert results[2]["ok"] is False
+        assert "object" in results[2]["error"]
+
+    def test_per_target_token_overrides_shared(self, gateway):
+        client = TestClient(gateway._build_http_app())
+        self._register(gateway, "w1")
+        post = _mock_post(payload={"ok": True, "pid": 1})
+        with patch("httpx.AsyncClient.post", post), \
+             patch("asyncio.sleep", new_callable=AsyncMock):
+            client.post(
+                "/fleet/rolling-replace",
+                json={
+                    "targets": [
+                        {
+                            "target_worker_id": "w1",
+                            "launcher_url": "http://h1",
+                            "launcher_token": "per-target-token",
+                        },
+                    ],
+                    "launcher_token": "shared-token",
+                    "worker": {"backend": "mlx"},
+                    "delay_between_seconds": 0,
+                },
+            )
+        sent_headers = post.call_args.kwargs["headers"]
+        assert sent_headers["Authorization"] == "Bearer per-target-token"
+
+    def test_empty_targets_returns_400(self, gateway):
+        client = TestClient(gateway._build_http_app())
+        resp = client.post(
+            "/fleet/rolling-replace",
+            json={"targets": [], "worker": {}},
+        )
+        assert resp.status_code == 400
+
+    def test_negative_delay_returns_400(self, gateway):
+        client = TestClient(gateway._build_http_app())
+        resp = client.post(
+            "/fleet/rolling-replace",
+            json={
+                "targets": [{"target_worker_id": "w1", "launcher_url": "http://h"}],
+                "delay_between_seconds": -1,
+                "worker": {},
+            },
+        )
+        assert resp.status_code == 400
+
+    def test_delays_between_targets_but_not_after_last(self, gateway):
+        """Sleeps should fire N-1 times for N targets — no waste at the end."""
+        import asyncio as _asyncio
+
+        client = TestClient(gateway._build_http_app())
+        self._register(gateway, "w1")
+        self._register(gateway, "w2")
+        self._register(gateway, "w3")
+        post = _mock_post(payload={"ok": True})
+        sleep_mock = AsyncMock()
+        with patch("httpx.AsyncClient.post", post), \
+             patch.object(_asyncio, "sleep", sleep_mock):
+            client.post(
+                "/fleet/rolling-replace",
+                json={
+                    "targets": [
+                        {"target_worker_id": "w1", "launcher_url": "http://h"},
+                        {"target_worker_id": "w2", "launcher_url": "http://h"},
+                        {"target_worker_id": "w3", "launcher_url": "http://h"},
+                    ],
+                    "worker": {"backend": "mlx"},
+                    "delay_between_seconds": 2,
+                },
+            )
+        # Two sleeps for three targets.
+        assert sleep_mock.await_count == 2
         client = TestClient(gateway._build_http_app())
         post = _mock_post(
             status_code=401, payload={"error": "invalid token"}
