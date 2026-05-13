@@ -123,6 +123,35 @@ class TestMemoryEndpoint:
         assert resp.status_code == 200
         assert resp.json() == {"memories": [], "count": 0}
 
+    def test_delete_removes_entry(self, store, memory):
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+
+        resp = client.delete("/memory/favourite_color")
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True, "key": "favourite_color"}
+
+        # The entry is gone from subsequent lists.
+        remaining = client.get("/memory").json()
+        assert "favourite_color" not in {m["key"] for m in remaining["memories"]}
+        assert remaining["count"] == 2
+
+    def test_delete_unknown_key_returns_404(self, store, memory):
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+        resp = client.delete("/memory/never-existed")
+        assert resp.status_code == 404
+        assert "never-existed" in resp.json()["error"]
+
+    def test_delete_returns_503_when_no_memory_backend(self, store):
+        class _BareAgent:
+            pass
+
+        gw = _gateway(store, _BareAgent())
+        client = TestClient(gw._build_http_app())
+        resp = client.delete("/memory/anything")
+        assert resp.status_code == 503
+
     def test_orders_newest_first(self, store, tmp_path):
         # recall_all returns dict-iteration order; the endpoint must sort
         # explicitly so the most-recently-updated entry leads.

@@ -1519,6 +1519,27 @@ class GatewayServer:
                 }
             )
 
+        async def memory_forget(request: Request) -> JSONResponse:
+            """Delete a single memory by key.
+
+            Pairs with ``GET /memory`` so operators (or the chat UI) can
+            curate what the agent carries between sessions without dropping
+            into a REPL. Returns 404 if the key didn't exist so callers can
+            distinguish "already gone" from "successfully removed".
+            """
+            memory = getattr(self.agent, "memory", None)
+            if memory is None:
+                return JSONResponse({"error": "no memory backend"}, status_code=503)
+            key = request.path_params["key"]
+            try:
+                removed = memory.forget(key)
+            except Exception as exc:
+                log.exception("memory.forget(%r) failed: %s", key, exc)
+                return JSONResponse({"error": str(exc)}, status_code=500)
+            if not removed:
+                return JSONResponse({"error": f"no memory with key {key!r}"}, status_code=404)
+            return JSONResponse({"ok": True, "key": key})
+
         async def skills_list(_request: Request) -> JSONResponse:
             """Return the skills loaded on this coordinator and their tools.
 
@@ -1915,6 +1936,7 @@ class GatewayServer:
             Route("/dispatch/explain", dispatch_explain),
             Route("/skills", skills_list),
             Route("/memory", memory_list),
+            Route("/memory/{key}", memory_forget, methods=["DELETE"]),
             Route("/conversations", conversations_list, methods=["GET"]),
             Route("/conversations", conversations_delete_all, methods=["DELETE"]),
             Route("/conversations/{conv_id}", conversation_detail, methods=["GET"]),
