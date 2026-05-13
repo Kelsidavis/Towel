@@ -78,7 +78,11 @@ class TestWorkersEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert data["workers"] == []
-        assert data["requirements"]["backend"] == "mlx"
+        # The requirements dict was renamed: scoring now uses preferred_*
+        # hints (soft) rather than required_* (hard) so heterogeneous fleets
+        # don't get rejected outright.
+        assert data["requirements"]["preferred_backend"] == "mlx"
+        assert data["requirements"]["preferred_mode"] == "mlx_prompt"
 
     def test_workers_list_connected_workers(self, gateway, client):
         gateway._workers.register(
