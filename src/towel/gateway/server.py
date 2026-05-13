@@ -35,6 +35,7 @@ from towel.agent.runtime import (
 from towel.agent.tool_parser import parse_tool_calls
 from towel.config import TowelConfig
 from towel.gateway.context_sync import ContextSyncManager
+from towel.gateway.dispatcher import Dispatcher, REASON_NO_WORKERS
 from towel.gateway.handoff import HandoffManager, HandoffReason
 from towel.gateway.idle_tasks import IDLE_TASK_PROMPTS, IdleTask, IdleTaskManager
 from towel.gateway.sessions import SessionManager
@@ -86,10 +87,22 @@ class GatewayServer:
     _node_roles: dict[str, list[NodeRole]] = field(default_factory=dict)
     _node_tasks: dict[str, list[TaskType]] = field(default_factory=dict)
     _idle_manager: IdleTaskManager = field(default_factory=IdleTaskManager)
+    _dispatcher: Dispatcher | None = None
 
     def __post_init__(self) -> None:
         self._session_pins = self.pin_store.load()
         self._worker_states = self.worker_state_store.load()
+        # Build the dispatcher last so it can capture references to the
+        # already-initialised registries and dicts.
+        self._dispatcher = Dispatcher(
+            workers=self._workers,
+            node_dicts_builder=self._build_node_dicts,
+            session_workers=self._session_workers,
+            session_pins=self._session_pins,
+            node_tracker=self._node_tracker,
+            idle_task_predicate=self._idle_manager.is_idle_task,
+            preempt_hook=self._preempt_idle_task,
+        )
         # Initialize cluster memory from agent's memory store if available
         memory_store = getattr(self.agent, "memory", None)
         if isinstance(memory_store, MemoryStore):
@@ -560,90 +573,38 @@ class GatewayServer:
     ) -> tuple[WorkerInfo | None, str]:
         """Route a message to the best worker based on task type.
 
-        Returns (worker, intent) where intent is 'chat', 'tool', or 'task'.
-        Worker is None when the coordinator should handle it directly.
-
-        Flow:
-        1. Check session pin / affinity
-        2. Classify into a specific TaskType (heuristic, then LLM)
-        3. Find the best worker that has that task assigned
-        4. Fall back to role-based routing if no task-assigned worker fits
+        Classifies the message into an intent + ``TaskType`` and then delegates
+        to :class:`towel.gateway.dispatcher.Dispatcher` for the actual worker
+        selection (pin → affinity → task-match → role-match → capability
+        fallback → idle preempt). Returns ``(worker, intent)``; worker is
+        ``None`` when the coordinator should handle the request itself.
         """
-        # Respect explicit pins
-        pinned_id = self._session_pins.get(session_id)
-        if pinned_id:
-            worker = self._workers.get(pinned_id)
-            if worker and worker.enabled and not worker.busy:
-                return worker, "task"
-
-        # Session affinity — if a worker already has this context, prefer it
-        affinity_id = self._session_workers.get(session_id)
-        if affinity_id:
-            affinity_worker = self._workers.get(affinity_id)
-            if affinity_worker and affinity_worker.enabled and not affinity_worker.busy:
-                node = self._node_tracker.get(affinity_id)
-                if node and node.get_context_slot(session_id) is not None:
-                    return affinity_worker, "task"
-
-        # Step 1: Classify into a specific TaskType
+        # Step 1: classify into a TaskType (cheap heuristic, then LLM fallback)
         task_type = classify_task_type(message)
-
-        # Step 2: If heuristic didn't match, try LLM classification
         if task_type is None:
             classifier = self._worker_for_role(NodeRole.CLASSIFIER, session_id)
             if classifier:
                 task_type = await self._classify_task_on_worker(message, classifier)
 
-        # Step 3: Route by task type
         if task_type is not None:
             intent = self._TASK_TO_INTENT.get(task_type, "task")
-            log.debug("Route: task=%s intent=%s message=%r", task_type, intent, message[:60])
+        else:
+            intent = classify_message_intent(message) or "task"
 
-            # Try to find a worker with this task assigned
-            worker = self._worker_for_task(task_type, session_id)
-            if worker:
-                self._session_workers[session_id] = worker.id
-                return worker, intent
+        # Step 2: hand off the selection to the dispatcher.
+        assert self._dispatcher is not None
+        decision = await self._dispatcher.async_select_for_session(
+            session_id,
+            intent=intent,
+            task_type=task_type,
+        )
 
-            # No task-specific worker — fall through to role-based routing
-            log.debug("No worker for task %s, falling back to role-based", task_type)
+        if decision.worker is not None:
+            self._session_workers[session_id] = decision.worker.id
+            return decision.worker, decision.intent
 
-        # Step 4: Fall back to intent-based routing
-        intent = classify_message_intent(message) or "task"
-        log.debug("Route fallback: intent=%s message=%r", intent, message[:60])
-
-        if intent == "chat":
-            worker = self._worker_for_role(NodeRole.INFERENCE, session_id)
-            if worker:
-                self._session_workers[session_id] = worker.id
-                return worker, "chat"
-
-        elif intent == "tool":
-            worker = self._worker_for_role(NodeRole.TOOL_WORKER, session_id)
-            if worker:
-                self._session_workers[session_id] = worker.id
-                return worker, "tool"
-
-        # Default: best inference node
-        worker = self._worker_for_role(NodeRole.INFERENCE, session_id)
-        if worker:
-            self._session_workers[session_id] = worker.id
-            return worker, "task"
-
-        # Last resort — any available worker
-        worker = self._worker_for_role(NodeRole.GENERAL, session_id)
-        if worker:
-            self._session_workers[session_id] = worker.id
-            return worker, intent
-
-        # All workers busy — try to preempt one running an idle task
-        for w in self._workers.list():
-            if w.enabled and not w.draining and self._idle_manager.is_idle_task(w.id):
-                await self._preempt_idle_task(w)
-                self._session_workers[session_id] = w.id
-                return w, intent
-
-        return None, intent  # No workers → coordinator handles it
+        # No worker → coordinator handles the request locally.
+        return None, decision.intent
 
     async def _quick_remote_infer(
         self,
@@ -779,16 +740,25 @@ class GatewayServer:
             self._session_workers.pop(sid, None)
             self._context_sync.clear_worker(worker_id)
 
-            # Try to pre-select a new worker
-            new_worker = self._select_worker(sid, estimated_tokens=token_estimate)
-            if new_worker:
-                self._handoff_manager.assign_target(sid, new_worker.id)
-                # Open context slot on the new node
-                self._node_tracker.open_context_slot(new_worker.id, sid, token_estimate)
+            # Pick a replacement worker. The dispatcher's handoff path skips
+            # pin/affinity (those still point at the worker being drained) and
+            # goes straight to capability-fallback selection, so we always find
+            # a target as long as one suitable worker exists.
+            assert self._dispatcher is not None  # set in __post_init__
+            decision = self._dispatcher.select_for_handoff(
+                sid,
+                estimated_tokens=token_estimate,
+                exclude={worker_id},
+            )
+            if decision.worker is not None:
+                self._handoff_manager.assign_target(sid, decision.worker.id)
+                self._node_tracker.open_context_slot(decision.worker.id, sid, token_estimate)
                 self._handoff_manager.complete_handoff(sid, success=True)
             else:
                 self._handoff_manager.complete_handoff(
-                    sid, success=False, error="No suitable replacement worker available"
+                    sid,
+                    success=False,
+                    error="No suitable replacement worker available",
                 )
             handed_off.append(sid)
         return handed_off
@@ -1367,6 +1337,24 @@ class GatewayServer:
         async def cluster_nodes(_request: Any) -> JSONResponse:
             return JSONResponse(self._node_tracker.to_dict())
 
+        async def dispatch_recent(request: Request) -> JSONResponse:
+            """Return the most recent dispatch decisions for operator debugging.
+
+            Each entry shows which worker was picked, the reason code, and how
+            many candidates were considered — so an operator can see *why* a
+            given session landed on a given worker (or didn't land anywhere
+            and got handled by the coordinator).
+            """
+            limit = int(request.query_params.get("limit", "20"))
+            assert self._dispatcher is not None
+            entries = [d.to_dict() for d in self._dispatcher.history()]
+            return JSONResponse(
+                {
+                    "decisions": entries[-limit:],
+                    "no_workers_reason": REASON_NO_WORKERS,
+                }
+            )
+
         async def cluster_handoffs(_request: Any) -> JSONResponse:
             return JSONResponse(
                 {
@@ -1717,6 +1705,7 @@ class GatewayServer:
             Route("/cluster/nodes", cluster_nodes),
             Route("/cluster/handoffs", cluster_handoffs),
             Route("/cluster/idle", idle_tasks_status),
+            Route("/dispatch/recent", dispatch_recent),
             Route("/conversations", conversations_list, methods=["GET"]),
             Route("/conversations", conversations_delete_all, methods=["DELETE"]),
             Route("/conversations/{conv_id}", conversation_detail, methods=["GET"]),

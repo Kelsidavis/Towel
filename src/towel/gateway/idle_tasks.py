@@ -114,6 +114,13 @@ IDLE_TASK_PROMPTS: dict[IdleTask, str] = {
     ),
 }
 
+# How long a cached idle-task result stays valid before it's evicted on read.
+# Set to roughly 2x the cooldown so the result is fresh enough to be useful but
+# never so stale it misrepresents the project's current state — a LINT report
+# from 6 hours ago is worse than no LINT report.
+_DEFAULT_RESULT_TTL: dict[IdleTask, float] = {}
+
+
 # How often each task can re-run (seconds). Prevents redundant work.
 IDLE_TASK_COOLDOWNS: dict[IdleTask, float] = {
     IdleTask.LINT: 300,           # 5 minutes
@@ -131,6 +138,12 @@ IDLE_TASK_COOLDOWNS: dict[IdleTask, float] = {
     IdleTask.CALENDAR_PREP: 1800,  # 30 minutes
     IdleTask.PROACTIVE_HELP: 3600, # 1 hour
 }
+
+
+# Populate the result TTLs from the cooldowns (2x cooldown, capped at 2 hours).
+for _task, _cooldown in IDLE_TASK_COOLDOWNS.items():
+    _DEFAULT_RESULT_TTL[_task] = min(_cooldown * 2, 7200)
+del _task, _cooldown
 
 # Priority order — most valuable tasks first
 IDLE_TASK_PRIORITY: list[IdleTask] = [
@@ -259,11 +272,51 @@ class IdleTaskManager:
         """Check if a worker is running an idle task (not a real request)."""
         return worker_id in self._active
 
-    def get_result(self, task: IdleTask) -> IdleTaskResult | None:
-        return self._results.get(task)
+    def get_result(
+        self, task: IdleTask, max_age_seconds: float | None = None
+    ) -> IdleTaskResult | None:
+        """Return a cached result, or ``None`` if absent or expired.
+
+        ``max_age_seconds`` lets callers reject stale data — e.g. a LINT
+        result from 6 hours ago shouldn't be served to a user who has likely
+        edited those files since. Expired entries are evicted on read so the
+        cache doesn't grow unbounded.
+        """
+        result = self._results.get(task)
+        if result is None:
+            return None
+        ttl = max_age_seconds if max_age_seconds is not None else _DEFAULT_RESULT_TTL.get(task)
+        if ttl is not None and result.age_seconds > ttl:
+            # Evict on read so the same caller doesn't re-fetch the same stale
+            # entry repeatedly; future workers will refresh it.
+            self._results.pop(task, None)
+            return None
+        return result
+
+    def purge_expired(self) -> int:
+        """Evict every cached result whose age exceeds its default TTL.
+
+        Returns the number of entries removed. Callers can invoke this from a
+        periodic sweep when they would otherwise let the cache grow.
+        """
+        removed = 0
+        for task, result in list(self._results.items()):
+            ttl = _DEFAULT_RESULT_TTL.get(task)
+            if ttl is not None and result.age_seconds > ttl:
+                self._results.pop(task, None)
+                removed += 1
+        return removed
 
     def all_results(self) -> dict[str, Any]:
-        return {str(t): r.to_dict() for t, r in self._results.items()}
+        # Filter out entries that have aged past their TTL so callers (the
+        # ``/cluster/idle`` endpoint and friends) don't surface stale data.
+        live: dict[str, Any] = {}
+        for task, result in self._results.items():
+            ttl = _DEFAULT_RESULT_TTL.get(task)
+            if ttl is not None and result.age_seconds > ttl:
+                continue
+            live[str(task)] = result.to_dict()
+        return live
 
     def active_tasks(self) -> dict[str, str]:
         return {wid: str(task) for wid, task in self._active.items()}
