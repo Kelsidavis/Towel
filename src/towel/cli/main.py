@@ -100,6 +100,30 @@ def _auto_detect_backend() -> str | None:
     return None
 
 
+def _resolve_backend_settings(
+    config: TowelConfig,
+    backend: str | None,
+    claude_model: str | None,
+    ollama_url: str | None,
+    llama_url: str | None,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Layer CLI flag → config.toml → auto-detect, for backend + per-backend connection.
+
+    Returns the resolved ``(backend, claude_model, ollama_url, llama_url)`` tuple.
+    Each input takes priority over the corresponding ``config.*`` value, which
+    in turn beats auto-detect (for ``backend``) or the runtime's own default
+    (for the URLs / claude_model).
+    """
+    if not backend:
+        backend = config.backend or _auto_detect_backend()
+    return (
+        backend,
+        claude_model or config.claude_model or None,
+        ollama_url or config.ollama_url or None,
+        llama_url or config.llama_url or None,
+    )
+
+
 def _build_runtime(
     config: TowelConfig,
     skills: Any,
@@ -199,12 +223,12 @@ def serve(
     config.identity = identity
     _apply_turboquant_overrides(config, turboquant, tq_bits)
 
-    # Auto-detect backend if not specified
-    if not backend:
-        detected = _auto_detect_backend()
-        if detected:
-            backend = detected
-            console.print(f"[dim]Auto-detected backend:[/dim] {backend}")
+    backend_pre = backend
+    backend, claude_model, ollama_url, llama_url = _resolve_backend_settings(
+        config, backend, claude_model, ollama_url, llama_url
+    )
+    if backend and not backend_pre and backend != config.backend:
+        console.print(f"[dim]Auto-detected backend:[/dim] {backend}")
 
     if backend == "claude":
         console.print(f"[dim]Backend:[/dim] Claude Code CLI ({claude_model or 'sonnet'})")
@@ -459,12 +483,12 @@ def chat(
     config.identity = identity
     _apply_turboquant_overrides(config, turboquant, tq_bits)
 
-    # Auto-detect backend if not specified
-    if not backend:
-        detected = _auto_detect_backend()
-        if detected:
-            backend = detected
-            console.print(f"[dim]Auto-detected backend: {backend}[/dim]")
+    backend_pre = backend
+    backend, claude_model, ollama_url, llama_url = _resolve_backend_settings(
+        config, backend, claude_model, ollama_url, llama_url
+    )
+    if backend and not backend_pre and backend != config.backend:
+        console.print(f"[dim]Auto-detected backend: {backend}[/dim]")
 
     if backend == "claude":
         console.print(f"[dim]Backend: Claude Code CLI ({claude_model or 'sonnet'})[/dim]")
@@ -967,6 +991,28 @@ skills_dirs = ["~/.towel/skills", "./skills"]
 #   towel memory list            View persistent memories
 # ─────────────────────────────────────────────────────────
 """
+
+
+@cli.command()
+@click.option("--port", default=18749, type=int, help="Port for the setup web server")
+@click.option("--no-open", is_flag=True, help="Don't auto-open the browser")
+def setup(port: int, no_open: bool) -> None:
+    """Open the browser-based setup wizard (pick backend, model, identity)."""
+    from towel.setup_server import run_standalone
+
+    console.print(
+        Panel(
+            f"[bold green]Towel setup wizard[/bold green]\n\n"
+            f"  URL: [cyan]http://127.0.0.1:{port}/[/cyan]\n"
+            f"  Stop with Ctrl-C.",
+            border_style="green",
+            title="Don't Panic.",
+        )
+    )
+    try:
+        run_standalone(port=port, open_browser=not no_open)
+    except KeyboardInterrupt:
+        console.print("[dim]Setup wizard stopped.[/dim]")
 
 
 @cli.command()

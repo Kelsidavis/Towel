@@ -1699,8 +1699,12 @@ class GatewayServer:
         openai_routes = build_openai_routes(self.agent, self.config)
 
         from towel.agent.streaming_protocol import build_sse_routes
+        from towel.setup_server import setup_routes
 
         sse_routes = build_sse_routes(self.agent, self.config)
+        # The setup wizard mounts at /setup and exposes its own JSON API at
+        # /api/setup/*. Reachable from the running gateway for live reconfig.
+        setup_route_list = setup_routes()
 
         routes: list[Route | Mount] = [
             Route("/health", health),
@@ -1725,6 +1729,7 @@ class GatewayServer:
             Route("/api/sessions", api_sessions, methods=["GET"]),
             *openai_routes,
             *sse_routes,
+            *setup_route_list,
             Route("/", webchat),
         ]
 

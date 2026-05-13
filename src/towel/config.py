@@ -97,6 +97,15 @@ class TowelConfig(BaseModel):
     agents: dict[str, AgentProfile] = Field(default_factory=dict)
     default_agent: str = ""
 
+    # Backend preference — written by the setup GUI / persistent across runs.
+    # Empty means "let the CLI auto-detect (or fall back to MLX)".
+    backend: str = ""
+    # Backend-specific connection settings; the corresponding CLI flag still
+    # overrides each one at command time.
+    ollama_url: str = ""
+    llama_url: str = ""
+    claude_model: str = ""
+
     @classmethod
     def load(cls, path: Path | None = None) -> TowelConfig:
         """Load config from TOML file, falling back to defaults."""

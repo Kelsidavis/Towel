@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Towel Setup — Don't Panic.</title>
+<style>
+  :root {
+    --bg: #0a0e14; --bg-surface: #111820; --bg-input: #0d1117;
+    --bg-hover: #161e28; --bg-active: #1a2535; --border: #1e2a3a;
+    --text: #c5cdd9; --text-dim: #5c6a7a;
+    --green: #42d983; --green-dim: #2a8c57;
+    --cyan: #56d4dd; --yellow: #e6c84c; --red: #e05561;
+    --mono: 'SF Mono','Cascadia Code','Fira Code','Consolas',monospace;
+    --sans: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: var(--sans); background: var(--bg); color: var(--text);
+    min-height: 100vh; padding: 32px 24px;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  header { margin-bottom: 28px; }
+  h1 { font-family: var(--mono); color: var(--green); font-size: 22px;
+       letter-spacing: 2px; margin-bottom: 4px; }
+  .tagline { font-family: var(--mono); color: var(--text-dim); font-size: 12px; }
+
+  section { background: var(--bg-surface); border: 1px solid var(--border);
+            border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+  section h2 { font-size: 14px; font-weight: 600; color: var(--cyan);
+               margin-bottom: 4px; letter-spacing: 0.5px; }
+  section p.help { font-size: 12px; color: var(--text-dim); margin-bottom: 14px; }
+
+  /* Backend cards */
+  .backends { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
+  @media (max-width: 600px) { .backends { grid-template-columns: 1fr; } }
+  .backend {
+    border: 1px solid var(--border); border-radius: 6px; padding: 14px;
+    cursor: pointer; transition: background .15s, border-color .15s;
+    background: var(--bg-input); position: relative;
+  }
+  .backend:hover { background: var(--bg-hover); }
+  .backend.selected { border-color: var(--green); background: var(--bg-active); }
+  .backend .name { font-weight: 600; font-size: 13px; color: var(--text); }
+  .backend .desc { font-size: 11px; color: var(--text-dim); margin-top: 4px; line-height: 1.4; }
+  .backend .status { position: absolute; top: 10px; right: 12px; font-size: 11px; font-family: var(--mono); }
+  .backend .status.ok { color: var(--green); }
+  .backend .status.warn { color: var(--yellow); }
+  .backend .status.bad { color: var(--red); }
+  .backend.disabled { opacity: 0.55; cursor: not-allowed; }
+  .backend.disabled:hover { background: var(--bg-input); }
+
+  /* Inputs */
+  label { display: block; font-size: 12px; color: var(--text-dim);
+          margin-bottom: 6px; margin-top: 12px; font-weight: 500; }
+  input[type="text"], textarea, select {
+    width: 100%; background: var(--bg-input); border: 1px solid var(--border);
+    color: var(--text); font-family: var(--mono); font-size: 13px;
+    padding: 9px 12px; border-radius: 4px; outline: none;
+  }
+  input[type="text"]:focus, textarea:focus, select:focus { border-color: var(--green); }
+  textarea { font-family: var(--sans); resize: vertical; min-height: 80px; line-height: 1.5; }
+
+  .row { display: flex; gap: 12px; }
+  .row > * { flex: 1; }
+
+  /* Hidden by default; shown when backend matches */
+  .backend-fields { display: none; }
+  .backend-fields.active { display: block; }
+
+  /* Action buttons */
+  .actions { display: flex; gap: 12px; margin-top: 8px; align-items: center; }
+  button {
+    font-family: var(--mono); font-size: 13px; padding: 10px 18px;
+    border-radius: 4px; cursor: pointer; transition: background .15s;
+    background: var(--green); border: none; color: var(--bg);
+    font-weight: 600; letter-spacing: 0.5px;
+  }
+  button:hover { background: var(--green-dim); color: var(--text); }
+  button.secondary {
+    background: var(--bg-input); color: var(--text); border: 1px solid var(--border);
+  }
+  button.secondary:hover { background: var(--bg-hover); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* Status message */
+  #status { font-size: 12px; padding: 4px 10px; min-height: 24px; font-family: var(--mono); }
+  #status.ok { color: var(--green); }
+  #status.err { color: var(--red); }
+  #status.info { color: var(--cyan); }
+
+  .config-path { font-family: var(--mono); font-size: 11px;
+                 color: var(--text-dim); margin-top: 6px; }
+
+  /* Datalist looks similar to input */
+  .model-suggestions { font-size: 11px; color: var(--text-dim); margin-top: 6px;
+                       font-family: var(--mono); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>TOWEL SETUP</h1>
+    <div class="tagline">Don't Panic.</div>
+  </header>
+
+  <section>
+    <h2>1. Choose a backend</h2>
+    <p class="help">How Towel runs inference. Detected status is shown for each.</p>
+    <div class="backends" id="backends"></div>
+  </section>
+
+  <section id="backend-config-section">
+    <h2>2. Backend settings</h2>
+    <p class="help">Connection and model details for the backend you picked.</p>
+
+    <!-- MLX -->
+    <div class="backend-fields" data-backend="mlx">
+      <label for="mlx-model">Model (Hugging Face identifier)</label>
+      <input type="text" id="mlx-model" list="mlx-model-list"
+             placeholder="e.g. mlx-community/Llama-3.3-70B-Instruct-4bit">
+      <datalist id="mlx-model-list"></datalist>
+      <div class="model-suggestions" id="mlx-suggestions"></div>
+    </div>
+
+    <!-- Ollama -->
+    <div class="backend-fields" data-backend="ollama">
+      <label for="ollama-url">Ollama URL</label>
+      <input type="text" id="ollama-url" placeholder="http://localhost:11434">
+      <label for="ollama-model">Model</label>
+      <input type="text" id="ollama-model" list="ollama-model-list"
+             placeholder="e.g. qwen3.6:27b">
+      <datalist id="ollama-model-list"></datalist>
+      <div class="model-suggestions" id="ollama-suggestions"></div>
+    </div>
+
+    <!-- llama-server -->
+    <div class="backend-fields" data-backend="llama">
+      <label for="llama-url">llama-server URL</label>
+      <input type="text" id="llama-url" placeholder="http://localhost:8080">
+      <div class="model-suggestions">
+        llama-server picks its own model at startup; nothing else to set here.
+      </div>
+    </div>
+
+    <!-- Claude -->
+    <div class="backend-fields" data-backend="claude">
+      <label for="claude-model">Claude model</label>
+      <select id="claude-model">
+        <option value="sonnet">Sonnet (default — balanced)</option>
+        <option value="opus">Opus (smartest, slower)</option>
+        <option value="haiku">Haiku (fastest, cheapest)</option>
+      </select>
+      <div class="model-suggestions">
+        Uses your Claude Code Max-subscription credentials from the macOS keychain.
+        Run <span style="color:var(--green)">claude</span> in a terminal first if you haven't.
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>3. Identity</h2>
+    <p class="help">The agent's persona / system prompt. Change it any time later.</p>
+    <textarea id="identity"
+              placeholder="You are Towel, a helpful local AI assistant. Don't Panic."></textarea>
+  </section>
+
+  <section>
+    <div class="actions">
+      <button id="save-btn">Save configuration</button>
+      <button id="cancel-btn" class="secondary">Cancel</button>
+      <div id="status"></div>
+    </div>
+    <div class="config-path" id="config-path"></div>
+  </section>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const setStatus = (msg, kind='info') => {
+  const el = $('status'); el.textContent = msg; el.className = kind;
+};
+
+const BACKENDS = [
+  { id: 'mlx',    name: 'MLX (local, Apple Silicon)',
+    desc: 'Run models locally on Apple Silicon with mlx_lm. No network needed.' },
+  { id: 'ollama', name: 'Ollama',
+    desc: 'Use an Ollama daemon on this machine or another host on your LAN.' },
+  { id: 'llama',  name: 'llama-server (llama.cpp)',
+    desc: 'Use a running llama-server (GGUF models) over its OpenAI-compatible API.' },
+  { id: 'claude', name: 'Claude API (Max subscription)',
+    desc: 'Call the Anthropic Messages API via your Claude Code login (no API key needed).' },
+];
+
+let state = {
+  selected: 'mlx',
+  detected: {},
+  config: {},
+};
+
+function renderBackends() {
+  const container = $('backends');
+  container.innerHTML = '';
+  for (const b of BACKENDS) {
+    const det = state.detected[b.id] || { available: false, reason: 'unknown' };
+    const card = document.createElement('div');
+    card.className = 'backend';
+    if (state.selected === b.id) card.classList.add('selected');
+    if (!det.available) card.classList.add('disabled');
+    card.dataset.id = b.id;
+    const statusClass = det.available ? 'ok' : 'bad';
+    const statusText  = det.available ? '✓ ready' : '✗ unavailable';
+    card.innerHTML = `
+      <div class="status ${statusClass}" title="${escapeAttr(det.reason || '')}">${statusText}</div>
+      <div class="name">${b.name}</div>
+      <div class="desc">${b.desc}</div>
+      <div class="desc" style="margin-top:6px;color:var(--text-dim)">${escapeHtml(det.reason || '')}</div>
+    `;
+    card.onclick = () => {
+      if (!det.available) {
+        setStatus(`${b.name} isn't available on this machine: ${det.reason}`, 'err');
+        return;
+      }
+      state.selected = b.id;
+      renderBackends();
+      renderBackendFields();
+      maybeFetchModels(b.id);
+      setStatus('');
+    };
+    container.appendChild(card);
+  }
+}
+
+function renderBackendFields() {
+  document.querySelectorAll('.backend-fields').forEach(el => {
+    el.classList.toggle('active', el.dataset.backend === state.selected);
+  });
+}
+
+async function maybeFetchModels(backend) {
+  const apiPath = `/api/setup/backends/${backend}/models`;
+  try {
+    const resp = await fetch(apiPath);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const models = data.models || [];
+    if (backend === 'mlx') {
+      const list = $('mlx-model-list');
+      list.innerHTML = models.map(m => `<option value="${escapeAttr(m)}">`).join('');
+      $('mlx-suggestions').textContent = models.length
+        ? `Found ${models.length} model(s) in your Hugging Face cache.`
+        : 'No locally cached models found yet. Paste any HF identifier — it will be downloaded on first use.';
+    } else if (backend === 'ollama') {
+      const list = $('ollama-model-list');
+      list.innerHTML = models.map(m => `<option value="${escapeAttr(m)}">`).join('');
+      $('ollama-suggestions').textContent = models.length
+        ? `Installed Ollama models: ${models.slice(0, 6).join(', ')}${models.length > 6 ? '…' : ''}`
+        : 'No models found in Ollama. Run `ollama pull <name>` first.';
+    }
+  } catch (err) { /* silent — non-essential */ }
+}
+
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function escapeAttr(s) { return escapeHtml(s); }
+
+function loadConfigIntoForm(config) {
+  $('identity').value = config.identity || '';
+  $('mlx-model').value = (config.model && config.model.name) || '';
+  $('ollama-url').value = config.ollama_url || '';
+  $('llama-url').value = config.llama_url || '';
+  $('claude-model').value = config.claude_model || 'sonnet';
+  // For Ollama, the model name we want to persist is config.model.name when
+  // the user previously chose Ollama; we can't tell which backend a saved
+  // model name was for, so we prefill from config.model.name in both cases.
+  if (config.backend === 'ollama') {
+    $('ollama-model').value = (config.model && config.model.name) || '';
+  } else {
+    $('ollama-model').value = '';
+  }
+  state.selected = config.backend || firstAvailableBackend() || 'mlx';
+}
+
+function firstAvailableBackend() {
+  for (const b of BACKENDS) {
+    if ((state.detected[b.id] || {}).available) return b.id;
+  }
+  return null;
+}
+
+function gatherForm() {
+  const backend = state.selected;
+  const out = {
+    backend,
+    identity: $('identity').value || 'You are Towel, a helpful local AI assistant. Don\'t Panic.',
+    ollama_url: $('ollama-url').value || '',
+    llama_url: $('llama-url').value || '',
+    claude_model: $('claude-model').value || '',
+    model_name: '',
+  };
+  if (backend === 'mlx') out.model_name = $('mlx-model').value;
+  else if (backend === 'ollama') out.model_name = $('ollama-model').value;
+  // llama-server and Claude don't carry a HF-style model name in config.model.name.
+  return out;
+}
+
+async function save() {
+  const form = gatherForm();
+  if (form.backend === 'mlx' && !form.model_name) {
+    setStatus('Please pick an MLX model.', 'err'); return;
+  }
+  if (form.backend === 'ollama' && !form.model_name) {
+    setStatus('Please pick an Ollama model.', 'err'); return;
+  }
+  setStatus('Saving…', 'info');
+  $('save-btn').disabled = true;
+  try {
+    const resp = await fetch('/api/setup/save', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(form),
+    });
+    const data = await resp.json();
+    if (!resp.ok || data.error) {
+      setStatus(`Save failed: ${data.error || resp.statusText}`, 'err');
+      return;
+    }
+    setStatus(`Saved to ${data.config_path}.`, 'ok');
+    if (data.shutdown_after) {
+      setTimeout(() => { document.body.innerHTML =
+        '<div style="text-align:center;padding:60px;font-family:var(--mono);color:var(--green)">' +
+        '<h1 style="font-size:18px;letter-spacing:2px;margin-bottom:12px">SETUP COMPLETE</h1>' +
+        '<div style="color:var(--text-dim);font-size:13px">You can close this tab and start <code>towel chat</code>.</div>' +
+        '</div>'; }, 600);
+    }
+  } catch (err) {
+    setStatus(`Save failed: ${err}`, 'err');
+  } finally {
+    $('save-btn').disabled = false;
+  }
+}
+
+async function init() {
+  try {
+    const resp = await fetch('/api/setup/state');
+    if (!resp.ok) throw new Error(resp.statusText);
+    const data = await resp.json();
+    state.detected = data.backends || {};
+    state.config = data.config || {};
+    $('config-path').textContent = `Writes to: ${data.config_path || '~/.towel/config.toml'}`;
+    loadConfigIntoForm(state.config);
+    renderBackends();
+    renderBackendFields();
+    maybeFetchModels(state.selected);
+  } catch (err) {
+    setStatus(`Could not load setup state: ${err}`, 'err');
+  }
+}
+
+$('save-btn').onclick = save;
+$('cancel-btn').onclick = () => window.close();
+init();
+</script>
+</body>
+</html>
