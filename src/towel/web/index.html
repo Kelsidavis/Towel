@@ -1188,6 +1188,47 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     const worker = {};
     if (newModel.trim()) worker.model = newModel.trim();
     worker.worker_id = workerId;  // ask launcher to reuse the same id
+
+    // If the operator named a specific model, check whether THIS worker
+    // already has it cached so they know whether to expect a download.
+    if (worker.model) {
+      try {
+        const resp = await fetch(apiBase + '/fleet/suggest-targets', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({model: worker.model}),
+        });
+        if (resp.ok) {
+          const sdata = await resp.json();
+          const me = (sdata.workers || []).find(function(w) {
+            return w.worker_id === workerId;
+          });
+          if (me) {
+            const lines = [`Model: ${worker.model}`];
+            if (sdata.estimated_param_b) {
+              lines.push(`Estimated size: ~${sdata.estimated_param_b}B params`);
+            }
+            lines.push('');
+            if (me.has_model_cached) {
+              lines.push('✓ Already cached on this worker — spin-up will be fast.');
+            } else {
+              lines.push('↓ NOT cached — the worker will need to download it.');
+            }
+            if (!me.fits) {
+              lines.push(
+                `✗ Looks too big to fit (worker holds up to ~${me.max_param_b_est}B).`
+              );
+            }
+            lines.push('');
+            lines.push('Proceed?');
+            if (!confirm(lines.join('\n'))) return;
+          }
+        }
+      } catch (err) {
+        // suggest-targets is best-effort — proceed if it's unreachable.
+      }
+    }
+
     try {
       const resp = await fetch(apiBase + '/fleet/replace-worker', {
         method: 'POST',
