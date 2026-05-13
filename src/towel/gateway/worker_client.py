@@ -32,6 +32,10 @@ class RemoteWorkerClient:
     heartbeat_interval: float = 15.0
     _jobs: dict[str, asyncio.Task[None]] = field(default_factory=dict)
     _consecutive_failures: int = field(default=0, init=False)
+    # Set when the controller asks the worker to exit (graceful model swap or
+    # fleet rebalance). The reconnect loop checks this and stops re-attempting
+    # rather than treating the close as a transient drop.
+    _shutdown_requested: bool = field(default=False, init=False)
 
     async def run_forever(self) -> None:
         """Maintain a persistent worker connection to the controller."""
@@ -80,6 +84,26 @@ class RemoteWorkerClient:
                                 await self._cancel_job(msg.get("job_id"))
                             elif msg_type == "ping":
                                 await self._send_heartbeat(ws)
+                            elif msg_type == "shutdown":
+                                # The controller is asking us to exit gracefully —
+                                # used by /fleet/replace-worker to swap models or
+                                # backends without leaving zombies. Cancel any
+                                # active jobs, close the socket, and signal the
+                                # reconnect loop to stop.
+                                log.info(
+                                    "Received shutdown from controller: %s",
+                                    msg.get("reason") or "no reason given",
+                                )
+                                for jid, jtask in list(self._jobs.items()):
+                                    if not jtask.done():
+                                        jtask.cancel()
+                                    self._jobs.pop(jid, None)
+                                self._shutdown_requested = True
+                                try:
+                                    await ws.close(1000, "shutdown requested by controller")
+                                except Exception:
+                                    pass
+                                break
                     finally:
                         heartbeat.cancel()
             except Exception as exc:
@@ -90,6 +114,10 @@ class RemoteWorkerClient:
                     if not task.done():
                         task.cancel()
                     self._jobs.pop(job_id, None)
+
+            if self._shutdown_requested:
+                log.info("Shutdown requested — stopping reconnect loop.")
+                return
 
             delay = self._backoff_delay()
             log.info("Reconnecting in %.1fs (attempt %d)...", delay, self._consecutive_failures)

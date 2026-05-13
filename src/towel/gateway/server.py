@@ -1524,6 +1524,205 @@ class GatewayServer:
                 }
             )
 
+        async def fleet_upgrade(request: Request) -> JSONResponse:
+            """Proxy a software-upgrade command to a remote launcher.
+
+            Pairs with /fleet/replace-worker: upgrade first, then replace, so
+            the new spawn picks up the new code. Operator passes the launcher
+            URL + token plus either a built-in strategy (``pip`` / ``git-pull``
+            / ``uv``) or a custom argv. The launcher runs it synchronously
+            and returns the exit code + stdout/stderr.
+
+            Body::
+
+                {"launcher_url": ..., "launcher_token": ...,
+                 "strategy": "pip"}                    # built-in
+                # or
+                {"launcher_url": ..., "launcher_token": ...,
+                 "command": ["sh", "-c", "git pull && pip install -e ."]}
+            """
+            try:
+                body = await request.json()
+            except Exception as exc:
+                return JSONResponse({"error": f"invalid JSON: {exc}"}, status_code=400)
+            if not isinstance(body, dict):
+                return JSONResponse(
+                    {"error": "payload must be a JSON object"}, status_code=400
+                )
+            launcher_url = (body.get("launcher_url") or "").strip()
+            if not launcher_url:
+                return JSONResponse(
+                    {"error": "launcher_url is required"}, status_code=400
+                )
+            # Forward strategy/command verbatim — the launcher does the
+            # validation and we re-surface its 400 if the operator passed
+            # something the launcher doesn't recognise.
+            upgrade_body: dict[str, Any] = {}
+            if "strategy" in body:
+                upgrade_body["strategy"] = body["strategy"]
+            if "command" in body:
+                upgrade_body["command"] = body["command"]
+            if not upgrade_body:
+                upgrade_body["strategy"] = "pip"
+
+            launcher_token = body.get("launcher_token") or ""
+            headers = {"Content-Type": "application/json"}
+            if launcher_token:
+                headers["Authorization"] = f"Bearer {launcher_token}"
+
+            import httpx
+
+            target = launcher_url.rstrip("/") + "/upgrade"
+            # 6 min coordinator timeout — slightly longer than the launcher's
+            # own 5-minute pip cap so we get the structured 504 from the
+            # launcher rather than a generic httpx timeout.
+            try:
+                async with httpx.AsyncClient(timeout=360.0) as client:
+                    resp = await client.post(target, json=upgrade_body, headers=headers)
+            except httpx.RequestError as exc:
+                log.warning(
+                    "fleet/upgrade: launcher %s unreachable (%s)", target, exc
+                )
+                return JSONResponse(
+                    {"error": f"launcher unreachable: {exc}"}, status_code=502
+                )
+            try:
+                forwarded = resp.json()
+            except ValueError:
+                forwarded = {"text": resp.text}
+            log.info(
+                "fleet/upgrade: launcher=%s status=%d strategy=%s",
+                target,
+                resp.status_code,
+                upgrade_body.get("strategy", "custom"),
+            )
+            return JSONResponse(
+                {
+                    "launcher_url": launcher_url,
+                    "launcher_status": resp.status_code,
+                    "launcher_response": forwarded,
+                },
+                status_code=200 if resp.is_success else 502,
+            )
+
+        async def fleet_replace_worker(request: Request) -> JSONResponse:
+            """Atomically replace a running worker with a new spawn.
+
+            Used to swap a worker onto a different model / backend / config
+            (or upgrade its software) without leaving zombies. Steps:
+
+              1. Look up the named worker; 404 if unknown.
+              2. Mark it draining so the dispatcher stops sending new work;
+                 the existing handoff manager migrates active sessions.
+              3. Send ``{"type":"shutdown"}`` over its WebSocket; the worker's
+                 reconnect loop sees the flag and exits cleanly rather than
+                 retrying.
+              4. POST to the supplied launcher with the new worker spec.
+
+            Body mirrors /fleet/spawn but adds ``target_worker_id``.
+            """
+            try:
+                body = await request.json()
+            except Exception as exc:
+                return JSONResponse({"error": f"invalid JSON: {exc}"}, status_code=400)
+            if not isinstance(body, dict):
+                return JSONResponse(
+                    {"error": "payload must be a JSON object"}, status_code=400
+                )
+            target_id = (body.get("target_worker_id") or "").strip()
+            if not target_id:
+                return JSONResponse(
+                    {"error": "target_worker_id is required"}, status_code=400
+                )
+            launcher_url = (body.get("launcher_url") or "").strip()
+            if not launcher_url:
+                return JSONResponse(
+                    {"error": "launcher_url is required"}, status_code=400
+                )
+            worker_payload = body.get("worker") or {}
+            if not isinstance(worker_payload, dict):
+                return JSONResponse(
+                    {"error": "worker must be a JSON object"}, status_code=400
+                )
+
+            existing = self._workers.get(target_id)
+            if existing is None:
+                return JSONResponse(
+                    {"error": f"unknown worker: {target_id}"}, status_code=404
+                )
+
+            # Drain → migrate sessions off this worker.
+            self._workers.set_draining(target_id, True)
+            await self._initiate_handoffs_for_worker(
+                target_id, HandoffReason.WORKER_DRAINING
+            )
+
+            # Ask the worker to exit. Best-effort: if the socket is already
+            # gone we proceed to the respawn anyway.
+            shutdown_sent = False
+            reason = body.get("reason") or "replace-worker"
+            try:
+                await existing.ws.send(
+                    json.dumps({"type": "shutdown", "reason": reason})
+                )
+                shutdown_sent = True
+            except Exception as exc:
+                log.warning(
+                    "fleet/replace-worker: shutdown for %s failed: %s",
+                    target_id,
+                    exc,
+                )
+
+            # Forward to the launcher (same flow as /fleet/spawn).
+            worker_payload.setdefault(
+                "controller",
+                f"ws://{self.config.gateway.host}:{self.config.gateway.port}",
+            )
+            launcher_token = body.get("launcher_token") or ""
+            headers = {"Content-Type": "application/json"}
+            if launcher_token:
+                headers["Authorization"] = f"Bearer {launcher_token}"
+
+            import httpx
+
+            target = launcher_url.rstrip("/") + "/launch"
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.post(target, json=worker_payload, headers=headers)
+            except httpx.RequestError as exc:
+                log.warning(
+                    "fleet/replace-worker: launcher %s unreachable (%s)", target, exc
+                )
+                return JSONResponse(
+                    {
+                        "error": f"launcher unreachable: {exc}",
+                        "drained_worker_id": target_id,
+                        "shutdown_sent": shutdown_sent,
+                    },
+                    status_code=502,
+                )
+            try:
+                forwarded = resp.json()
+            except ValueError:
+                forwarded = {"text": resp.text}
+            log.info(
+                "fleet/replace-worker: %s replaced via %s status=%d shutdown_sent=%s",
+                target_id,
+                target,
+                resp.status_code,
+                shutdown_sent,
+            )
+            return JSONResponse(
+                {
+                    "replaced_worker_id": target_id,
+                    "shutdown_sent": shutdown_sent,
+                    "launcher_status": resp.status_code,
+                    "launcher_response": forwarded,
+                    "controller_used": worker_payload["controller"],
+                },
+                status_code=200 if resp.is_success else 502,
+            )
+
         async def fleet_spawn(request: Request) -> JSONResponse:
             """Proxy a worker-spawn request to a remote launcher.
 
@@ -2028,6 +2227,8 @@ class GatewayServer:
             Route("/memory", memory_list),
             Route("/memory/{key}", memory_forget, methods=["DELETE"]),
             Route("/fleet/spawn", fleet_spawn, methods=["POST"]),
+            Route("/fleet/replace-worker", fleet_replace_worker, methods=["POST"]),
+            Route("/fleet/upgrade", fleet_upgrade, methods=["POST"]),
             Route("/conversations", conversations_list, methods=["GET"]),
             Route("/conversations", conversations_delete_all, methods=["DELETE"]),
             Route("/conversations/{conv_id}", conversation_detail, methods=["GET"]),

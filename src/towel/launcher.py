@@ -116,11 +116,108 @@ def _spawn_worker(argv: list[str], env_overrides: dict[str, str] | None) -> subp
     )
 
 
+_DEFAULT_UPGRADE_COMMANDS: dict[str, list[str]] = {
+    # Plain pip install from PyPI. Suitable for production deployments where
+    # towel is installed as a regular package.
+    "pip": ["pip", "install", "--upgrade", "towel"],
+    # pip + git: pull latest main and reinstall in editable mode. The
+    # operator must run the launcher from inside the repo checkout for this
+    # to be meaningful.
+    "git-pull": ["sh", "-c", "git pull --ff-only && pip install -e ."],
+    # uv equivalent for hosts on the uv toolchain.
+    "uv": ["uv", "pip", "install", "--upgrade", "towel"],
+}
+
+
 def build_app(token: str) -> Starlette:
     """Build the launcher's Starlette app bound to a specific bearer token."""
 
     async def health(_request: Request) -> JSONResponse:
         return JSONResponse({"status": "ok", "service": "towel-launcher"})
+
+    async def upgrade(request: Request) -> JSONResponse:
+        """Run a software-upgrade command on this host.
+
+        Body shape::
+
+            {"strategy": "pip" | "git-pull" | "uv"}   # use a built-in recipe
+            {"command": ["sh", "-c", "..."]}          # or a custom argv
+
+        The launcher executes the chosen command synchronously (so the
+        caller can wait for the upgrade to finish before spawning a
+        replacement worker), with a 5-minute timeout. Stdout + stderr +
+        exit code come back in the JSON response. Auth: same bearer token
+        as ``/launch``.
+        """
+        denied = _check_token(request, token)
+        if denied is not None:
+            return denied
+        try:
+            payload = await request.json()
+        except Exception as exc:
+            return JSONResponse(
+                {"error": f"invalid JSON: {exc}"}, status_code=400
+            )
+        if not isinstance(payload, dict):
+            return JSONResponse(
+                {"error": "payload must be a JSON object"}, status_code=400
+            )
+
+        custom = payload.get("command")
+        if custom is not None:
+            if not isinstance(custom, list) or not all(isinstance(p, str) for p in custom):
+                return JSONResponse(
+                    {"error": "command must be a list of strings"}, status_code=400
+                )
+            cmd = list(custom)
+            strategy_used = "custom"
+        else:
+            strategy = (payload.get("strategy") or "pip").strip()
+            cmd = _DEFAULT_UPGRADE_COMMANDS.get(strategy)
+            if cmd is None:
+                return JSONResponse(
+                    {
+                        "error": f"unknown strategy: {strategy!r}; "
+                        f"known strategies: {sorted(_DEFAULT_UPGRADE_COMMANDS)}"
+                    },
+                    status_code=400,
+                )
+            strategy_used = strategy
+
+        log.info("Upgrade requested (strategy=%s): %s", strategy_used, cmd)
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+        except FileNotFoundError as exc:
+            return JSONResponse(
+                {"error": f"command not found: {exc}"}, status_code=500
+            )
+        except subprocess.TimeoutExpired:
+            return JSONResponse(
+                {"error": "upgrade timed out after 300s", "strategy": strategy_used},
+                status_code=504,
+            )
+
+        # Cap stdout/stderr so a chatty pip resolver doesn't blow up the
+        # response. Operators can ssh in for full logs if needed.
+        def _tail(text: str, limit: int = 4000) -> str:
+            return text if len(text) <= limit else "…" + text[-limit:]
+
+        return JSONResponse(
+            {
+                "ok": result.returncode == 0,
+                "strategy": strategy_used,
+                "command": cmd,
+                "returncode": result.returncode,
+                "stdout": _tail(result.stdout or ""),
+                "stderr": _tail(result.stderr or ""),
+            },
+            status_code=200 if result.returncode == 0 else 500,
+        )
 
     async def launch(request: Request) -> JSONResponse:
         denied = _check_token(request, token)
@@ -165,6 +262,7 @@ def build_app(token: str) -> Starlette:
         routes=[
             Route("/health", health),
             Route("/launch", launch, methods=["POST"]),
+            Route("/upgrade", upgrade, methods=["POST"]),
         ]
     )
 

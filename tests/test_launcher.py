@@ -220,6 +220,104 @@ class TestLaunch:
         assert "towel" in resp.json()["error"]
 
 
+class TestUpgrade:
+    TOKEN = "test-secret"
+
+    def _headers(self) -> dict[str, str]:
+        return {"authorization": f"Bearer {self.TOKEN}"}
+
+    def _fake_run(self, returncode: int = 0, stdout: str = "", stderr: str = ""):
+        result = MagicMock()
+        result.returncode = returncode
+        result.stdout = stdout
+        result.stderr = stderr
+        return result
+
+    def test_pip_strategy_runs_pip_install_upgrade(self):
+        client = TestClient(build_app(self.TOKEN))
+        with patch("towel.launcher.subprocess.run") as run:
+            run.return_value = self._fake_run(stdout="Successfully installed towel-0.42.0")
+            resp = client.post(
+                "/upgrade",
+                json={"strategy": "pip"},
+                headers=self._headers(),
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["returncode"] == 0
+        assert data["strategy"] == "pip"
+        assert data["command"] == ["pip", "install", "--upgrade", "towel"]
+        assert "towel-0.42.0" in data["stdout"]
+
+    def test_unknown_strategy_returns_400(self):
+        client = TestClient(build_app(self.TOKEN))
+        resp = client.post(
+            "/upgrade",
+            json={"strategy": "yolo"},
+            headers=self._headers(),
+        )
+        assert resp.status_code == 400
+        assert "yolo" in resp.json()["error"]
+
+    def test_custom_command_runs_verbatim(self):
+        client = TestClient(build_app(self.TOKEN))
+        with patch("towel.launcher.subprocess.run") as run:
+            run.return_value = self._fake_run(stdout="ok")
+            resp = client.post(
+                "/upgrade",
+                json={"command": ["sh", "-c", "echo hi"]},
+                headers=self._headers(),
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["command"] == ["sh", "-c", "echo hi"]
+        assert data["strategy"] == "custom"
+
+    def test_custom_command_must_be_list_of_strings(self):
+        client = TestClient(build_app(self.TOKEN))
+        resp = client.post(
+            "/upgrade",
+            json={"command": "not-a-list"},
+            headers=self._headers(),
+        )
+        assert resp.status_code == 400
+
+    def test_nonzero_exit_marks_response_as_not_ok_with_500(self):
+        client = TestClient(build_app(self.TOKEN))
+        with patch("towel.launcher.subprocess.run") as run:
+            run.return_value = self._fake_run(
+                returncode=1, stderr="pip: command not found"
+            )
+            resp = client.post(
+                "/upgrade",
+                json={"strategy": "pip"},
+                headers=self._headers(),
+            )
+        assert resp.status_code == 500
+        data = resp.json()
+        assert data["ok"] is False
+        assert data["returncode"] == 1
+        assert "pip" in data["stderr"]
+
+    def test_timeout_returns_504(self):
+        client = TestClient(build_app(self.TOKEN))
+        with patch("towel.launcher.subprocess.run") as run:
+            run.side_effect = launcher.subprocess.TimeoutExpired(cmd=["pip"], timeout=300)
+            resp = client.post(
+                "/upgrade",
+                json={"strategy": "pip"},
+                headers=self._headers(),
+            )
+        assert resp.status_code == 504
+        assert "timed out" in resp.json()["error"]
+
+    def test_upgrade_requires_auth(self):
+        client = TestClient(build_app(self.TOKEN))
+        resp = client.post("/upgrade", json={"strategy": "pip"})
+        assert resp.status_code == 401
+
+
 class TestRunStartupValidation:
     def test_refuses_to_start_without_token_env(self, monkeypatch):
         # Unset the env var so the launcher's fail-secure check fires.
