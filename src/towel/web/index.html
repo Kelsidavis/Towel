@@ -281,6 +281,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         <div id="fleet-subtitle">Manage workers, routes, and pins from the controller.</div>
       </div>
       <div id="fleet-actions">
+        <button class="tb-btn" id="fleet-launch-btn" title="Spawn a worker on a remote host running towel launcher">+ launch</button>
         <button class="tb-btn" id="fleet-refresh-btn" title="Refresh fleet state">refresh</button>
         <button class="tb-btn" id="fleet-restart-btn" title="Restart coordinator (reloads config)" style="color:var(--yellow)">restart</button>
         <button class="tb-btn" id="fleet-close-btn" title="Close fleet panel">close</button>
@@ -295,6 +296,50 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         <div class="fleet-section">
           <h3>Workers</h3>
           <div class="fleet-summary" id="fleet-summary"></div>
+          <div id="fleet-launch-form" style="display:none">
+            <div class="fleet-card" style="margin-bottom:10px">
+              <div class="fleet-card-title" style="margin-bottom:8px">Spawn worker via launcher</div>
+              <div class="fleet-route-meta" style="margin-bottom:8px">
+                The target host must be running <code>towel launcher</code> with
+                <code>$TOWEL_TRIGGER_TOKEN</code> set. Coordinator auto-fills the controller URL.
+              </div>
+              <div style="display:grid;grid-template-columns:1fr;gap:6px;font-size:0.8em">
+                <label>Launcher URL
+                  <input id="launch-url" type="text" placeholder="http://gpu-box:18751"
+                         style="width:100%;background:var(--bg-input);color:var(--text);
+                                border:1px solid var(--border);border-radius:4px;padding:4px 6px">
+                </label>
+                <label>Bearer token (optional)
+                  <input id="launch-token" type="password" placeholder="(matches $TOWEL_TRIGGER_TOKEN on target)"
+                         style="width:100%;background:var(--bg-input);color:var(--text);
+                                border:1px solid var(--border);border-radius:4px;padding:4px 6px">
+                </label>
+                <div style="display:flex;gap:6px">
+                  <label style="flex:1">Backend
+                    <select id="launch-backend"
+                            style="width:100%;background:var(--bg-input);color:var(--text);
+                                   border:1px solid var(--border);border-radius:4px;padding:4px 6px">
+                      <option value="">auto-detect</option>
+                      <option value="mlx">mlx</option>
+                      <option value="ollama">ollama</option>
+                      <option value="llama">llama</option>
+                      <option value="claude">claude</option>
+                    </select>
+                  </label>
+                  <label style="flex:1">Worker ID (optional)
+                    <input id="launch-worker-id" type="text" placeholder="auto"
+                           style="width:100%;background:var(--bg-input);color:var(--text);
+                                  border:1px solid var(--border);border-radius:4px;padding:4px 6px">
+                  </label>
+                </div>
+              </div>
+              <div class="fleet-controls" style="margin-top:10px">
+                <button class="fleet-btn" id="launch-submit-btn">spawn</button>
+                <button class="fleet-btn" id="launch-cancel-btn">cancel</button>
+              </div>
+              <div id="launch-status" class="fleet-route-meta" style="margin-top:8px;min-height:14px"></div>
+            </div>
+          </div>
           <div class="fleet-list" id="fleet-workers-list"></div>
         </div>
       </div>
@@ -371,6 +416,15 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   const fleetOverlay = document.getElementById('fleet-overlay');
   const fleetRefreshBtn = document.getElementById('fleet-refresh-btn');
   const fleetRestartBtn = document.getElementById('fleet-restart-btn');
+  const fleetLaunchBtn = document.getElementById('fleet-launch-btn');
+  const fleetLaunchForm = document.getElementById('fleet-launch-form');
+  const launchUrlEl = document.getElementById('launch-url');
+  const launchTokenEl = document.getElementById('launch-token');
+  const launchBackendEl = document.getElementById('launch-backend');
+  const launchWorkerIdEl = document.getElementById('launch-worker-id');
+  const launchSubmitBtn = document.getElementById('launch-submit-btn');
+  const launchCancelBtn = document.getElementById('launch-cancel-btn');
+  const launchStatusEl = document.getElementById('launch-status');
   const fleetCloseBtn = document.getElementById('fleet-close-btn');
   const fleetCoordinatorEl = document.getElementById('fleet-coordinator');
   const fleetSummaryEl = document.getElementById('fleet-summary');
@@ -1102,6 +1156,74 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     }, 1500);
   });
   fleetCloseBtn.addEventListener('click',closeFleetPanel);
+
+  // Launch-worker form: toggle visibility, submit to /fleet/spawn.
+  fleetLaunchBtn.addEventListener('click', function() {
+    const open = fleetLaunchForm.style.display !== 'none';
+    fleetLaunchForm.style.display = open ? 'none' : 'block';
+    if (!open) {
+      launchUrlEl.focus();
+      launchStatusEl.textContent = '';
+      launchStatusEl.style.color = '';
+    }
+  });
+  launchCancelBtn.addEventListener('click', function() {
+    fleetLaunchForm.style.display = 'none';
+    launchStatusEl.textContent = '';
+  });
+  launchSubmitBtn.addEventListener('click', async function() {
+    const launcherUrl = launchUrlEl.value.trim();
+    if (!launcherUrl) {
+      launchStatusEl.textContent = 'launcher URL is required';
+      launchStatusEl.style.color = 'var(--red)';
+      launchUrlEl.focus();
+      return;
+    }
+    const worker = {};
+    const backend = launchBackendEl.value.trim();
+    if (backend) worker.backend = backend;
+    const workerId = launchWorkerIdEl.value.trim();
+    if (workerId) worker.worker_id = workerId;
+
+    const payload = {
+      launcher_url: launcherUrl,
+      worker: worker,
+    };
+    const token = launchTokenEl.value;
+    if (token) payload.launcher_token = token;
+
+    launchSubmitBtn.disabled = true;
+    launchStatusEl.style.color = 'var(--text-dim)';
+    launchStatusEl.textContent = 'spawning…';
+    try {
+      const resp = await fetch(apiBase + '/fleet/spawn', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        const inner = (data.launcher_response && data.launcher_response.error) || data.error || resp.statusText;
+        launchStatusEl.textContent = 'failed: ' + inner;
+        launchStatusEl.style.color = 'var(--red)';
+        return;
+      }
+      const pid = (data.launcher_response && data.launcher_response.pid) || '?';
+      launchStatusEl.textContent = `spawned pid=${pid} via ${data.controller_used}`;
+      launchStatusEl.style.color = 'var(--green)';
+      // Clear sensitive token but keep host so the operator can spawn another.
+      launchTokenEl.value = '';
+      launchWorkerIdEl.value = '';
+      // Trigger an immediate refresh so the worker shows up as it connects.
+      await loadFleetState();
+    } catch (err) {
+      launchStatusEl.textContent = 'request failed: ' + err.message;
+      launchStatusEl.style.color = 'var(--red)';
+    } finally {
+      launchSubmitBtn.disabled = false;
+    }
+  });
+
   fleetOverlay.addEventListener('click',function(e){ if(e.target===fleetOverlay) closeFleetPanel(); });
   inputEl.addEventListener('keydown',function(e){
     if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();}
