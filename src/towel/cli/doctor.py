@@ -288,6 +288,70 @@ def check_skills(config: TowelConfig) -> Check:
     return c
 
 
+def _probe_fleet_endpoints(c: Check, host: str, http_port: int) -> None:
+    """Probe the fleet/dispatch/skills/memory endpoints on a running gateway.
+
+    Each probe is best-effort: a 404 (older deploy) becomes a warn, a network
+    failure becomes a warn with the underlying error, and a successful call
+    appends an ``ok`` line summarising what came back. Errors here never fail
+    the doctor as a whole — the gateway itself is up, these are bonus checks.
+    """
+    import httpx
+
+    base = f"http://{host}:{http_port}"
+
+    # /workers — show fleet shape if anything is connected
+    try:
+        data = httpx.get(f"{base}/workers", timeout=2).json()
+        workers = data.get("workers", [])
+        if workers:
+            hot = 0
+            idle = 0
+            busy = 0
+            for w in workers:
+                live = (w.get("capabilities") or {}).get("live_resources") or {}
+                cp = live.get("cpu_pressure")
+                if isinstance(cp, (int, float)) and cp >= 0.8:
+                    hot += 1
+                if w.get("busy"):
+                    busy += 1
+                elif w.get("enabled", True) and not w.get("draining"):
+                    idle += 1
+            summary = f"Workers: {len(workers)} ({idle} idle, {busy} busy"
+            if hot:
+                summary += f", {hot} hot"
+            summary += ")"
+            c.ok(summary)
+        else:
+            c.ok("Workers: none connected (coordinator handles requests locally)")
+    except Exception as exc:
+        c.warn(f"/workers probe failed: {exc.__class__.__name__}")
+
+    # /skills — confirm the agent loaded its skills
+    try:
+        data = httpx.get(f"{base}/skills", timeout=2).json()
+        skills = data.get("skills", [])
+        tools = data.get("total_tools", 0)
+        c.ok(f"Skills: {len(skills)} loaded ({tools} tools available)")
+    except Exception as exc:
+        c.warn(f"/skills probe failed: {exc.__class__.__name__}")
+
+    # /dispatch/recent — confirm the dispatcher exists and has been used
+    try:
+        data = httpx.get(f"{base}/dispatch/recent?limit=1", timeout=2).json()
+        decisions = data.get("decisions", [])
+        if decisions:
+            last = decisions[-1]
+            c.ok(
+                "Last dispatch: "
+                f"{last.get('reason', 'unknown')} → {last.get('worker_id') or '<coordinator>'}"
+            )
+        else:
+            c.ok("Dispatch log: empty (no routing decisions yet)")
+    except Exception as exc:
+        c.warn(f"/dispatch/recent probe failed: {exc.__class__.__name__}")
+
+
 def check_gateway(config: TowelConfig) -> Check:
     """Check gateway port availability and running status."""
     c = Check("Gateway")
@@ -307,6 +371,7 @@ def check_gateway(config: TowelConfig) -> Check:
         c.ok(f"HTTP API: http://{host}:{http_port}")
         c.ok(f"Web UI: http://{host}:{http_port}/")
         c.ok(f"Connections: {data.get('connections', '?')}, Sessions: {data.get('sessions', '?')}")
+        _probe_fleet_endpoints(c, host, http_port)
         return c
     except Exception:
         pass
