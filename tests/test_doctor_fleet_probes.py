@@ -20,15 +20,27 @@ class TestProbeFleetEndpoints:
                 "workers": [
                     {
                         "id": "w-cool", "busy": False, "enabled": True, "draining": False,
-                        "capabilities": {"live_resources": {"cpu_pressure": 0.1}},
+                        "quality_tier": "high",
+                        "capabilities": {
+                            "live_resources": {"cpu_pressure": 0.1},
+                            "max_param_b_est": 70.0,
+                        },
                     },
                     {
                         "id": "w-busy", "busy": True, "enabled": True, "draining": False,
-                        "capabilities": {"live_resources": {"cpu_pressure": 0.5}},
+                        "quality_tier": "medium",
+                        "capabilities": {
+                            "live_resources": {"cpu_pressure": 0.5},
+                            "max_param_b_est": 13.0,
+                        },
                     },
                     {
                         "id": "w-hot", "busy": False, "enabled": True, "draining": False,
-                        "capabilities": {"live_resources": {"cpu_pressure": 0.9}},
+                        "quality_tier": "low",
+                        "capabilities": {
+                            "live_resources": {"cpu_pressure": 0.9},
+                            "max_param_b_est": 3.0,
+                        },
                     },
                 ],
             },
@@ -56,12 +68,52 @@ class TestProbeFleetEndpoints:
         assert "2 idle" in joined
         assert "1 busy" in joined
         assert "1 hot" in joined
+        # Tier breakdown rolls up to a single line.
+        assert "Tiers: 1 high, 1 medium, 1 low" in joined
+        # Size range: smallest 3B, largest 70B.
+        assert "Fits: ~3.0B" in joined
+        assert "70.0B params" in joined
         # Skills count.
         assert "Skills: 2 loaded (7 tools available)" in joined
         # Last dispatch decision.
         assert "Last dispatch: task_type_match → w-cool" in joined
         # No warnings on the happy path.
         assert c.warnings == []
+
+    def test_uniform_fleet_says_every_worker_fits_the_same(self):
+        responses = {
+            "/workers": {
+                "workers": [
+                    {
+                        "id": "a", "busy": False, "enabled": True, "draining": False,
+                        "quality_tier": "high",
+                        "capabilities": {"max_param_b_est": 32.0},
+                    },
+                    {
+                        "id": "b", "busy": False, "enabled": True, "draining": False,
+                        "quality_tier": "high",
+                        "capabilities": {"max_param_b_est": 32.0},
+                    },
+                ],
+            },
+            "/skills": {"skills": [], "total_tools": 0},
+            "/dispatch/recent?limit=1": {"decisions": []},
+        }
+
+        def fake_get(url, timeout=None):
+            for suffix, payload in responses.items():
+                if url.endswith(suffix):
+                    return _mock_response(payload)
+            raise AssertionError(f"unexpected url: {url}")
+
+        c = Check("test")
+        with patch("httpx.get", side_effect=fake_get):
+            _probe_fleet_endpoints(c, "localhost", 18743)
+
+        joined = " | ".join(c.details)
+        assert "Tiers: 2 high" in joined
+        # Same size on every worker uses the singular phrasing.
+        assert "up to ~32.0B params on every worker" in joined
 
     def test_empty_fleet_does_not_emit_hot_count(self):
         responses = {

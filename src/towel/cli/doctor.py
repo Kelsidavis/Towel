@@ -308,6 +308,8 @@ def _probe_fleet_endpoints(c: Check, host: str, http_port: int) -> None:
             hot = 0
             idle = 0
             busy = 0
+            tier_counts = {"high": 0, "medium": 0, "low": 0}
+            fits_values: list[float] = []
             for w in workers:
                 live = (w.get("capabilities") or {}).get("live_resources") or {}
                 cp = live.get("cpu_pressure")
@@ -317,11 +319,35 @@ def _probe_fleet_endpoints(c: Check, host: str, http_port: int) -> None:
                     busy += 1
                 elif w.get("enabled", True) and not w.get("draining"):
                     idle += 1
+                tier = w.get("quality_tier")
+                if tier in tier_counts:
+                    tier_counts[tier] += 1
+                fits = (w.get("capabilities") or {}).get("max_param_b_est")
+                if isinstance(fits, (int, float)) and fits > 0:
+                    fits_values.append(float(fits))
             summary = f"Workers: {len(workers)} ({idle} idle, {busy} busy"
             if hot:
                 summary += f", {hot} hot"
             summary += ")"
             c.ok(summary)
+            # Tier distribution — quick glance at whether the fleet has the
+            # capability mix the workload needs.
+            tier_parts = [
+                f"{tier_counts[t]} {t}"
+                for t in ("high", "medium", "low")
+                if tier_counts[t]
+            ]
+            if tier_parts:
+                c.ok(f"Tiers: {', '.join(tier_parts)}")
+            # Size range — smallest and largest "fits up to" so operators
+            # can see at a glance whether a 70B model has anywhere to land.
+            if fits_values:
+                lo = min(fits_values)
+                hi = max(fits_values)
+                if lo == hi:
+                    c.ok(f"Fits: up to ~{lo:.1f}B params on every worker")
+                else:
+                    c.ok(f"Fits: ~{lo:.1f}B…{hi:.1f}B params across workers")
         else:
             c.ok("Workers: none connected (coordinator handles requests locally)")
     except Exception as exc:
