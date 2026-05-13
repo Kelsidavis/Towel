@@ -90,6 +90,55 @@ class TestPurgeExpired:
         assert IdleTask.TEST not in mgr._results
 
 
+class TestPeriodicSweeper:
+    def test_sweeper_calls_purge_on_each_tick(self):
+        """The background sweep loop in ``GatewayServer._sweep_idle_results``
+        should call ``IdleTaskManager.purge_expired`` once per interval.
+
+        We patch ``asyncio.sleep`` to fire a CancelledError on the third call
+        so the loop runs twice and then exits cleanly, then assert
+        ``purge_expired`` was invoked the matching number of times.
+        """
+        import asyncio
+        from unittest.mock import patch
+
+        from towel.config import TowelConfig
+        from towel.gateway.server import GatewayServer
+
+        class _FakeAgent:
+            pass
+
+        gw = GatewayServer(agent=_FakeAgent(), config=TowelConfig())
+
+        purge_calls: list[int] = []
+
+        def fake_purge() -> int:
+            purge_calls.append(1)
+            return len(purge_calls)
+
+        gw._idle_manager.purge_expired = fake_purge  # type: ignore[assignment]
+
+        sleep_count = 0
+
+        async def fake_sleep(_interval: float) -> None:
+            nonlocal sleep_count
+            sleep_count += 1
+            if sleep_count >= 3:
+                raise asyncio.CancelledError
+
+        async def runner() -> None:
+            with patch("towel.gateway.server.asyncio.sleep", fake_sleep):
+                try:
+                    await gw._sweep_idle_results(interval=0)
+                except asyncio.CancelledError:
+                    pass
+
+        asyncio.run(runner())
+        # Loop body runs on the 1st and 2nd sleeps; the 3rd raises before
+        # purge_expired is reached. So we expect exactly 2 invocations.
+        assert len(purge_calls) == 2
+
+
 class TestAllResultsHidesStale:
     def test_all_results_filters_stale_entries(self):
         mgr = IdleTaskManager()

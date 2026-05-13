@@ -263,6 +263,34 @@ class TestPreemption:
 # --------------------------------------------------------------------------- #
 
 
+class TestExplain:
+    def test_explain_does_not_record_into_history(self):
+        workers = WorkerRegistry()
+        _make_worker(workers, "w1")
+        d = _make_dispatcher(workers, roles={"w1": [NodeRole.INFERENCE]})
+
+        # Real selects are recorded…
+        d.select_for_session("real", intent="chat")
+        baseline = len(d.history())
+
+        # …but explain peeks shouldn't pollute the ring buffer.
+        decision = d.explain_for_session("peek", intent="chat")
+        assert decision.worker is not None
+        assert decision.worker.id == "w1"
+        assert len(d.history()) == baseline
+
+    def test_explain_returns_same_choice_as_select_when_no_state_change(self):
+        workers = WorkerRegistry()
+        _make_worker(workers, "w1")
+        d = _make_dispatcher(workers, roles={"w1": [NodeRole.INFERENCE]})
+        live = d.select_for_session("s1", intent="chat")
+        peek = d.explain_for_session("s1", intent="chat")
+        # Same worker, same reason — explain is just a read-only mirror.
+        assert peek.worker is not None and live.worker is not None
+        assert peek.worker.id == live.worker.id
+        assert peek.reason == live.reason
+
+
 class TestObservability:
     def test_history_records_each_decision(self):
         workers = WorkerRegistry()

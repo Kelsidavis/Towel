@@ -156,10 +156,12 @@ class GatewayServer:
         log.info(f"HTTP API listening on http://{gw.host}:{gw.port + 1}")
 
         reaper = asyncio.create_task(self._reap_stale_workers())
+        idle_sweeper = asyncio.create_task(self._sweep_idle_results())
         try:
             await http_server.serve()
         finally:
             reaper.cancel()
+            idle_sweeper.cancel()
             if self._mdns_advertiser:
                 await self._mdns_advertiser.stop()
 
@@ -371,6 +373,24 @@ class GatewayServer:
                     await worker.ws.close(1001, "heartbeat timeout")
                 except Exception:
                     pass
+
+    async def _sweep_idle_results(self, interval: float = 300.0) -> None:
+        """Evict expired idle-task results so the cache doesn't accumulate.
+
+        ``IdleTaskManager`` already drops stale entries on read, but readers
+        only fire when a UI page loads or a worker finishes a task. Without
+        this sweeper a long-idle coordinator would still hold onto results
+        far past their TTL. Every 5 minutes is plenty — the TTLs themselves
+        sit between 5 min and 2 h.
+        """
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                removed = self._idle_manager.purge_expired()
+                if removed:
+                    log.info("Idle-result sweeper evicted %d stale entries", removed)
+            except Exception:
+                log.exception("Idle-result sweep failed")
 
     async def _stream_response(self, ws: ServerConnection, session_id: str, session: Any) -> None:
         """Stream agent response events to the WebSocket."""
@@ -1337,6 +1357,47 @@ class GatewayServer:
         async def cluster_nodes(_request: Any) -> JSONResponse:
             return JSONResponse(self._node_tracker.to_dict())
 
+        async def dispatch_explain(request: Request) -> JSONResponse:
+            """Preview where a request would be routed for a session.
+
+            Operator-facing introspection — answers "what would happen if a
+            new request for session X with intent Y landed right now?" without
+            actually consuming a worker or polluting the recent-decisions log.
+
+            Query params:
+              session_id (required)
+              intent       — chat | tool | task (default: task)
+              task_type    — optional TaskType value
+              estimated_tokens — int, default 0
+            """
+            sid = request.query_params.get("session_id")
+            if not sid:
+                return JSONResponse({"error": "session_id required"}, status_code=400)
+            intent = request.query_params.get("intent", "task")
+            task_type_raw = request.query_params.get("task_type")
+            task_type: TaskType | None = None
+            if task_type_raw:
+                try:
+                    task_type = TaskType(task_type_raw)
+                except ValueError:
+                    return JSONResponse(
+                        {"error": f"Unknown task_type: {task_type_raw}"}, status_code=400
+                    )
+            try:
+                estimated_tokens = int(request.query_params.get("estimated_tokens", "0"))
+            except ValueError:
+                return JSONResponse(
+                    {"error": "estimated_tokens must be an integer"}, status_code=400
+                )
+            assert self._dispatcher is not None
+            decision = self._dispatcher.explain_for_session(
+                sid,
+                intent=intent,
+                task_type=task_type,
+                estimated_tokens=estimated_tokens,
+            )
+            return JSONResponse(decision.to_dict())
+
         async def dispatch_recent(request: Request) -> JSONResponse:
             """Return the most recent dispatch decisions for operator debugging.
 
@@ -1706,6 +1767,7 @@ class GatewayServer:
             Route("/cluster/handoffs", cluster_handoffs),
             Route("/cluster/idle", idle_tasks_status),
             Route("/dispatch/recent", dispatch_recent),
+            Route("/dispatch/explain", dispatch_explain),
             Route("/conversations", conversations_list, methods=["GET"]),
             Route("/conversations", conversations_delete_all, methods=["DELETE"]),
             Route("/conversations/{conv_id}", conversation_detail, methods=["GET"]),

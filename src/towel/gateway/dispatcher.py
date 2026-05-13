@@ -165,6 +165,33 @@ class Dispatcher:
         self._record(decision)
         return decision
 
+    def explain_for_session(
+        self,
+        session_id: str,
+        intent: str = "task",
+        task_type: TaskType | None = None,
+        estimated_tokens: int = 0,
+        exclude: Iterable[str] | None = None,
+    ) -> DispatchDecision:
+        """Preview where a request *would* be routed without side effects.
+
+        Identical to :meth:`select_for_session` except: the decision is **not**
+        recorded in the history ring buffer, the dispatch log line is skipped,
+        and no preemption can happen (this mirrors the sync select path). Use
+        this from operator-facing tooling — e.g. a ``/dispatch/explain``
+        endpoint — so peeking at routing doesn't pollute the recent-decisions
+        history with synthetic entries.
+        """
+        excluded = set(exclude or ())
+        return self._layered_select(
+            session_id=session_id,
+            intent=intent,
+            task_type=task_type,
+            estimated_tokens=estimated_tokens,
+            excluded=excluded,
+            allow_preempt=False,
+        )
+
     async def async_select_for_session(
         self,
         session_id: str,
