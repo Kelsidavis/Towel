@@ -359,6 +359,10 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
           <h3>Recent dispatch decisions</h3>
           <div class="fleet-list" id="fleet-dispatch-list"></div>
         </div>
+        <div class="fleet-section">
+          <h3>Cached models across the fleet</h3>
+          <div class="fleet-list" id="fleet-inventory-list"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -440,6 +444,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   const fleetWorkersListEl = document.getElementById('fleet-workers-list');
   const fleetRoutesListEl = document.getElementById('fleet-routes-list');
   const fleetDispatchListEl = document.getElementById('fleet-dispatch-list');
+  const fleetInventoryListEl = document.getElementById('fleet-inventory-list');
 
   let ws = null, isStreaming = false;
   let currentAssistantEl = null, currentContentEl = null;
@@ -602,13 +607,15 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
 
   async function loadFleetState() {
     try {
-      const [health, workers, sessions, dispatch] = await Promise.all([
+      const [health, workers, sessions, dispatch, inventory] = await Promise.all([
         apiGet('/health'),
         apiGet('/workers'),
         apiGet('/sessions'),
-        // /dispatch/recent is new — tolerate older coordinators by falling
-        // through to an empty list rather than tripping Promise.all.
-        apiGet('/dispatch/recent?limit=10').catch(() => ({ decisions: [] }))
+        // /dispatch/recent and /fleet/inventory are recent additions —
+        // tolerate older coordinators by falling through to empty data
+        // rather than tripping Promise.all.
+        apiGet('/dispatch/recent?limit=10').catch(() => ({ decisions: [] })),
+        apiGet('/fleet/inventory').catch(() => ({ models: [] }))
       ]);
       fleetState = {
         workers: workers.workers || [],
@@ -618,7 +625,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         allTasks: workers.all_tasks || [],
         workerStats: health.workers || {},
         coordinator: health.coordinator || null,
-        dispatch: dispatch.decisions || []
+        dispatch: dispatch.decisions || [],
+        inventory: inventory.models || []
       };
       renderFleet();
     } catch (e) {
@@ -628,7 +636,38 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       if (fleetDispatchListEl) {
         fleetDispatchListEl.innerHTML = '<div class="fleet-empty">Dispatch log unavailable.</div>';
       }
+      if (fleetInventoryListEl) {
+        fleetInventoryListEl.innerHTML = '<div class="fleet-empty">Inventory unavailable.</div>';
+      }
     }
+  }
+
+  function renderFleetInventory() {
+    if (!fleetInventoryListEl) return;
+    const items = fleetState.inventory || [];
+    if (!items.length) {
+      fleetInventoryListEl.innerHTML =
+        '<div class="fleet-empty">No cached models reported by any worker.</div>';
+      return;
+    }
+    fleetInventoryListEl.innerHTML = items.map(function(m) {
+      const workerChips = (m.workers || []).map(function(w) {
+        return '<span class="fleet-badge">' + escHtml(w) + '</span>';
+      }).join('');
+      // The short-name strip handles long HF identifiers like
+      // "mlx-community/Llama-3.3-70B-Instruct-4bit" — show the tail by
+      // default, full id in the title.
+      const shortName = m.name.split('/').pop();
+      return `
+        <div class="fleet-card">
+          <div class="fleet-card-head">
+            <div class="fleet-card-title" title="${escHtml(m.name)}">${escHtml(shortName)}</div>
+            <div class="fleet-badge">${m.cached_count}× cached</div>
+          </div>
+          <div class="fleet-badges">${workerChips}</div>
+        </div>
+      `;
+    }).join('');
   }
 
   function renderFleet() {
@@ -741,6 +780,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     }
 
     renderDispatchDecisions();
+    renderFleetInventory();
 
     if (!fleetState.sessions.length) {
       fleetRoutesListEl.innerHTML = '<div class="fleet-empty">No active routes.</div>';
