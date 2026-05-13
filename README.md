@@ -10,6 +10,8 @@
 
 **Don't Panic.**
 
+> **Towel** — **T**ool **O**riented **W**orker **E**xecution **L**ink
+
 A local AI assistant powered by MLX. Private, fast, extensible, and local-first.
 Towel is best on Apple Silicon, and also supports Linux.
 

@@ -79,7 +79,8 @@ BANNER = rf"""
   | | | |_| | | | || |___  | |___
   |_|  \_____/_____|_______|_____|
 
-  Don't Panic.  v{__version__}
+  Tool Oriented Worker Execution Link  ·  v{__version__}
+  Don't Panic.
 """
 
 
