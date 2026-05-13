@@ -19,7 +19,8 @@ from towel.agent.context import estimate_output_reserve, maybe_compact_conversat
 from towel.agent.conversation import Conversation, Message, Role
 from towel.agent.events import AgentEvent
 from towel.agent.runtime import format_tool_feedback, tool_result_is_error
-from towel.agent.tool_parser import parse_tool_calls
+from towel.agent.tool_parser import ToolCall, parse_tool_calls
+from towel.agent.tools_payload import tools_as_openai_functions
 from towel.config import TowelConfig
 from towel.skills.registry import SkillRegistry
 
@@ -29,10 +30,33 @@ MAX_TOOL_ITERATIONS = 999
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
 
+def _normalize_ollama_tool_calls(raw_calls: list[dict[str, Any]]) -> list[ToolCall]:
+    """Convert Ollama's structured ``message.tool_calls`` entries to ``ToolCall``s.
+
+    Each Ollama entry looks like
+    ``{"id": "...", "function": {"name": ..., "arguments": {...}}}``.
+    Arguments are already parsed into a dict by Ollama — no JSON-decoding needed.
+    """
+    calls: list[ToolCall] = []
+    for entry in raw_calls or []:
+        fn = entry.get("function") or {}
+        name = fn.get("name")
+        args = fn.get("arguments") or {}
+        if not isinstance(args, dict):
+            # Defensive: some Ollama builds return a JSON string for arguments.
+            try:
+                args = json.loads(args) if isinstance(args, str) else {}
+            except json.JSONDecodeError:
+                args = {}
+        if name:
+            calls.append(ToolCall(name=name, arguments=args, raw=json.dumps(entry)))
+    return calls
+
+
 @dataclass
 class OllamaGenerationResult:
     text: str
-    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    tool_calls: list[ToolCall] = field(default_factory=list)
     prompt_tokens: int = 0
     completion_tokens: int = 0
 
@@ -62,6 +86,8 @@ class OllamaRuntime:
         self.project_context: str | None = None  # Override from coordinator
         self.ollama_url = ollama_url.rstrip("/")
         self._loaded = False
+        self._native_tools_supported: bool | None = None
+        self._last_stream_tool_calls: list[ToolCall] = []
         self._cancel_flag = False
 
     def cancel(self) -> None:
@@ -96,11 +122,34 @@ class OllamaRuntime:
                     "Is `ollama serve` running?"
                 ) from exc
 
-        log.info(f"Ollama runtime ready (model: {model}, url: {self.ollama_url})")
+        self._native_tools_supported = await self._detect_native_tools_support(model)
+        log.info(
+            "Ollama runtime ready (model: %s, url: %s, native tools: %s)",
+            model,
+            self.ollama_url,
+            "enabled" if self._native_tools_supported else "disabled (fallback to text)",
+        )
         self._loaded = True
 
-    def _build_system_prompt(self) -> str:
-        """Build system prompt with identity, context, and tool instructions."""
+    async def _detect_native_tools_support(self, model: str) -> bool:
+        """Probe Ollama's /api/show for the ``tools`` capability on this model."""
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(f"{self.ollama_url}/api/show", json={"name": model})
+                resp.raise_for_status()
+                caps = resp.json().get("capabilities") or []
+                return "tools" in caps
+        except Exception as exc:
+            log.debug("Tool capability probe failed: %s", exc)
+            return False
+
+    def _build_system_prompt(self, include_tools_section: bool = True) -> str:
+        """Build system prompt with identity, context, and tool instructions.
+
+        When ``include_tools_section`` is False the per-tool listing and call-format
+        spec are dropped — used when Ollama's native ``tools`` field is in play and
+        the chat template (Qwen3, Llama 3.1+, etc.) renders the tools itself.
+        """
         system = self.config.identity + (
             "\n\nAfter using a tool, always answer the user's original question "
             "based on the tool result. Do not just acknowledge the tool output — "
@@ -123,34 +172,51 @@ class OllamaRuntime:
 
         tools = self.skills.tool_definitions()
         if tools:
-            tool_lines = []
-            for t in tools:
-                params = t.get("parameters", {})
-                props = params.get("properties", {})
-                if props:
-                    param_names = ", ".join(props.keys())
-                    tool_lines.append(f"- {t['name']}({param_names}): {t['description']}")
-                else:
-                    tool_lines.append(f"- {t['name']}(): {t['description']}")
+            if include_tools_section:
+                tool_lines = []
+                for t in tools:
+                    params = t.get("parameters", {})
+                    props = params.get("properties", {})
+                    if props:
+                        param_names = ", ".join(props.keys())
+                        tool_lines.append(f"- {t['name']}({param_names}): {t['description']}")
+                    else:
+                        tool_lines.append(f"- {t['name']}(): {t['description']}")
 
-            tool_names = [t["name"] for t in tools]
-            system += (
-                "\n\n# Tools\n\n"
-                "You may call one or more functions to assist with the user query.\n\n"
-                "Available tools:\n" + "\n".join(tool_lines) + "\n\n"
-                "For each function call, return a json object within "
-                "<tool_call></tool_call> tags:\n"
-                "<tool_call>\n"
-                '{"name": <function-name>, "arguments": <args-json-object>}\n'
-                "</tool_call>\n\n"
-                f"The ONLY supported tool names are: {', '.join(tool_names)}\n\n"
-                "Only call listed tools. Do NOT invent function names."
-            )
+                tool_names = [t["name"] for t in tools]
+                system += (
+                    "\n\n# Tools\n\n"
+                    "You may call one or more functions to assist with the user query.\n\n"
+                    "Available tools:\n" + "\n".join(tool_lines) + "\n\n"
+                    "For each function call, return a json object within "
+                    "<tool_call></tool_call> tags:\n"
+                    "<tool_call>\n"
+                    '{"name": <function-name>, "arguments": <args-json-object>}\n'
+                    "</tool_call>\n\n"
+                    f"The ONLY supported tool names are: {', '.join(tool_names)}\n\n"
+                    "Only call listed tools. Do NOT invent function names."
+                )
+            else:
+                system += (
+                    "\n\n# Tool-use rules\n\n"
+                    "The available tools are provided by the chat template's Tools "
+                    "section below. Use them when they help answer the user.\n\n"
+                    "IMPORTANT:\n"
+                    "- Only call tools from the provided list. Do NOT invent or guess "
+                    "tool names.\n"
+                    "- When using a tool, prefer emitting just the tool call instead of "
+                    "narrating that you are about to check something.\n"
+                    "- After tool results arrive, give the concrete answer or make one "
+                    "corrected retry. Do not repeat vague status updates.\n"
+                    "- If no tool is needed, respond directly without tool calls."
+                )
         return system
 
     def _build_messages(self, conversation: Conversation) -> list[dict[str, str]]:
         """Convert conversation to Ollama chat messages format."""
-        system_content = self._build_system_prompt()
+        system_content = self._build_system_prompt(
+            include_tools_section=not bool(self._native_tools_supported)
+        )
         existing_messages = [
             {"role": msg.role.value, "content": msg.content} for msg in conversation.messages
         ]
@@ -178,12 +244,18 @@ class OllamaRuntime:
 
     def build_inference_request(self, conversation: Conversation) -> dict[str, Any]:
         """Build a worker-safe Ollama chat payload for this conversation."""
-        return {
+        use_native = bool(self._native_tools_supported)
+        request: dict[str, Any] = {
             "mode": "ollama_chat",
-            "system": self._build_system_prompt(),
+            "system": self._build_system_prompt(include_tools_section=not use_native),
             "messages": self._build_messages(conversation),
             "model": self.config.model.name,
         }
+        if use_native:
+            native_tools = tools_as_openai_functions(self.skills.tool_definitions())
+            if native_tools:
+                request["tools"] = native_tools
+        return request
 
     async def generate(self, conversation: Conversation) -> OllamaGenerationResult:
         if not self._loaded:
@@ -204,7 +276,7 @@ class OllamaRuntime:
         sys_msg = [{"role": "system", "content": system}]
         messages = sys_msg + raw_messages if system else raw_messages
 
-        payload = {
+        payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "stream": False,
@@ -214,15 +286,18 @@ class OllamaRuntime:
                 "num_predict": self.config.model.max_tokens,
             },
         }
+        if request.get("tools"):
+            payload["tools"] = request["tools"]
 
         async with httpx.AsyncClient(timeout=300.0) as client:
             resp = await client.post(f"{self.ollama_url}/api/chat", json=payload)
             resp.raise_for_status()
             data = resp.json()
 
-        text = data.get("message", {}).get("content", "")
+        message = data.get("message", {}) or {}
         return OllamaGenerationResult(
-            text=text,
+            text=message.get("content", "") or "",
+            tool_calls=_normalize_ollama_tool_calls(message.get("tool_calls") or []),
             prompt_tokens=data.get("prompt_eval_count", 0),
             completion_tokens=data.get("eval_count", 0),
         )
@@ -247,7 +322,7 @@ class OllamaRuntime:
         sys_msg = [{"role": "system", "content": system}]
         messages = sys_msg + raw_messages if system else raw_messages
 
-        payload = {
+        payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "stream": True,
@@ -257,7 +332,10 @@ class OllamaRuntime:
                 "num_predict": self.config.model.max_tokens,
             },
         }
+        if request.get("tools"):
+            payload["tools"] = request["tools"]
 
+        self._last_stream_tool_calls = []
         async with httpx.AsyncClient(timeout=300.0) as client:
             async with client.stream("POST", f"{self.ollama_url}/api/chat", json=payload) as resp:
                 resp.raise_for_status()
@@ -270,16 +348,32 @@ class OllamaRuntime:
                         chunk = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    token = chunk.get("message", {}).get("content", "")
+                    chunk_message = chunk.get("message") or {}
+                    token = chunk_message.get("content", "") or ""
                     if token:
                         yield token
+                    chunk_tcs = chunk_message.get("tool_calls") or []
+                    if chunk_tcs:
+                        # Ollama emits tool_calls in the final chunk (done=true).
+                        # Stash them so step_streaming can pick them up after the
+                        # stream finishes — the AsyncIterator[str] contract can't
+                        # carry structured payloads directly.
+                        self._last_stream_tool_calls.extend(
+                            _normalize_ollama_tool_calls(chunk_tcs)
+                        )
                     if chunk.get("done"):
                         break
 
     async def step(self, conversation: Conversation) -> Message:
         for _iteration in range(MAX_TOOL_ITERATIONS):
             result = await self.generate(conversation)
-            tool_calls, remaining_text = parse_tool_calls(result.text)
+            # Native tool channel returns structured tool_calls; only fall back
+            # to text parsing if the response was plain text.
+            if result.tool_calls:
+                tool_calls = result.tool_calls
+                remaining_text = result.text
+            else:
+                tool_calls, remaining_text = parse_tool_calls(result.text)
 
             if not tool_calls:
                 return Message(
@@ -334,7 +428,14 @@ class OllamaRuntime:
                 self._cancel_flag = False
                 return
 
-            tool_calls, remaining_text = parse_tool_calls(full_text)
+            # Prefer structured tool_calls captured during streaming; otherwise
+            # fall back to parsing tool-call markers out of the accumulated text.
+            if self._last_stream_tool_calls:
+                tool_calls = list(self._last_stream_tool_calls)
+                self._last_stream_tool_calls = []
+                remaining_text = full_text
+            else:
+                tool_calls, remaining_text = parse_tool_calls(full_text)
 
             if not tool_calls:
                 conversation.add(Role.ASSISTANT, full_text)

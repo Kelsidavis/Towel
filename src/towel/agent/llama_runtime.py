@@ -26,7 +26,8 @@ from towel.agent.context import estimate_output_reserve, maybe_compact_conversat
 from towel.agent.conversation import Conversation, Message, Role
 from towel.agent.events import AgentEvent
 from towel.agent.runtime import format_tool_feedback, tool_result_is_error
-from towel.agent.tool_parser import parse_tool_calls
+from towel.agent.tool_parser import ToolCall, parse_tool_calls
+from towel.agent.tools_payload import tools_as_openai_functions
 from towel.config import TowelConfig
 from towel.skills.registry import SkillRegistry
 
@@ -36,10 +37,37 @@ MAX_TOOL_ITERATIONS = 999
 DEFAULT_LLAMA_URL = "http://localhost:8080"
 
 
+def _normalize_openai_tool_calls(raw_calls: list[dict[str, Any]]) -> list[ToolCall]:
+    """Convert OpenAI-format ``tool_calls`` entries to ``ToolCall`` objects.
+
+    The OpenAI chat-completions shape is
+    ``{"id": "...", "type": "function", "function": {"name": ..., "arguments": "..."}}``
+    where ``arguments`` is a JSON-encoded string. llama-server (and OpenAI itself)
+    emit this shape from ``/v1/chat/completions`` when a model uses tools.
+    """
+    calls: list[ToolCall] = []
+    for entry in raw_calls or []:
+        fn = entry.get("function") or {}
+        name = fn.get("name")
+        args_raw = fn.get("arguments")
+        if isinstance(args_raw, dict):
+            args = args_raw
+        elif isinstance(args_raw, str):
+            try:
+                args = json.loads(args_raw) if args_raw else {}
+            except json.JSONDecodeError:
+                args = {}
+        else:
+            args = {}
+        if name:
+            calls.append(ToolCall(name=name, arguments=args, raw=json.dumps(entry)))
+    return calls
+
+
 @dataclass
 class LlamaGenerationResult:
     text: str
-    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    tool_calls: list[ToolCall] = field(default_factory=list)
     prompt_tokens: int = 0
     completion_tokens: int = 0
 
@@ -74,6 +102,11 @@ class LlamaRuntime:
         self.llama_model = llama_model
         self.auto_start = auto_start
         self._loaded = False
+        # llama-server (with --jinja) renders tools via the model's chat template.
+        # We always send tools=[...] when any are registered; servers/models that
+        # ignore the field simply return plain text and the tool_parser handles it.
+        self._native_tools_supported: bool = True
+        self._last_stream_tool_calls: list[ToolCall] = []
         self._cancel_flag = False
         self._managed_server: Any | None = None
 
@@ -165,8 +198,13 @@ class LlamaRuntime:
             self._managed_server.stop()
             self._managed_server = None
 
-    def _build_system_prompt(self) -> str:
-        """Build system prompt with identity, context, and tool instructions."""
+    def _build_system_prompt(self, include_tools_section: bool = True) -> str:
+        """Build system prompt with identity, context, and tool instructions.
+
+        When ``include_tools_section`` is False, the per-tool listing and call-format
+        spec are dropped — used when llama-server is rendering the tools list
+        natively via the model's chat template.
+        """
         system = self.config.identity + (
             "\n\nAfter using a tool, always answer the user's original question "
             "based on the tool result. Do not just acknowledge the tool output — "
@@ -189,34 +227,51 @@ class LlamaRuntime:
 
         tools = self.skills.tool_definitions()
         if tools:
-            tool_lines = []
-            for t in tools:
-                params = t.get("parameters", {})
-                props = params.get("properties", {})
-                if props:
-                    param_names = ", ".join(props.keys())
-                    tool_lines.append(f"- {t['name']}({param_names}): {t['description']}")
-                else:
-                    tool_lines.append(f"- {t['name']}(): {t['description']}")
+            if include_tools_section:
+                tool_lines = []
+                for t in tools:
+                    params = t.get("parameters", {})
+                    props = params.get("properties", {})
+                    if props:
+                        param_names = ", ".join(props.keys())
+                        tool_lines.append(f"- {t['name']}({param_names}): {t['description']}")
+                    else:
+                        tool_lines.append(f"- {t['name']}(): {t['description']}")
 
-            tool_names = [t["name"] for t in tools]
-            system += (
-                "\n\n# Tools\n\n"
-                "You may call one or more functions to assist with the user query.\n\n"
-                "Available tools:\n" + "\n".join(tool_lines) + "\n\n"
-                "For each function call, return a json object within "
-                "<tool_call></tool_call> tags:\n"
-                "<tool_call>\n"
-                '{"name": <function-name>, "arguments": <args-json-object>}\n'
-                "</tool_call>\n\n"
-                f"The ONLY supported tool names are: {', '.join(tool_names)}\n\n"
-                "Only call listed tools. Do NOT invent function names."
-            )
+                tool_names = [t["name"] for t in tools]
+                system += (
+                    "\n\n# Tools\n\n"
+                    "You may call one or more functions to assist with the user query.\n\n"
+                    "Available tools:\n" + "\n".join(tool_lines) + "\n\n"
+                    "For each function call, return a json object within "
+                    "<tool_call></tool_call> tags:\n"
+                    "<tool_call>\n"
+                    '{"name": <function-name>, "arguments": <args-json-object>}\n'
+                    "</tool_call>\n\n"
+                    f"The ONLY supported tool names are: {', '.join(tool_names)}\n\n"
+                    "Only call listed tools. Do NOT invent function names."
+                )
+            else:
+                system += (
+                    "\n\n# Tool-use rules\n\n"
+                    "The available tools are provided by the chat template's Tools "
+                    "section below. Use them when they help answer the user.\n\n"
+                    "IMPORTANT:\n"
+                    "- Only call tools from the provided list. Do NOT invent or guess "
+                    "tool names.\n"
+                    "- When using a tool, prefer emitting just the tool call instead of "
+                    "narrating that you are about to check something.\n"
+                    "- After tool results arrive, give the concrete answer or make one "
+                    "corrected retry. Do not repeat vague status updates.\n"
+                    "- If no tool is needed, respond directly without tool calls."
+                )
         return system
 
     def _build_messages(self, conversation: Conversation) -> list[dict[str, str]]:
         """Convert conversation to OpenAI chat messages format."""
-        system_content = self._build_system_prompt()
+        system_content = self._build_system_prompt(
+            include_tools_section=not self._native_tools_supported
+        )
         existing_messages = [
             {"role": msg.role.value, "content": msg.content} for msg in conversation.messages
         ]
@@ -244,12 +299,18 @@ class LlamaRuntime:
 
     def build_inference_request(self, conversation: Conversation) -> dict[str, Any]:
         """Build a worker-safe payload for this conversation."""
-        return {
+        use_native = self._native_tools_supported
+        request: dict[str, Any] = {
             "mode": "llama_chat",
-            "system": self._build_system_prompt(),
+            "system": self._build_system_prompt(include_tools_section=not use_native),
             "messages": self._build_messages(conversation),
             "model": self.config.model.name,
         }
+        if use_native:
+            native_tools = tools_as_openai_functions(self.skills.tool_definitions())
+            if native_tools:
+                request["tools"] = native_tools
+        return request
 
     async def generate(self, conversation: Conversation) -> LlamaGenerationResult:
         if not self._loaded:
@@ -272,7 +333,7 @@ class LlamaRuntime:
             messages.append({"role": "system", "content": system})
         messages.extend(raw_messages)
 
-        payload = {
+        payload: dict[str, Any] = {
             "messages": messages,
             "stream": False,
             "temperature": request.get("temperature", self.config.model.temperature),
@@ -281,6 +342,8 @@ class LlamaRuntime:
         }
         if "reasoning_effort" in request:
             payload["reasoning_effort"] = request["reasoning_effort"]
+        if request.get("tools"):
+            payload["tools"] = request["tools"]
 
         async with httpx.AsyncClient(timeout=300.0) as client:
             resp = await client.post(
@@ -289,10 +352,12 @@ class LlamaRuntime:
             resp.raise_for_status()
             data = resp.json()
 
-        text = data["choices"][0]["message"]["content"]
+        message = data["choices"][0]["message"]
+        text = message.get("content") or ""
         usage = data.get("usage", {})
         return LlamaGenerationResult(
             text=text,
+            tool_calls=_normalize_openai_tool_calls(message.get("tool_calls") or []),
             prompt_tokens=usage.get("prompt_tokens", 0),
             completion_tokens=usage.get("completion_tokens", 0),
         )
@@ -319,7 +384,7 @@ class LlamaRuntime:
             messages.append({"role": "system", "content": system})
         messages.extend(raw_messages)
 
-        payload = {
+        payload: dict[str, Any] = {
             "messages": messages,
             "stream": True,
             "temperature": request.get("temperature", self.config.model.temperature),
@@ -328,7 +393,14 @@ class LlamaRuntime:
         }
         if "reasoning_effort" in request:
             payload["reasoning_effort"] = request["reasoning_effort"]
+        if request.get("tools"):
+            payload["tools"] = request["tools"]
 
+        self._last_stream_tool_calls = []
+        # Accumulator for streamed tool_call deltas, keyed by index. Each entry
+        # tracks {"name": str, "arguments": str} where ``arguments`` is built up
+        # as a JSON-encoded string across chunks (the OpenAI streaming contract).
+        tc_accum: dict[int, dict[str, str]] = {}
         async with httpx.AsyncClient(timeout=300.0) as client:
             async with client.stream(
                 "POST", f"{self.llama_url}/v1/chat/completions", json=payload
@@ -353,11 +425,33 @@ class LlamaRuntime:
                     token = delta.get("content", "")
                     if token:
                         yield token
+                    for tc_delta in delta.get("tool_calls") or []:
+                        idx = tc_delta.get("index", 0)
+                        slot = tc_accum.setdefault(idx, {"name": "", "arguments": ""})
+                        fn = tc_delta.get("function") or {}
+                        if fn.get("name"):
+                            slot["name"] = fn["name"]
+                        if fn.get("arguments"):
+                            slot["arguments"] += fn["arguments"]
+        # Reassemble any accumulated tool calls into the OpenAI-format expected
+        # by the shared normalizer, then publish for step_streaming to consume.
+        if tc_accum:
+            self._last_stream_tool_calls = _normalize_openai_tool_calls(
+                [
+                    {"function": {"name": s["name"], "arguments": s["arguments"]}}
+                    for s in tc_accum.values()
+                    if s["name"]
+                ]
+            )
 
     async def step(self, conversation: Conversation) -> Message:
         for _iteration in range(MAX_TOOL_ITERATIONS):
             result = await self.generate(conversation)
-            tool_calls, remaining_text = parse_tool_calls(result.text)
+            if result.tool_calls:
+                tool_calls = result.tool_calls
+                remaining_text = result.text
+            else:
+                tool_calls, remaining_text = parse_tool_calls(result.text)
 
             if not tool_calls:
                 return Message(
@@ -412,7 +506,12 @@ class LlamaRuntime:
                 self._cancel_flag = False
                 return
 
-            tool_calls, remaining_text = parse_tool_calls(full_text)
+            if self._last_stream_tool_calls:
+                tool_calls = list(self._last_stream_tool_calls)
+                self._last_stream_tool_calls = []
+                remaining_text = full_text
+            else:
+                tool_calls, remaining_text = parse_tool_calls(full_text)
 
             if not tool_calls:
                 conversation.add(Role.ASSISTANT, full_text)

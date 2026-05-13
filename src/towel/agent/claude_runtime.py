@@ -20,13 +20,42 @@ from towel.agent.conversation import Conversation, Message, Role
 from towel.agent.events import AgentEvent
 from towel.agent.instance_lock import acquire_runtime_lock
 from towel.agent.runtime import format_tool_feedback, tool_result_is_error
-from towel.agent.tool_parser import parse_tool_calls
+from towel.agent.tool_parser import ToolCall, parse_tool_calls
+from towel.agent.tools_payload import tools_as_anthropic
 from towel.config import TowelConfig
 from towel.skills.registry import SkillRegistry
 
 log = logging.getLogger("towel.agent.claude")
 
 MAX_TOOL_ITERATIONS = 999
+
+
+def _extract_anthropic_tool_calls(content_blocks: Any) -> list[ToolCall]:
+    """Extract ``tool_use`` content blocks from an Anthropic Messages response.
+
+    Each ``tool_use`` block carries ``id`` (the Anthropic ``tool_use_id`` we
+    would need for a structured tool_result), ``name``, and ``input`` (an
+    already-decoded dict of arguments).
+    """
+    calls: list[ToolCall] = []
+    for block in content_blocks or []:
+        block_type = getattr(block, "type", None) or (
+            block.get("type") if isinstance(block, dict) else None
+        )
+        if block_type != "tool_use":
+            continue
+        name = getattr(block, "name", None) or (
+            block.get("name") if isinstance(block, dict) else None
+        )
+        args = getattr(block, "input", None) or (
+            block.get("input") if isinstance(block, dict) else None
+        ) or {}
+        if not isinstance(args, dict):
+            args = {}
+        if name:
+            calls.append(ToolCall(name=name, arguments=args, raw=str(block)))
+    return calls
+
 
 # Model alias map — short names to full model IDs
 MODEL_ALIASES: dict[str, str] = {
@@ -98,7 +127,7 @@ class ClaudeGenerationResult:
     """Result of a single Claude API generation."""
 
     text: str
-    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    tool_calls: list[ToolCall] = field(default_factory=list)
     input_tokens: int = 0
     output_tokens: int = 0
 
@@ -129,6 +158,10 @@ class ClaudeCodeRuntime:
         self.model = _resolve_model(model)
         self._client: Any = None  # anthropic.AsyncAnthropic
         self._loaded = False
+        # Anthropic Messages API has first-class tool support; always enable it
+        # when any tools are registered.
+        self._native_tools_supported: bool = True
+        self._last_stream_tool_calls: list[ToolCall] = []
         self._cancel_flag = False
 
     def cancel(self) -> None:
@@ -165,8 +198,13 @@ class ClaudeCodeRuntime:
         log.info(f"Claude API client ready (model: {self.model})")
         self._loaded = True
 
-    def _build_system_prompt(self) -> str:
-        """Build system prompt with towel's identity, context, and tool instructions."""
+    def _build_system_prompt(self, include_tools_section: bool = True) -> str:
+        """Build system prompt with towel's identity, context, and tool instructions.
+
+        When ``include_tools_section`` is False, the per-tool listing and call-format
+        spec are omitted — used when the Anthropic ``tools=`` parameter is in play,
+        in which case Claude already knows the tool schemas structurally.
+        """
         # Billing attribution header — injected as a system prompt block,
         # not an HTTP header. This is how Claude Code tells the API to bill
         # the request against the Max subscription allowance.
@@ -195,42 +233,56 @@ class ClaudeCodeRuntime:
             if memory_block:
                 system += memory_block
 
-        # Tool instructions — Claude will emit <tool_call> tags that we parse
         tools = self.skills.tool_definitions()
         if tools:
-            tool_lines = []
-            for t in tools:
-                params = t.get("parameters", {})
-                props = params.get("properties", {})
-                if props:
-                    param_names = ", ".join(props.keys())
-                    tool_lines.append(f"- {t['name']}({param_names}): {t['description']}")
-                else:
-                    tool_lines.append(f"- {t['name']}(): {t['description']}")
+            if include_tools_section:
+                tool_lines = []
+                for t in tools:
+                    params = t.get("parameters", {})
+                    props = params.get("properties", {})
+                    if props:
+                        param_names = ", ".join(props.keys())
+                        tool_lines.append(f"- {t['name']}({param_names}): {t['description']}")
+                    else:
+                        tool_lines.append(f"- {t['name']}(): {t['description']}")
 
-            tool_names = [t["name"] for t in tools]
-            tool_name_list = ", ".join(tool_names)
+                tool_names = [t["name"] for t in tools]
+                tool_name_list = ", ".join(tool_names)
 
-            system += (
-                "\n\n# Tools\n\n"
-                "You may call one or more functions to assist with the user query.\n\n"
-                "Available tools:\n" + "\n".join(tool_lines) + "\n\n"
-                "For each function call, return a json object with function name and "
-                "arguments within <tool_call></tool_call> XML tags:\n"
-                "<tool_call>\n"
-                '{"name": <function-name>, "arguments": <args-json-object>}\n'
-                "</tool_call>\n\n"
-                f"The ONLY supported tool names are: {tool_name_list}\n\n"
-                "IMPORTANT:\n"
-                "- Only call functions from the list above. Do NOT invent or guess "
-                "function names. If a tool you want is not listed, it does not exist.\n"
-                "- Always use the exact <tool_call> format shown above.\n"
-                "- When using a tool, prefer emitting just the tool call instead of "
-                "narrating that you are about to check something.\n"
-                "- After tool results arrive, either give the concrete answer or make "
-                "one corrected retry. Do not repeat vague status updates.\n"
-                "- If no tool is needed, respond directly without tool calls."
-            )
+                system += (
+                    "\n\n# Tools\n\n"
+                    "You may call one or more functions to assist with the user query.\n\n"
+                    "Available tools:\n" + "\n".join(tool_lines) + "\n\n"
+                    "For each function call, return a json object with function name and "
+                    "arguments within <tool_call></tool_call> XML tags:\n"
+                    "<tool_call>\n"
+                    '{"name": <function-name>, "arguments": <args-json-object>}\n'
+                    "</tool_call>\n\n"
+                    f"The ONLY supported tool names are: {tool_name_list}\n\n"
+                    "IMPORTANT:\n"
+                    "- Only call functions from the list above. Do NOT invent or guess "
+                    "function names. If a tool you want is not listed, it does not exist.\n"
+                    "- Always use the exact <tool_call> format shown above.\n"
+                    "- When using a tool, prefer emitting just the tool call instead of "
+                    "narrating that you are about to check something.\n"
+                    "- After tool results arrive, either give the concrete answer or make "
+                    "one corrected retry. Do not repeat vague status updates.\n"
+                    "- If no tool is needed, respond directly without tool calls."
+                )
+            else:
+                system += (
+                    "\n\n# Tool-use rules\n\n"
+                    "You have access to a set of tools provided via the Anthropic "
+                    "tools API. Use them when they help answer the user.\n\n"
+                    "IMPORTANT:\n"
+                    "- Only call the tools you have been given. Do NOT invent or "
+                    "guess tool names.\n"
+                    "- When using a tool, prefer just calling it instead of narrating "
+                    "that you are about to check something.\n"
+                    "- After tool results arrive, give the concrete answer or make "
+                    "one corrected retry. Do not repeat vague status updates.\n"
+                    "- If no tool is needed, respond directly without tool calls."
+                )
         return system
 
     def _build_messages(self, conversation: Conversation) -> list[dict[str, str]]:
@@ -244,7 +296,9 @@ class ClaudeCodeRuntime:
         )
         maybe_compact_conversation(
             conversation,
-            system_content=self._build_system_prompt(),
+            system_content=self._build_system_prompt(
+                include_tools_section=not self._native_tools_supported
+            ),
             context_window=self.config.model.context_window,
             max_output_tokens=output_reserve,
         )
@@ -263,11 +317,17 @@ class ClaudeCodeRuntime:
 
     def build_inference_request(self, conversation: Conversation) -> dict[str, Any]:
         """Build a worker-safe Anthropic payload for this conversation."""
-        return {
+        use_native = self._native_tools_supported
+        request: dict[str, Any] = {
             "mode": "anthropic_messages",
-            "system": self._build_system_prompt(),
+            "system": self._build_system_prompt(include_tools_section=not use_native),
             "messages": self._build_messages(conversation),
         }
+        if use_native:
+            native_tools = tools_as_anthropic(self.skills.tool_definitions())
+            if native_tools:
+                request["tools"] = native_tools
+        return request
 
     async def generate(self, conversation: Conversation) -> ClaudeGenerationResult:
         """Run a single generation pass (non-streaming)."""
@@ -284,20 +344,25 @@ class ClaudeCodeRuntime:
         if request.get("mode") != "anthropic_messages":
             raise ValueError(f"Unsupported inference mode: {request.get('mode')}")
 
-        response = await self._client.messages.create(
-            model=self.model,
-            max_tokens=self.config.model.max_tokens,
-            system=request["system"],
-            messages=request["messages"],
-        )
+        create_kwargs: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": self.config.model.max_tokens,
+            "system": request["system"],
+            "messages": request["messages"],
+        }
+        if request.get("tools"):
+            create_kwargs["tools"] = request["tools"]
+
+        response = await self._client.messages.create(**create_kwargs)
 
         text = ""
         for block in response.content:
-            if block.type == "text":
+            if getattr(block, "type", None) == "text":
                 text += block.text
 
         return ClaudeGenerationResult(
             text=text,
+            tool_calls=_extract_anthropic_tool_calls(response.content),
             input_tokens=response.usage.input_tokens,
             output_tokens=response.usage.output_tokens,
         )
@@ -318,22 +383,40 @@ class ClaudeCodeRuntime:
         if request.get("mode") != "anthropic_messages":
             raise ValueError(f"Unsupported inference mode: {request.get('mode')}")
 
-        async with self._client.messages.stream(
-            model=self.model,
-            max_tokens=self.config.model.max_tokens,
-            system=request["system"],
-            messages=request["messages"],
-        ) as stream:
+        stream_kwargs: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": self.config.model.max_tokens,
+            "system": request["system"],
+            "messages": request["messages"],
+        }
+        if request.get("tools"):
+            stream_kwargs["tools"] = request["tools"]
+
+        self._last_stream_tool_calls = []
+        async with self._client.messages.stream(**stream_kwargs) as stream:
             async for text in stream.text_stream:
                 if self._cancel_flag:
                     break
                 yield text
+            # After text streaming ends (or was cancelled), reconcile the final
+            # message to capture any tool_use blocks Claude emitted alongside
+            # the text. The SDK aggregates them into ``final.content``.
+            try:
+                final = await stream.get_final_message()
+            except Exception as exc:
+                log.debug("Anthropic stream.get_final_message failed: %s", exc)
+                return
+            self._last_stream_tool_calls = _extract_anthropic_tool_calls(final.content)
 
     async def step(self, conversation: Conversation) -> Message:
         """Run one full agent step: generate -> maybe call tools -> return response."""
         for iteration in range(MAX_TOOL_ITERATIONS):
             result = await self.generate(conversation)
-            tool_calls, remaining_text = parse_tool_calls(result.text)
+            if result.tool_calls:
+                tool_calls = result.tool_calls
+                remaining_text = result.text
+            else:
+                tool_calls, remaining_text = parse_tool_calls(result.text)
 
             if not tool_calls:
                 return Message(
@@ -392,7 +475,12 @@ class ClaudeCodeRuntime:
                 self._cancel_flag = False
                 return
 
-            tool_calls, remaining_text = parse_tool_calls(full_text)
+            if self._last_stream_tool_calls:
+                tool_calls = list(self._last_stream_tool_calls)
+                self._last_stream_tool_calls = []
+                remaining_text = full_text
+            else:
+                tool_calls, remaining_text = parse_tool_calls(full_text)
 
             if not tool_calls:
                 conversation.add(Role.ASSISTANT, full_text)

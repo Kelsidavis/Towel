@@ -16,6 +16,7 @@ from towel.agent.conversation import Conversation, Message, Role
 from towel.agent.events import AgentEvent
 from towel.agent.instance_lock import acquire_runtime_lock
 from towel.agent.tool_parser import parse_tool_calls
+from towel.agent.tools_payload import tools_as_openai_functions
 from towel.config import TowelConfig
 from towel.skills.registry import SkillRegistry
 
@@ -105,6 +106,7 @@ class AgentRuntime:
         self._model: Any = None
         self._tokenizer: Any = None
         self._loaded = False
+        self._native_tools_supported: bool | None = None
         self._cancel: asyncio.Event = asyncio.Event()
         # Single-thread executor to serialize all MLX Metal operations.
         # Metal command buffers are not thread-safe — concurrent access
@@ -130,6 +132,11 @@ class AgentRuntime:
         loop = asyncio.get_event_loop()
         self._model, self._tokenizer = await loop.run_in_executor(
             self._mlx_executor, self._load_model_sync
+        )
+        self._native_tools_supported = self._detect_native_tools_support()
+        log.info(
+            "Native tools channel: %s",
+            "enabled" if self._native_tools_supported else "disabled (fallback to text)",
         )
         self._loaded = True
 
@@ -431,8 +438,14 @@ class AgentRuntime:
             metadata={"tps": 0, "tokens": total_tokens, "max_iterations": True},
         )
 
-    def _build_system_content(self) -> str:
-        """Build the system prompt including project context, memory, and tool definitions."""
+    def _build_system_content(self, include_tools_section: bool = True) -> str:
+        """Build the system prompt including project context, memory, and tool definitions.
+
+        When ``include_tools_section`` is False, the per-tool listing and call-format
+        spec are omitted — used when the tokenizer's chat template natively renders
+        the tool list via the ``tools=`` kwarg (e.g. Qwen3, Llama 3.1+, Hermes).
+        Behavioral guardrails (no inventing tools, terse calls, single retry) remain.
+        """
         system = self.config.identity + (
             "\n\nAfter using a tool, always answer the user's original question "
             "based on the tool result. Do not just acknowledge the tool output — "
@@ -458,42 +471,95 @@ class AgentRuntime:
                 system += memory_block
         tools = self.skills.tool_definitions()
         if tools:
-            # Compact format: name + description only. Full parameter schemas
-            # bloat the prompt (~330 tools) and slow inference significantly.
-            tool_lines = []
-            for t in tools:
-                params = t.get("parameters", {})
-                props = params.get("properties", {})
-                if props:
-                    param_names = ", ".join(props.keys())
-                    tool_lines.append(f"- {t['name']}({param_names}): {t['description']}")
-                else:
-                    tool_lines.append(f"- {t['name']}(): {t['description']}")
+            if include_tools_section:
+                # Compact format: name + description only. Full parameter schemas
+                # bloat the prompt (~330 tools) and slow inference significantly.
+                tool_lines = []
+                for t in tools:
+                    params = t.get("parameters", {})
+                    props = params.get("properties", {})
+                    if props:
+                        param_names = ", ".join(props.keys())
+                        tool_lines.append(f"- {t['name']}({param_names}): {t['description']}")
+                    else:
+                        tool_lines.append(f"- {t['name']}(): {t['description']}")
 
-            tool_names = [t["name"] for t in tools]
-            tool_name_list = ", ".join(tool_names)
+                tool_names = [t["name"] for t in tools]
+                tool_name_list = ", ".join(tool_names)
 
-            system += (
-                "\n\n# Tools\n\n"
-                "You may call one or more functions to assist with the user query.\n\n"
-                "Available tools:\n" + "\n".join(tool_lines) + "\n\n"
-                "For each function call, return a json object with function name and "
-                "arguments within <tool_call></tool_call> XML tags:\n"
-                "<tool_call>\n"
-                '{"name": <function-name>, "arguments": <args-json-object>}\n'
-                "</tool_call>\n\n"
-                f"The ONLY supported tool names are: {tool_name_list}\n\n"
-                "IMPORTANT:\n"
-                "- Only call functions from the list above. Do NOT invent or guess "
-                "function names. If a tool you want is not listed, it does not exist.\n"
-                "- Always use the exact <tool_call> format shown above.\n"
-                "- When using a tool, prefer emitting just the tool call instead of "
-                "narrating that you are about to check something.\n"
-                "- After tool results arrive, either give the concrete answer or make "
-                "one corrected retry. Do not repeat vague status updates.\n"
-                "- If no tool is needed, respond directly without tool calls."
-            )
+                system += (
+                    "\n\n# Tools\n\n"
+                    "You may call one or more functions to assist with the user query.\n\n"
+                    "Available tools:\n" + "\n".join(tool_lines) + "\n\n"
+                    "For each function call, return a json object with function name and "
+                    "arguments within <tool_call></tool_call> XML tags:\n"
+                    "<tool_call>\n"
+                    '{"name": <function-name>, "arguments": <args-json-object>}\n'
+                    "</tool_call>\n\n"
+                    f"The ONLY supported tool names are: {tool_name_list}\n\n"
+                    "IMPORTANT:\n"
+                    "- Only call functions from the list above. Do NOT invent or guess "
+                    "function names. If a tool you want is not listed, it does not exist.\n"
+                    "- Always use the exact <tool_call> format shown above.\n"
+                    "- When using a tool, prefer emitting just the tool call instead of "
+                    "narrating that you are about to check something.\n"
+                    "- After tool results arrive, either give the concrete answer or make "
+                    "one corrected retry. Do not repeat vague status updates.\n"
+                    "- If no tool is needed, respond directly without tool calls."
+                )
+            else:
+                # Tools are rendered by the chat template via tools= kwarg.
+                # Keep only behavioral guidance here, under a distinct header
+                # so it doesn't collide with the template's own "# Tools" block.
+                system += (
+                    "\n\n# Tool-use rules\n\n"
+                    "The available tools are listed under the chat template's "
+                    "Tools section below. Use them when they help answer the user.\n\n"
+                    "IMPORTANT:\n"
+                    "- Only call tools from the provided list. Do NOT invent or guess "
+                    "tool names. If a tool you want is not listed, it does not exist.\n"
+                    "- When using a tool, prefer emitting just the tool call instead of "
+                    "narrating that you are about to check something.\n"
+                    "- After tool results arrive, either give the concrete answer or make "
+                    "one corrected retry. Do not repeat vague status updates.\n"
+                    "- If no tool is needed, respond directly without tool calls."
+                )
         return system
+
+    def _tools_for_chat_template(self) -> list[dict[str, Any]]:
+        """Render registered tools as OpenAI-function dicts for ``apply_chat_template(tools=...)``."""
+        return tools_as_openai_functions(self.skills.tool_definitions())
+
+    def _detect_native_tools_support(self) -> bool:
+        """Probe whether the loaded tokenizer's chat template consumes the ``tools=`` kwarg.
+
+        Modern templates (Qwen3, Llama 3.1+, Hermes) render the tools list themselves
+        and emit model-native call markers; older templates silently ignore the kwarg.
+        We detect by comparing template output with and without a probe tool — if the
+        probe name appears, the template is rendering tools.
+        """
+        tokenizer = self._tokenizer
+        if not tokenizer or not hasattr(tokenizer, "apply_chat_template"):
+            return False
+        probe = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "__towel_probe__",
+                    "description": "probe",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+        sample = [{"role": "user", "content": "hi"}]
+        try:
+            with_tools = tokenizer.apply_chat_template(
+                sample, tools=probe, tokenize=False, add_generation_prompt=False
+            )
+        except Exception as exc:
+            log.debug("apply_chat_template(tools=...) raised: %s", exc)
+            return False
+        return "__towel_probe__" in (with_tools or "")
 
     def _token_count(self, text: str) -> int:
         """Count tokens using the loaded tokenizer, or estimate."""
@@ -507,7 +573,8 @@ class AgentRuntime:
         Uses the context window manager to fit messages within the
         model's token budget, dropping oldest messages first.
         """
-        system_content = self._build_system_content()
+        use_native_tools = bool(self._native_tools_supported)
+        system_content = self._build_system_content(include_tools_section=not use_native_tools)
         all_messages = conversation.to_chat_messages()
         output_reserve = estimate_output_reserve(
             all_messages,
@@ -559,11 +626,28 @@ class AgentRuntime:
                         messages.append(msg)
                 else:
                     messages.append(msg)
+            template_kwargs: dict[str, Any] = {
+                "tokenize": False,
+                "add_generation_prompt": True,
+            }
+            if use_native_tools:
+                native_tools = self._tools_for_chat_template()
+                if native_tools:
+                    template_kwargs["tools"] = native_tools
             try:
-                return self._tokenizer.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True
-                )
-            except Exception:
+                return self._tokenizer.apply_chat_template(messages, **template_kwargs)
+            except Exception as exc:
+                # Native tools may not actually be supported despite our probe.
+                # Disable for the rest of this process and fall through to the
+                # tool-role fallback (which uses text-injected tool listings).
+                if use_native_tools:
+                    log.warning(
+                        "Native tools channel failed at render time (%s); "
+                        "falling back to text-injected tool list.",
+                        exc,
+                    )
+                    self._native_tools_supported = False
+                    return self._build_prompt(conversation)
                 # Fallback if template doesn't support tool role
                 fallback_messages = [{"role": "system", "content": system_content}]
                 for msg in fitted_messages:
