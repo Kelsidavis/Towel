@@ -1474,6 +1474,51 @@ class GatewayServer:
                 }
             )
 
+        async def memory_list(request: Request) -> JSONResponse:
+            """Return the agent's persistent memories.
+
+            Operators (and curious users) currently have no easy way to see
+            what the agent has remembered across sessions — only the prompt
+            block injection on each turn proves anything is stored. This
+            endpoint returns the raw entries as JSON, with optional filters:
+
+              ``?type=fact``  — restrict to one memory type
+              ``?q=<text>``   — substring search across key and content
+              ``?limit=N``    — cap the response (default 200)
+            """
+            memory = getattr(self.agent, "memory", None)
+            if memory is None:
+                return JSONResponse({"memories": [], "count": 0})
+            try:
+                limit = max(1, min(int(request.query_params.get("limit", "200")), 1000))
+            except ValueError:
+                return JSONResponse(
+                    {"error": "limit must be an integer"}, status_code=400
+                )
+            mem_type = request.query_params.get("type") or None
+            query = request.query_params.get("q") or None
+            try:
+                if query:
+                    entries = memory.search(query)
+                    if mem_type:
+                        entries = [e for e in entries if e.memory_type == mem_type]
+                else:
+                    entries = memory.recall_all(memory_type=mem_type)
+            except Exception as exc:
+                log.exception("Memory listing failed: %s", exc)
+                return JSONResponse(
+                    {"error": f"Memory backend error: {exc}"}, status_code=500
+                )
+            # Newest first by updated_at, oldest last.
+            entries = sorted(entries, key=lambda e: e.updated_at, reverse=True)
+            return JSONResponse(
+                {
+                    "memories": [e.to_dict() for e in entries[:limit]],
+                    "count": len(entries),
+                    "truncated": len(entries) > limit,
+                }
+            )
+
         async def skills_list(_request: Request) -> JSONResponse:
             """Return the skills loaded on this coordinator and their tools.
 
@@ -1869,6 +1914,7 @@ class GatewayServer:
             Route("/dispatch/recent", dispatch_recent),
             Route("/dispatch/explain", dispatch_explain),
             Route("/skills", skills_list),
+            Route("/memory", memory_list),
             Route("/conversations", conversations_list, methods=["GET"]),
             Route("/conversations", conversations_delete_all, methods=["DELETE"]),
             Route("/conversations/{conv_id}", conversation_detail, methods=["GET"]),
