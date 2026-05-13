@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import random
 import socket
 from dataclasses import dataclass, field
@@ -242,13 +243,23 @@ class RemoteWorkerClient:
             task.cancel()
 
     async def _send_heartbeat(self, ws: Any) -> None:
-        """Send a liveness heartbeat back to the controller."""
+        """Send a liveness heartbeat back to the controller.
+
+        Refreshes ``live_resources`` (load average, free RAM) on every tick so
+        the coordinator's scoring and fleet UI see current load, not just the
+        static counts captured at startup.
+        """
+        caps = dict(self.capabilities)
+        caps["live_resources"] = _detect_live_resources()
+        # Keep the running record current too, so a future caller reading
+        # ``self.capabilities`` sees the latest snapshot.
+        self.capabilities["live_resources"] = caps["live_resources"]
         await ws.send(
             json.dumps(
                 {
                     "type": "heartbeat",
                     "id": self.worker_id,
-                    "capabilities": self.capabilities,
+                    "capabilities": caps,
                 }
             )
         )
@@ -286,6 +297,75 @@ def _detect_llama_model(llama_url: str) -> dict[str, Any] | None:
     except Exception:
         pass
     return None
+
+
+def _detect_live_resources() -> dict[str, Any]:
+    """Sample dynamic load metrics. Refreshed on every heartbeat.
+
+    Keys returned (any may be absent if unsupported on the host):
+      - ``load_avg_1min``  — 1-minute load average from ``os.getloadavg``
+      - ``cpu_pressure``   — load_avg_1min / cpu_count, capped at 1.0; a rough
+                             "how close to fully loaded" signal the
+                             coordinator can mix into worker scoring.
+      - ``ram_available_mb`` — current free RAM from /proc/meminfo (Linux) or
+                             sysctl vm_stat (macOS).
+    """
+    out: dict[str, Any] = {}
+    try:
+        load1, _load5, _load15 = os.getloadavg()
+        out["load_avg_1min"] = round(load1, 2)
+        cpu_count = os.cpu_count() or 0
+        if cpu_count > 0:
+            out["cpu_pressure"] = round(min(load1 / cpu_count, 1.0), 3)
+    except (AttributeError, OSError):
+        # os.getloadavg is unavailable on Windows
+        pass
+
+    try:
+        import platform
+
+        system = platform.system()
+        if system == "Linux":
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemAvailable:"):
+                        out["ram_available_mb"] = int(line.split()[1]) // 1024
+                        break
+        elif system == "Darwin":
+            import subprocess
+
+            # vm_stat reports pages free; multiply by page size for bytes.
+            result = subprocess.run(
+                ["vm_stat"], capture_output=True, text=True, timeout=2
+            )
+            if result.returncode == 0:
+                pages_free = 0
+                pages_inactive = 0
+                page_size = 4096
+                for line in result.stdout.splitlines():
+                    if "page size of" in line:
+                        try:
+                            page_size = int(line.split()[-2])
+                        except (ValueError, IndexError):
+                            pass
+                    elif "Pages free:" in line:
+                        try:
+                            pages_free = int(line.split()[-1].rstrip("."))
+                        except ValueError:
+                            pass
+                    elif "Pages inactive:" in line:
+                        try:
+                            pages_inactive = int(line.split()[-1].rstrip("."))
+                        except ValueError:
+                            pass
+                avail_bytes = (pages_free + pages_inactive) * page_size
+                if avail_bytes:
+                    out["ram_available_mb"] = avail_bytes // (1024 * 1024)
+    except Exception:
+        # Live RAM sampling is best-effort — never block the heartbeat path.
+        pass
+
+    return out
 
 
 def _detect_system_resources() -> dict[str, Any]:
