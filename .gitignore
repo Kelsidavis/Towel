@@ -12,3 +12,6 @@ venv/
 .pytest_cache/
 *.so
 .DS_Store
+
+# Claude Code session state
+.claude/
