@@ -3518,28 +3518,47 @@ class GatewayServer:
                             )
                             # Drop the diagnostic placeholder so the
                             # alt worker doesn't see it as its own
-                            # prior assistant turn.
+                            # prior assistant turn. Remember what we
+                            # popped — if the retry itself raises, we
+                            # have to restore it to keep the persisted
+                            # session consistent.
+                            popped: Any = None
                             if session.conversation.messages and (
                                 session.conversation.messages[-1].role == Role.ASSISTANT
                             ):
-                                session.conversation.messages.pop()
-                            retry_response = await self._quick_remote_infer(
-                                session_id, session, alt, max_tokens=256
-                            )
-                            # Only adopt the retry if it actually
-                            # produced text. If the alt worker ALSO
-                            # returned empty, keep the original
-                            # diagnostic (no point flapping).
-                            if not (retry_response.metadata or {}).get(
-                                "empty_text_fallback"
-                            ):
-                                retry_response.metadata = (
-                                    retry_response.metadata or {}
-                                ) | {
-                                    "fallback_from_worker": worker.id,
-                                    "fallback_reason": "empty_text",
-                                }
-                                response = retry_response
+                                popped = session.conversation.messages.pop()
+                            try:
+                                retry_response = await self._quick_remote_infer(
+                                    session_id, session, alt, max_tokens=256
+                                )
+                            except Exception as retry_exc:
+                                # Retry crashed (timeout, worker DC, etc.).
+                                # Restore the original placeholder so the
+                                # session record matches what we'll send
+                                # back to the caller, then keep the
+                                # original `response`.
+                                log.warning(
+                                    "retry on %s failed (%s); keeping original "
+                                    "empty-text response from %s",
+                                    alt.id, retry_exc, worker.id,
+                                )
+                                if popped is not None:
+                                    session.conversation.messages.append(popped)
+                            else:
+                                # Only adopt the retry if it actually
+                                # produced text. If the alt worker ALSO
+                                # returned empty, keep the original
+                                # diagnostic (no point flapping).
+                                if not (retry_response.metadata or {}).get(
+                                    "empty_text_fallback"
+                                ):
+                                    retry_response.metadata = (
+                                        retry_response.metadata or {}
+                                    ) | {
+                                        "fallback_from_worker": worker.id,
+                                        "fallback_reason": "empty_text",
+                                    }
+                                    response = retry_response
                 elif worker:
                     response = await self._step_remote_inference(
                         session_id, session, worker

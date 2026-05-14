@@ -442,6 +442,76 @@ class TestSimpleAskAPI:
         contents = [m.content for m in api_default.conversation.messages]
         assert "hello" not in contents
 
+    def test_retry_failure_restores_original_placeholder(self, gateway, client):
+        """When the empty-response retry path crashes (worker DC,
+        timeout, anything), the session must still have a coherent
+        assistant turn. The earlier implementation popped the original
+        diagnostic placeholder before the retry call and never put it
+        back on failure — so a crashed retry left the session with
+        the user message and NO assistant reply, while the API caller
+        got a 500."""
+        import asyncio
+        from unittest.mock import AsyncMock
+        from towel.agent.conversation import Message, Role
+        from towel.gateway.workers import WorkerInfo
+
+        # Stub _route_by_role so the request flows into the chat path
+        # without needing a real dispatcher decision.
+        fake_worker = WorkerInfo(id="primary", ws=AsyncMock(), capabilities={})
+        gateway._workers._workers["primary"] = fake_worker
+        gateway._workers._workers["alt"] = WorkerInfo(
+            id="alt", ws=AsyncMock(),
+            capabilities={"total_vram_mb": 16000},
+        )
+
+        async def fake_route(message, session_id):
+            return fake_worker, "chat"
+
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        # First call: original placeholder (empty_text_fallback=True).
+        # Second call: raises to simulate a crashed retry.
+        call_log = []
+
+        async def fake_quick(session_id, session, worker, max_tokens=256):
+            call_log.append(worker.id)
+            if worker.id == "primary":
+                placeholder = Message(
+                    role=Role.ASSISTANT,
+                    content="(The worker returned no text...)",
+                    metadata={
+                        "remote_worker": "primary",
+                        "empty_text_fallback": True,
+                    },
+                )
+                session.conversation.messages.append(placeholder)
+                return placeholder
+            else:
+                # The retry path on the alt worker explodes.
+                raise RuntimeError("simulated worker crash")
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "hi", "session_id": "retry-restore"},
+        )
+
+        assert resp.status_code == 200
+        # Both workers were attempted.
+        assert call_log == ["primary", "alt"]
+        # And crucially the session has a coherent assistant message
+        # (the restored placeholder), not just the user turn.
+        sess = gateway.sessions.get_or_create("retry-restore")
+        roles = [m.role for m in sess.conversation.messages]
+        assert roles[-1] == Role.ASSISTANT, (
+            f"expected assistant placeholder restored, got roles={roles}"
+        )
+        # And the visible content is the original placeholder, not empty.
+        assert sess.conversation.messages[-1].content.startswith(
+            "(The worker returned no text"
+        )
+
 
 class TestApiSessions:
     def test_api_sessions_empty(self, client):
