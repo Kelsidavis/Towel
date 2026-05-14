@@ -109,6 +109,8 @@ def build_openai_routes(
                             generator = _stream_sse_remote(
                                 gateway, session_id, sess, worker,
                                 request_id, created, model_name,
+                                fallback_agent=agent,
+                                fallback_conv=conv,
                             )
                     except Exception as exc:
                         import logging
@@ -221,6 +223,9 @@ async def _stream_sse_remote(
     request_id: str,
     created: int,
     model: str,
+    *,
+    fallback_agent: Any = None,
+    fallback_conv: Any = None,
 ) -> Any:
     """SSE generator that pipes tokens from a remote worker.
 
@@ -228,9 +233,17 @@ async def _stream_sse_remote(
     chunk; the final chunk has finish_reason="stop". Errors mid-
     stream surface as a finish_reason="error" final chunk so the
     client doesn't hang waiting for [DONE].
+
+    When ``fallback_agent`` is supplied and the remote worker errors
+    BEFORE any token was streamed, we fall back to the local agent's
+    streaming path so SSE clients still get a response. Once any
+    token has been emitted we can't switch generators silently — at
+    that point an error must surface as an error chunk.
     """
+    yielded_any = False
     try:
         async for token in gateway.iter_remote_tokens(session_id, session, worker):
+            yielded_any = True
             chunk = {
                 "id": request_id,
                 "object": "chat.completion.chunk",
@@ -246,6 +259,18 @@ async def _stream_sse_remote(
             }
             yield f"data: {json.dumps(chunk)}\n\n"
     except Exception as exc:
+        if not yielded_any and fallback_agent is not None and fallback_conv is not None:
+            import logging
+            logging.getLogger("towel.openai_compat").warning(
+                "remote stream failed before any token (%s); "
+                "falling back to local agent",
+                exc,
+            )
+            async for chunk in _stream_sse(
+                fallback_agent, fallback_conv, request_id, created, model,
+            ):
+                yield chunk
+            return
         err_chunk = {
             "id": request_id,
             "object": "chat.completion.chunk",

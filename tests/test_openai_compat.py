@@ -187,3 +187,92 @@ class TestSSEFormat:
         # Parse the finish chunk
         finish_data = json.loads(chunks[-2].replace("data: ", ""))
         assert finish_data["choices"][0]["finish_reason"] == "stop"
+
+
+class TestRemoteStreamFallback:
+    """When a remote worker errors at the start of a stream, the
+    coordinator should fall back to local agent streaming so SSE
+    clients still get a useful response. Observed live: workers
+    running pre-fix code occasionally return 400 from their own
+    llama-server on streaming requests, which would otherwise leave
+    the SSE client with finish_reason=error and no content."""
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_local_when_remote_errors_before_first_token(self):
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Conversation, Role
+        from towel.agent.events import AgentEvent
+        from towel.gateway.openai_compat import _stream_sse_remote
+
+        async def failing_remote(session_id, session, worker):
+            raise RuntimeError("worker llama-server returned 400")
+            yield  # pragma: no cover — make this an async generator
+
+        gateway = MagicMock()
+        gateway.iter_remote_tokens = failing_remote
+
+        async def local_stream(c):
+            yield AgentEvent.token("local-")
+            yield AgentEvent.token("fallback")
+            yield AgentEvent.complete("local-fallback", {"tokens": 2})
+
+        agent = MagicMock()
+        agent.step_streaming = local_stream
+
+        conv = Conversation()
+        conv.add(Role.USER, "hi")
+
+        chunks = []
+        async for chunk in _stream_sse_remote(
+            gateway, "sid", MagicMock(), MagicMock(),
+            "rid", 0, "m",
+            fallback_agent=agent,
+            fallback_conv=conv,
+        ):
+            chunks.append(chunk)
+
+        # Tokens from local agent + finish + [DONE].
+        joined = "".join(chunks)
+        assert "local-" in joined
+        assert "fallback" in joined
+        # No finish_reason=error chunk should leak through when the
+        # fallback runs successfully.
+        assert "\"error\"" not in joined
+        assert "[DONE]" in joined
+
+    @pytest.mark.asyncio
+    async def test_mid_stream_error_still_surfaces(self):
+        """Once at least one token was emitted the fallback can't take
+        over silently — we don't replay tokens. The client should see
+        finish_reason=error so it knows something went wrong."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Conversation, Role
+        from towel.gateway.openai_compat import _stream_sse_remote
+
+        async def partial_remote(session_id, session, worker):
+            yield "first-"
+            yield "second-"
+            raise RuntimeError("connection dropped")
+
+        gateway = MagicMock()
+        gateway.iter_remote_tokens = partial_remote
+
+        conv = Conversation()
+        conv.add(Role.USER, "hi")
+
+        chunks = []
+        async for chunk in _stream_sse_remote(
+            gateway, "sid", MagicMock(), MagicMock(),
+            "rid", 0, "m",
+            fallback_agent=MagicMock(),
+            fallback_conv=conv,
+        ):
+            chunks.append(chunk)
+
+        joined = "".join(chunks)
+        assert "first-" in joined
+        assert "second-" in joined
+        assert '"error"' in joined or "finish_reason\": \"error\"" in joined
+        assert "[DONE]" in joined
