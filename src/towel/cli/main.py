@@ -2244,6 +2244,71 @@ def memory_clear() -> None:
     console.print(f"[green]Cleared {count} memories.[/green]")
 
 
+@memory.command(name="stats")
+def memory_stats() -> None:
+    """Summarize the memory store: counts, age, recall, and unused entries.
+
+    Useful for verifying auto-capture is actually firing and for
+    spotting when the corpus has grown stale (lots of recall_count=0
+    fact entries → time to run `memory tidy`).
+    """
+    from datetime import UTC, datetime
+
+    from towel.memory.store import MemoryStore
+
+    store = MemoryStore()
+    entries = store.recall_all()
+    if not entries:
+        console.print("[dim]No memories stored.[/dim]")
+        return
+
+    by_type: dict[str, list] = {}
+    for e in entries:
+        by_type.setdefault(e.memory_type, []).append(e)
+
+    total = len(entries)
+    recalled = sum(1 for e in entries if e.recall_count > 0)
+    total_recalls = sum(e.recall_count for e in entries)
+    now = datetime.now(UTC)
+    oldest = min(entries, key=lambda e: e.created_at)
+    newest = max(entries, key=lambda e: e.created_at)
+
+    console.print(f"[bold]Memory store:[/bold] {total} entries")
+    console.print(
+        f"  Recalled at least once: [green]{recalled}[/green] "
+        f"({recalled * 100 // total if total else 0}%); "
+        f"total recall events: {total_recalls}"
+    )
+    console.print(
+        f"  Oldest: {(now - oldest.created_at).days}d ([dim]{oldest.key}[/dim])"
+    )
+    console.print(
+        f"  Newest: {max(0, (now - newest.created_at).days)}d ([dim]{newest.key}[/dim])"
+    )
+    console.print("\n[bold]By type:[/bold]")
+    for mtype in sorted(by_type):
+        group = by_type[mtype]
+        unrecalled = sum(1 for e in group if e.recall_count == 0)
+        console.print(
+            f"  {mtype:11s} {len(group):4d}  "
+            f"[dim]({unrecalled} never recalled)[/dim]"
+        )
+
+    # Surface the most recent auto-captures that haven't been validated
+    # by a real query yet. These are the most likely false positives.
+    pending = sorted(
+        (e for e in entries if e.recall_count == 0),
+        key=lambda e: e.created_at,
+        reverse=True,
+    )[:5]
+    if pending:
+        console.print(
+            "\n[bold]Recent unvalidated captures[/bold] (recall_count = 0):"
+        )
+        for e in pending:
+            console.print(f"  [{e.memory_type}] {e.key}: {e.content[:60]}")
+
+
 @memory.command(name="tidy")
 @click.option(
     "--max-age-days",
