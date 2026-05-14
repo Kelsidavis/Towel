@@ -282,12 +282,29 @@ class RemoteWorkerClient:
                     metadata.get("input_tokens", 0)
                     + metadata.get("output_tokens", 0)
                 )
+            # Empty-text + non-empty tool_calls fallback: when the
+            # model decides to invoke a tool instead of producing
+            # prose, generate_from_request returns text="" with
+            # populated tool_calls. The coordinator's quick-infer
+            # path doesn't surface a tool channel, so the caller
+            # would see "" with no explanation. Format the tool-call
+            # intent as text so at least SOMETHING comes back.
+            response_text = result.text or ""
+            tool_calls = getattr(result, "tool_calls", None) or []
+            if not response_text.strip() and tool_calls:
+                lines = ["(The model emitted tool calls instead of text:)"]
+                for tc in tool_calls:
+                    name = getattr(tc, "name", str(tc))
+                    args = getattr(tc, "arguments", "")
+                    lines.append(f"  - {name}({args})")
+                response_text = "\n".join(lines)
+                metadata["empty_text_tool_call_fallback"] = True
             await ws.send(
                 json.dumps(
                     {
                         "type": "job_done",
                         "job_id": job_id,
-                        "result": {"text": result.text, "metadata": metadata},
+                        "result": {"text": response_text, "metadata": metadata},
                     }
                 )
             )

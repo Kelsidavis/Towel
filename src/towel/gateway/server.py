@@ -761,6 +761,16 @@ class GatewayServer:
         modes = worker.capabilities.get("modes", [])
         mode = modes[0] if modes else "llama_chat"
 
+        # Send a minimal system prompt — empirically, some smaller
+        # chat-tuned models (gemma-2B/4B variants observed on the
+        # SparklesMint/k-Precision fleet) emit zero tokens when handed
+        # a bare yes/no question with no system instruction at all.
+        # A one-line directive is plenty to unblock them without
+        # adding meaningful tokens to the prompt.
+        identity = (
+            getattr(self.config, "identity", "")
+            or "You are a helpful assistant. Answer concisely."
+        )
         await worker.ws.send(
             json.dumps(
                 {
@@ -771,7 +781,7 @@ class GatewayServer:
                     "request": {
                         "mode": mode,
                         "model": worker.capabilities.get("model", ""),
-                        "system": "",
+                        "system": identity,
                         "messages": messages,
                         "max_tokens": max_tokens,
                         "temperature": 0.7,
@@ -786,6 +796,17 @@ class GatewayServer:
             if msg.get("type") == "job_done":
                 result = msg.get("result", {}) or {}
                 text = result.get("text", "")
+                # Defensive: an empty response makes the API look
+                # broken. Workers running pre-fix code may emit
+                # empty text when the model produces tool calls.
+                # Replace with a diagnostic string so the caller
+                # sees SOMETHING and operators can spot it.
+                if not text:
+                    text = (
+                        "(The worker returned no text — "
+                        "likely emitted tool calls instead. "
+                        "Update the worker if this repeats.)"
+                    )
                 # Hoist the worker's reported tokens/tps/etc. into the
                 # Message metadata so API callers and the UI see real
                 # numbers — previously this path discarded everything
