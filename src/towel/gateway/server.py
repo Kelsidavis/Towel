@@ -698,28 +698,42 @@ class GatewayServer:
     def _pick_alternate_chat_worker(
         self, exclude: set[str]
     ) -> WorkerInfo | None:
-        """Pick a different idle worker capable of answering a chat.
+        """Pick a different worker capable of answering a chat.
 
-        Used by /api/ask when the routed worker returns empty text.
-        Picks the largest non-excluded idle worker by total_vram_mb
-        so the retry has the best shot at a real response. Returns
-        None if no qualified alternate exists.
+        Used by /api/ask and /v1/chat/completions when the routed
+        worker returns empty text. Prefers an idle worker, but
+        will fall back to a busy non-excluded worker — the WebSocket
+        queues serialize requests anyway, and the alternative is
+        the diagnostic placeholder, so a slow real answer is
+        better than no real answer.
+
+        Picks the largest worker by total_vram_mb so the retry has
+        the best shot at a real response. Returns None if no
+        qualified alternate exists (all enabled non-draining workers
+        are in `exclude`).
         """
         candidates: list[WorkerInfo] = []
+        busy_candidates: list[WorkerInfo] = []
         for w in self._workers.list():
             if w.id in exclude:
                 continue
-            if not w.enabled or w.draining or w.busy:
+            if not w.enabled or w.draining:
                 continue
-            candidates.append(w)
-        if not candidates:
-            return None
-        # Bigger workers tend to produce real responses; tie-break
-        # arbitrarily.
-        candidates.sort(
-            key=lambda w: w.capabilities.get("total_vram_mb", 0), reverse=True,
-        )
-        return candidates[0]
+            if w.busy:
+                busy_candidates.append(w)
+            else:
+                candidates.append(w)
+        # Prefer idle, but accept busy if that's all we've got. Both
+        # buckets sort by VRAM descending so the largest worker wins
+        # within its bucket.
+        for bucket in (candidates, busy_candidates):
+            if bucket:
+                bucket.sort(
+                    key=lambda w: w.capabilities.get("total_vram_mb", 0),
+                    reverse=True,
+                )
+                return bucket[0]
+        return None
 
     async def _route_by_role(
         self, message: str, session_id: str

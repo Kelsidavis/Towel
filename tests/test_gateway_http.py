@@ -491,19 +491,45 @@ class TestAlternateChatWorker:
         alt = gateway._pick_alternate_chat_worker(exclude={"only"})
         assert alt is None
 
-    def test_skips_busy_workers(self, gateway):
+    def test_prefers_idle_over_busy(self, gateway):
+        """When both an idle and a busy alternate exist, pick idle —
+        even if the busy one is bigger. The busy worker has a real
+        job blocking the WebSocket queue."""
+        gateway._workers.register(
+            "small-idle", object(),
+            {"backend": "llama", "modes": ["llama_chat"], "total_vram_mb": 4096},
+        )
+        gateway._workers.register(
+            "big-busy", object(),
+            {"backend": "llama", "modes": ["llama_chat"], "total_vram_mb": 16000},
+        )
+        gateway._workers.assign("big-busy", "job-x", "session-x")
+        gateway._workers.register(
+            "excluded", object(),
+            {"backend": "llama", "modes": ["llama_chat"], "total_vram_mb": 8000},
+        )
+        alt = gateway._pick_alternate_chat_worker(exclude={"excluded"})
+        assert alt is not None
+        assert alt.id == "small-idle"
+
+    def test_falls_back_to_busy_when_no_idle(self, gateway):
+        """When the only alternate is busy, pick it anyway — the
+        WebSocket queue will serialize the request. Without this
+        the retry-on-empty path silently turned into 'keep the
+        diagnostic placeholder' whenever the only good worker was
+        already handling another query."""
         gateway._workers.register(
             "small", object(),
             {"backend": "llama", "modes": ["llama_chat"], "total_vram_mb": 4096},
         )
         gateway._workers.register(
-            "busy-big", object(),
+            "big-busy", object(),
             {"backend": "llama", "modes": ["llama_chat"], "total_vram_mb": 16000},
         )
-        # busy-big is much bigger, but it's working a job — skip it.
-        gateway._workers.assign("busy-big", "job-x", "session-x")
+        gateway._workers.assign("big-busy", "job-x", "session-x")
         alt = gateway._pick_alternate_chat_worker(exclude={"small"})
-        assert alt is None
+        assert alt is not None
+        assert alt.id == "big-busy"
 
     def test_skips_draining_workers(self, gateway):
         gateway._workers.register(
