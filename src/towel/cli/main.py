@@ -2244,6 +2244,124 @@ def memory_clear() -> None:
     console.print(f"[green]Cleared {count} memories.[/green]")
 
 
+@memory.command(name="inspect")
+@click.argument("key")
+def memory_inspect(key: str) -> None:
+    """Show full detail of one memory entry, including salience."""
+    from datetime import UTC, datetime
+
+    from towel.memory.store import MemoryStore, salience
+
+    store = MemoryStore()
+    e = store.recall(key)
+    if e is None:
+        console.print(f"[red]No memory with key {key!r}.[/red]")
+        # Suggest BM25-similar entries so a typo is easy to fix.
+        near = store.search(key, limit=3)
+        if near:
+            console.print("\n[dim]Did you mean:[/dim]")
+            for n in near:
+                console.print(f"  - {n.key}")
+        raise SystemExit(1)
+    now = datetime.now(UTC)
+    age = (now - e.created_at).days
+    last = (now - e.last_recalled_at).days if e.last_recalled_at else None
+    score = salience(e, now)
+    console.print(f"[bold]{e.key}[/bold] [dim]({e.memory_type})[/dim]")
+    console.print(f"\n{e.content}\n")
+    console.print(f"  created:       {e.created_at.isoformat()} ({age}d ago)")
+    console.print(f"  updated:       {e.updated_at.isoformat()}")
+    console.print(
+        f"  recalled:      {e.recall_count} times"
+        + (f", last {last}d ago" if last is not None else " — never")
+    )
+    console.print(f"  source:        {e.source or '(operator-set)'}")
+    console.print(f"  salience:      {score:.2f}")
+
+
+@memory.command(name="export")
+@click.option(
+    "--out",
+    type=click.Path(dir_okay=False, writable=True),
+    default=None,
+    help="Where to write JSON. Default: stdout.",
+)
+def memory_export(out: str | None) -> None:
+    """Dump the memory store to JSON (stdout or file).
+
+    Format matches what `memory import` expects: a JSON object keyed
+    by memory key, with each value carrying content/type/timestamps/
+    recall stats/source. Suitable for backup, sharing across machines,
+    or piping through jq for analysis.
+    """
+    import json
+
+    from towel.memory.store import MemoryStore
+
+    store = MemoryStore()
+    payload = {e.key: e.to_dict() for e in store.recall_all()}
+    blob = json.dumps(payload, indent=2, ensure_ascii=False)
+    if out:
+        from pathlib import Path
+        Path(out).write_text(blob, encoding="utf-8")
+        console.print(f"[green]Wrote {len(payload)} memor(ies) to {out}.[/green]")
+    else:
+        click.echo(blob)
+
+
+@memory.command(name="import")
+@click.argument("src", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--merge/--replace",
+    default=True,
+    help=(
+        "Default merge: existing keys keep their content but pick up "
+        "any missing source/recall metadata. --replace overwrites "
+        "existing entries unconditionally."
+    ),
+)
+def memory_import(src: str, merge: bool) -> None:
+    """Load memories from a JSON file produced by `memory export`."""
+    import json
+    from pathlib import Path
+
+    from towel.memory.store import MemoryEntry, MemoryStore
+
+    store = MemoryStore()
+    data = json.loads(Path(src).read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        console.print("[red]Import file is not a JSON object.[/red]")
+        raise SystemExit(1)
+    added = updated = skipped = 0
+    for key, blob in data.items():
+        if not isinstance(blob, dict):
+            skipped += 1
+            continue
+        try:
+            entry = MemoryEntry.from_dict({"key": key, **blob})
+        except (KeyError, ValueError):
+            skipped += 1
+            continue
+        existing = store.recall(key)
+        if existing is not None and merge:
+            skipped += 1
+            continue
+        store.remember(
+            entry.key,
+            entry.content,
+            memory_type=entry.memory_type,
+            source=entry.source,
+        )
+        if existing is None:
+            added += 1
+        else:
+            updated += 1
+    console.print(
+        f"[green]Import done.[/green] added={added} updated={updated} "
+        f"skipped={skipped}"
+    )
+
+
 @memory.command(name="stats")
 def memory_stats() -> None:
     """Summarize the memory store: counts, age, recall, and unused entries.
