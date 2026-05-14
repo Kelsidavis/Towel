@@ -2272,6 +2272,39 @@ def memory_clear() -> None:
     console.print(f"[green]Cleared {count} memories.[/green]")
 
 
+@memory.command(name="reembed")
+@click.option(
+    "--all/--missing-only",
+    "all_rows",
+    default=False,
+    help=(
+        "--missing-only (default): only embed entries that don't yet "
+        "have a vector. --all: re-encode every row, useful after "
+        "changing $TOWEL_EMBED_MODEL."
+    ),
+)
+def memory_reembed(all_rows: bool) -> None:
+    """Backfill or refresh vector embeddings across the memory store.
+
+    No-ops cleanly when the `[embeddings]` extra isn't installed —
+    prints the install hint and exits 0 so this is safe to wire into
+    setup scripts.
+    """
+    from towel.memory import embeddings as _emb
+    from towel.memory.store import MemoryStore
+
+    if not _emb.is_available():
+        console.print(
+            "[yellow]Embeddings extra not installed.[/yellow] "
+            "Install with: [cyan]pip install 'towel-ai[embeddings]'[/cyan]"
+        )
+        return
+    store = MemoryStore()
+    console.print("[dim]Loading embedding model (first run may take a few seconds)…[/dim]")
+    n = store.reembed_all(only_missing=not all_rows)
+    console.print(f"[green]Re-embedded {n} memor(ies).[/green]")
+
+
 @memory.command(name="inspect")
 @click.argument("key")
 def memory_inspect(key: str) -> None:

@@ -497,6 +497,49 @@ class MemoryStore:
             con.close()
         return [_row_to_entry(r) for r in rows]
 
+    def reembed_all(self, *, only_missing: bool = True) -> int:
+        """Recompute embeddings across the corpus. Returns rows touched.
+
+        Two use cases:
+
+        * Installing the ``[embeddings]`` extra after the corpus is
+          already populated — without a backfill, none of the existing
+          entries have vectors and vector_search returns empty.
+        * Switching the embedding model (via $TOWEL_EMBED_MODEL) —
+          old vectors have the wrong dimensionality and are silently
+          skipped by ``cosine_topk``. Pass ``only_missing=False`` to
+          rewrite them.
+        """
+        from towel.memory import embeddings as _emb
+
+        if not _emb.is_available():
+            return 0
+        con = self._connect()
+        try:
+            if only_missing:
+                rows = con.execute(
+                    "SELECT key, content FROM memories WHERE embedding IS NULL"
+                ).fetchall()
+            else:
+                rows = con.execute("SELECT key, content FROM memories").fetchall()
+        finally:
+            con.close()
+        if not rows:
+            return 0
+        updates: list[tuple[bytes | None, str]] = []
+        for r in rows:
+            blob = _emb.encode(r["content"])
+            if blob is not None:
+                updates.append((blob, r["key"]))
+        if not updates:
+            return 0
+        with self._txn() as con:
+            con.executemany(
+                "UPDATE memories SET embedding = ? WHERE key = ?",
+                updates,
+            )
+        return len(updates)
+
     def vector_search(self, query: str, limit: int = 5) -> list[MemoryEntry]:
         """Cosine-rank memories against ``query`` via stored embeddings.
 

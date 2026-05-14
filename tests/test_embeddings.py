@@ -151,6 +151,39 @@ class TestVectorSearch:
         assert results[1].content in {"snake handling"}
 
 
+class TestReembedAll:
+    def test_noop_without_extra(self, store, monkeypatch):
+        monkeypatch.setattr(emb, "is_available", lambda: False)
+        store.remember("k", "v")
+        assert store.reembed_all() == 0
+
+    def test_only_missing_skips_rows_with_existing_embedding(self, store, monkeypatch):
+        canned = {"alpha": _vec([1.0, 0.0]), "beta": _vec([0.0, 1.0])}
+        monkeypatch.setattr(emb, "encode", lambda t: canned.get(t))
+        monkeypatch.setattr(emb, "is_available", lambda: True)
+        # First write — embedding lands.
+        store.remember("a", "alpha")
+        # Drop embeddings on disk so we have a clear missing-vector
+        # row to backfill.
+        import sqlite3
+        con = sqlite3.connect(str(store._db_path))
+        con.execute("UPDATE memories SET embedding = NULL WHERE key = 'a'")
+        con.commit()
+        con.close()
+        store.remember("b", "beta")  # embedding present
+        # Backfill the missing one.
+        assert store.reembed_all(only_missing=True) == 1
+
+    def test_full_reembed_touches_every_row(self, store, monkeypatch):
+        monkeypatch.setattr(emb, "encode", lambda t: _vec([1.0, 0.0]))
+        monkeypatch.setattr(emb, "is_available", lambda: True)
+        store.remember("a", "x")
+        store.remember("b", "y")
+        # Both rows already have embeddings. only_missing=False should
+        # still rewrite both.
+        assert store.reembed_all(only_missing=False) == 2
+
+
 class TestFusedSearch:
     def test_falls_back_to_bm25_without_vectors(self, store, monkeypatch):
         # Without embeddings, fused_search returns BM25 ordering.

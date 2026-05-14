@@ -108,12 +108,27 @@ class MemorySkill(Skill):
 
             case "recall":
                 query = arguments["query"]
-                results = self._store.search(query)
+                # fused_search = BM25 + vector (when embeddings extra
+                # installed), degrades to BM25 alone otherwise. Same
+                # retrieval the prompt-block injection uses, so the
+                # LLM-driven recall and the automatic injection don't
+                # disagree about what's relevant.
+                results = self._store.fused_search(query, limit=5)
                 if not results:
                     return "No matching memories found."
                 lines = [f"Found {len(results)} memory(ies):"]
                 for e in results:
                     lines.append(f"  [{e.memory_type}] {e.key}: {e.content}")
+                # Surface the top graph neighbor of the best hit so
+                # the agent gets adjacent context even when the query
+                # didn't lexically or semantically reach it directly.
+                neighbors = self._store.recall_related(results[0].key, limit=2)
+                if neighbors:
+                    lines.append("Related:")
+                    for rel, weight in neighbors:
+                        lines.append(
+                            f"  [{rel.memory_type}] {rel.key} (co-recall ×{weight}): {rel.content}"
+                        )
                 return "\n".join(lines)
 
             case _:
