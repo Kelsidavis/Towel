@@ -371,6 +371,19 @@ class LlamaRuntime:
 
         message = data["choices"][0]["message"]
         text = message.get("content") or ""
+        # Reasoning-model fallback: Qwen3, DeepSeek-R1, and friends
+        # return the visible answer in `content` and the internal
+        # chain-of-thought in `reasoning_content`. When the model
+        # decides to put EVERYTHING in reasoning (e.g. because the
+        # prompt looked like an analysis task even though it wasn't),
+        # content is empty and the user gets a blank response. Take
+        # the reasoning text as a fallback so the API caller sees
+        # something useful. The tradeoff: occasionally surfaces a
+        # rambling internal monologue, but that beats silence.
+        if not text.strip():
+            reasoning = message.get("reasoning_content") or ""
+            if reasoning.strip():
+                text = reasoning
         usage = data.get("usage", {})
         return LlamaGenerationResult(
             text=text,
