@@ -2390,6 +2390,104 @@ def memory_tags() -> None:
         console.print(f"  {counts[tag]:4d}  {tag}")
 
 
+@memory.command(name="extract")
+@click.argument("text", required=False)
+@click.option(
+    "--stdin/--no-stdin",
+    default=False,
+    help="Read TEXT from stdin instead of an argument.",
+)
+@click.option(
+    "--dry-run/--apply",
+    default=True,
+    show_default=True,
+    help="Default dry-run: print proposed captures. --apply writes them.",
+)
+@click.option(
+    "--scope",
+    default=None,
+    help='Scope to write captures under (when --apply). Default: auto-derive.',
+)
+def memory_extract(
+    text: str | None,
+    stdin: bool,
+    dry_run: bool,
+    scope: str | None,
+) -> None:
+    """Use the configured LLM backend to extract memories from TEXT.
+
+    Catches what the regex auto-capture misses — multi-sentence
+    context, indirect mentions, paraphrase. Uses the same backend
+    that `towel chat` uses (MLX / Ollama / llama-server / Claude),
+    so no extra dep or model download.
+
+    Captures land under source="llm_extract" so you can find and
+    audit them via `towel memory list` and friends.
+    """
+    import asyncio
+    import sys as _sys
+
+    from towel.memory.llm_extract import extract_via_llm
+    from towel.memory.scope import derive_scope
+    from towel.memory.store import MemoryStore
+
+    if stdin:
+        body = _sys.stdin.read()
+    elif text:
+        body = text
+    else:
+        console.print("[red]Pass TEXT or --stdin.[/red]")
+        raise SystemExit(1)
+    if not body.strip():
+        console.print("[yellow]Empty input — nothing to extract.[/yellow]")
+        return
+
+    # Build a minimal agent runtime just to get a step() function.
+    # Reuses the same backend/auto-detect path as `towel ask`.
+    config = TowelConfig.load()
+    backend = config.backend or _auto_detect_backend() or "mlx"
+    skills_reg = _build_skill_registry(config)
+    agent = _build_runtime(
+        config, skills_reg, None, backend, None, None, None, None
+    )
+
+    async def step(prompt: str) -> str:
+        from towel.agent.conversation import Conversation, Role
+        conv = Conversation()
+        conv.add(Role.USER, prompt)
+        msg = await agent.step(conv)
+        return getattr(msg, "content", "") or ""
+
+    console.print(f"[dim]Asking {backend} backend to extract memories...[/dim]")
+    captures = asyncio.run(extract_via_llm(body, step))
+    if not captures:
+        console.print("[yellow]No captures proposed.[/yellow]")
+        return
+
+    effective = scope if scope is not None else derive_scope()
+    store = MemoryStore(default_scope=effective)
+    added = skipped = 0
+    for cap in captures:
+        existing = store.recall(cap.key)
+        marker = "would write" if dry_run else "wrote"
+        if existing is not None:
+            console.print(f"  [dim]skip[/dim] [{cap.memory_type}] {cap.key} (already present)")
+            skipped += 1
+            continue
+        console.print(f"  [green]{marker}[/green] [{cap.memory_type}] {cap.key} = {cap.content[:80]}")
+        if not dry_run:
+            store.remember(
+                cap.key, cap.content,
+                memory_type=cap.memory_type,
+                source="llm_extract",
+            )
+        added += 1
+    suffix = "would add" if dry_run else "added"
+    console.print(f"\n[bold]{suffix} {added}, skipped {skipped}.[/bold]")
+    if dry_run:
+        console.print("[dim]Re-run with --apply to commit.[/dim]")
+
+
 @memory.command(name="ingest")
 @click.option(
     "--conversation",
