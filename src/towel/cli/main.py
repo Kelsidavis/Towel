@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from towel.skills.registry import SkillRegistry
 
 console = Console()
+err_console = Console(stderr=True)
 
 
 def _apply_turboquant_overrides(
@@ -1712,7 +1713,6 @@ def ask(
 
     from towel.agent.conversation import Conversation, Role
     from towel.agent.events import EventType
-    from towel.agent.runtime import AgentRuntime
     from towel.persistence.store import ConversationStore
 
     # Build the prompt from args + stdin
@@ -1770,7 +1770,16 @@ def ask(
 
     memory = MemoryStore()
     skills = _build_skill_registry(config, memory_store=memory)
-    agent_rt = AgentRuntime(config, skills=skills, memory=memory)
+    backend = config.backend or _auto_detect_backend()
+    agent_rt = _build_runtime(
+        config,
+        skills,
+        memory,
+        backend,
+        claude_model=config.claude_model or None,
+        ollama_url=config.ollama_url or None,
+        llama_url=config.llama_url or None,
+    )
     store = ConversationStore()
 
     # Load or create conversation
@@ -1785,7 +1794,7 @@ def ask(
 
     async def _run() -> None:
         if not raw:
-            console.print("[dim]Loading model...[/dim]", stderr=True)
+            err_console.print("[dim]Loading model...[/dim]")
         if not await _load_model_with_friendly_error(agent_rt):
             return
 
@@ -1796,21 +1805,19 @@ def ask(
                         print(event.data["content"], end="", flush=True)
                     case EventType.TOOL_CALL:
                         tool = event.data["tool"]
-                        console.print(
-                            f"\n  [yellow]>> {tool}({event.data['arguments']})[/yellow]",
-                            stderr=True,
+                        err_console.print(
+                            f"\n  [yellow]>> {tool}({event.data['arguments']})[/yellow]"
                         )
                     case EventType.TOOL_RESULT:
                         result = event.data["result"]
                         display = result[:200] + "..." if len(result) > 200 else result
-                        console.print(f"  [dim]<< {display}[/dim]", stderr=True)
+                        err_console.print(f"  [dim]<< {display}[/dim]")
                     case EventType.RESPONSE_COMPLETE:
                         print()
                         meta = event.data.get("metadata", {})
                         if meta.get("tps"):
-                            console.print(
-                                f"[dim]({meta['tps']:.1f} tok/s, {meta['tokens']} tokens)[/dim]",
-                                stderr=True,
+                            err_console.print(
+                                f"[dim]({meta['tps']:.1f} tok/s, {meta['tokens']} tokens)[/dim]"
                             )
         elif stream and raw:
             async for event in agent_rt.step_streaming(conv):
