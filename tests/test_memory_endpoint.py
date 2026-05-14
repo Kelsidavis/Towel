@@ -220,6 +220,30 @@ class TestMemoryEndpoint:
         assert r1.status_code == 400
         assert r2.status_code == 400
 
+    def test_post_rejects_overlong_key(self, store, memory):
+        """Memory keys appear in URL paths and logs; a 1000-char key
+        produces absurd URLs and breaks log readability. Cap at 256."""
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+        resp = client.post(
+            "/memory",
+            json={"key": "x" * 1000, "content": "y"},
+        )
+        assert resp.status_code == 400
+        assert "256" in resp.json()["error"]
+
+    def test_post_rejects_control_chars_in_key(self, store, memory):
+        """Newlines, NULs etc. break URL routing and log parsing."""
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+        for bad_key in ("a\nb", "a\tb", "a\x00b"):
+            resp = client.post(
+                "/memory",
+                json={"key": bad_key, "content": "y"},
+            )
+            assert resp.status_code == 400, f"accepted bad key {bad_key!r}"
+            assert "control" in resp.json()["error"].lower()
+
     def test_post_tags_and_scope_persist(self, store, memory):
         gw = _gateway(store, _FakeAgent(memory))
         client = TestClient(gw._build_http_app())

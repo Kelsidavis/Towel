@@ -2814,6 +2814,24 @@ class GatewayServer:
             content = body.get("content")
             if not (isinstance(key, str) and key.strip()):
                 return JSONResponse({"error": "key required"}, status_code=400)
+            # Hard cap key length. Memory keys appear in URL paths
+            # (/memory/{key}/inspect, /nudge, ...), in dispatch logs,
+            # and in the web UI. Anything past a couple hundred chars
+            # is almost certainly accidental input that will produce
+            # absurd URLs. 256 mirrors the practical filesystem and
+            # URL-segment limits.
+            if len(key) > 256:
+                return JSONResponse(
+                    {"error": "key must be 256 chars or fewer"}, status_code=400,
+                )
+            # Reject control chars (newlines, NULs, etc.) — they break
+            # URL routing and log readability. Spaces and printable
+            # punctuation are fine.
+            if any(ord(c) < 0x20 or ord(c) == 0x7F for c in key):
+                return JSONResponse(
+                    {"error": "key must not contain control characters"},
+                    status_code=400,
+                )
             if not (isinstance(content, str) and content.strip()):
                 return JSONResponse({"error": "content required"}, status_code=400)
             mtype = body.get("type", "fact")
