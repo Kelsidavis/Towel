@@ -2353,6 +2353,30 @@ def memory_clear() -> None:
     console.print(f"[green]Cleared {count} memories.[/green]")
 
 
+@memory.command(name="nudge")
+@click.argument("key")
+def memory_nudge(key: str) -> None:
+    """Bump an entry's recall_count by 1.
+
+    Counter to `forget`: marks a memory as useful so the salience
+    score (and the doctor cold-pattern check) stop treating it as
+    never-recalled. Useful when you keep finding an entry helpful
+    but it hasn't been auto-recalled by a prompt-block query.
+    """
+    from towel.memory.store import MemoryStore
+
+    store = MemoryStore()
+    if store.recall(key) is None:
+        console.print(f"[red]No memory with key {key!r}.[/red]")
+        raise SystemExit(1)
+    store._bump_recall([key])
+    e = store.recall(key)
+    console.print(
+        f"[green]Nudged {key}:[/green] recall_count={e.recall_count}, "
+        f"last_recalled={e.last_recalled_at}"
+    )
+
+
 @memory.command(name="promote")
 @click.argument("key")
 @click.option(

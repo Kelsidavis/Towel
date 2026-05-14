@@ -190,6 +190,68 @@ class TestMemoryEndpoint:
         resp = client.patch("/memory/never-existed", json={"content": "x"})
         assert resp.status_code == 404
 
+    def test_post_creates_new_entry(self, store, memory):
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+        resp = client.post(
+            "/memory",
+            json={"key": "fresh", "content": "hello", "type": "fact"},
+        )
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["key"] == "fresh"
+        assert body["content"] == "hello"
+        assert memory.recall("fresh") is not None
+
+    def test_post_rejects_duplicate_key(self, store, memory):
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+        resp = client.post(
+            "/memory",
+            json={"key": "user_role", "content": "x"},
+        )
+        assert resp.status_code == 409
+
+    def test_post_requires_key_and_content(self, store, memory):
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+        r1 = client.post("/memory", json={"content": "x"})
+        r2 = client.post("/memory", json={"key": "k"})
+        assert r1.status_code == 400
+        assert r2.status_code == 400
+
+    def test_post_tags_and_scope_persist(self, store, memory):
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+        resp = client.post(
+            "/memory",
+            json={
+                "key": "tagged_proj",
+                "content": "x",
+                "tags": ["a", "b"],
+                "scope": "proj:foo",
+            },
+        )
+        assert resp.status_code == 201
+        e = memory.recall("tagged_proj")
+        assert e.tags == ["a", "b"]
+        assert e.scope == "proj:foo"
+
+    def test_nudge_bumps_recall_count(self, store, memory):
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+        before = memory.recall("user_role").recall_count
+        resp = client.post("/memory/user_role/nudge")
+        assert resp.status_code == 200
+        after = memory.recall("user_role").recall_count
+        assert after == before + 1
+
+    def test_nudge_unknown_key_404(self, store, memory):
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+        resp = client.post("/memory/never-existed/nudge")
+        assert resp.status_code == 404
+
     def test_patch_changes_scope(self, store, memory):
         memory.remember("rove", "x", scope="proj:a")
         gw = _gateway(store, _FakeAgent(memory))

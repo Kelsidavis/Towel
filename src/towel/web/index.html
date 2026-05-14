@@ -324,6 +324,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       </div>
       <div style="display:flex;gap:6px">
         <input id="memory-search" type="text" placeholder="search content…" style="background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font:inherit">
+        <button class="tb-btn" id="memory-new-btn" title="Create a new memory entry">+ new</button>
         <button class="tb-btn" id="memory-refresh-btn" title="Refresh memory list">refresh</button>
         <button class="tb-btn" id="memory-close-btn" title="Close memory panel">close</button>
       </div>
@@ -2107,6 +2108,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   function closeMemoryPanel() { memoryOverlay.style.display = 'none'; }
 
   tbMemory.addEventListener('click', openMemoryPanel);
+  const memoryNewBtn = document.getElementById('memory-new-btn');
+  if (memoryNewBtn) memoryNewBtn.addEventListener('click', openCreate);
   memoryCloseBtn.addEventListener('click', closeMemoryPanel);
   memoryRefreshBtn.addEventListener('click', function() {
     loadMemoryStats();
@@ -2213,7 +2216,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         +   '<div>created: ' + escHtml(created) + '</div>'
         + '</div>'
         + relatedHtml
-        + '<div style="margin-top:14px;text-align:right">'
+        + '<div style="margin-top:14px;text-align:right;display:flex;justify-content:flex-end;gap:6px">'
+        +   '<button class="tb-btn" id="memory-inspect-nudge-btn" title="Mark this memory as useful — bumps recall_count, counters auto-forget">nudge</button>'
         +   '<button class="tb-btn" id="memory-inspect-edit-btn">edit</button>'
         + '</div>';
     } catch (err) {
@@ -2384,9 +2388,41 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   // the edit form. One listener so we don't compete with nested
   // event handlers.
   memoryInspectBody.addEventListener('click', async function(e) {
+    const nudgeBtn = e.target.closest('#memory-inspect-nudge-btn');
+    if (nudgeBtn) {
+      let entry;
+      try {
+        entry = JSON.parse(memoryInspectBody.dataset.entry || '{}');
+      } catch (_err) { return; }
+      if (!entry.key) return;
+      try {
+        const resp = await fetch(apiBase + '/memory/' + encodeURIComponent(entry.key) + '/nudge', {method: 'POST'});
+        if (!resp.ok) {
+          const data = await resp.json().catch(function(){return {};});
+          alert('Nudge failed: ' + (data.error || resp.statusText));
+          return;
+        }
+        await openInspect(entry.key);
+        loadMemoryStats();
+        loadMemoryList(memorySearchEl ? memorySearchEl.value.trim() : '');
+      } catch (err) {
+        alert('Nudge failed: ' + err.message);
+      }
+      return;
+    }
     const editBtn = e.target.closest('#memory-inspect-edit-btn');
     if (editBtn) {
       renderInspectEdit();
+      return;
+    }
+    const createCancelBtn = e.target.closest('#memory-create-cancel-btn');
+    if (createCancelBtn) {
+      memoryInspectOverlay.style.display = 'none';
+      return;
+    }
+    const createSaveBtn = e.target.closest('#memory-create-save-btn');
+    if (createSaveBtn) {
+      await saveCreate();
       return;
     }
     const cancelBtn = e.target.closest('#memory-inspect-cancel-btn');
@@ -2406,6 +2442,73 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     const tgt = e.target.closest('[data-inspect-key]');
     if (tgt) openInspect(tgt.getAttribute('data-inspect-key'));
   });
+
+  function openCreate() {
+    // Reuse the inspect overlay as a create form so the operator
+    // sees the same shape of inputs they'd see when editing.
+    memoryInspectOverlay.style.display = 'flex';
+    memoryInspectBody.dataset.entry = '';  // sentinel: no existing entry
+    const types = ['user', 'preference', 'project', 'fact'];
+    memoryInspectBody.innerHTML =
+      '<div style="margin-bottom:8px"><strong style="font-size:1.1em">New memory</strong></div>'
+      + '<label style="display:block;color:var(--text-dim);font-size:0.8em;margin-top:6px">key (short identifier)'
+      +   '<input id="memory-create-key" type="text" placeholder="e.g. user_role" style="width:100%;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px;font:inherit">'
+      + '</label>'
+      + '<label style="display:block;color:var(--text-dim);font-size:0.8em;margin-top:8px">content'
+      +   '<textarea id="memory-create-content" rows="6" style="width:100%;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px;font:inherit"></textarea>'
+      + '</label>'
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">'
+      +   '<label style="display:block;color:var(--text-dim);font-size:0.8em">type'
+      +     '<select id="memory-create-type" style="width:100%;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px">'
+      +       types.map(function(t) { return '<option value="' + t + '">' + t + '</option>'; }).join('')
+      +     '</select>'
+      +   '</label>'
+      +   '<label style="display:block;color:var(--text-dim);font-size:0.8em">scope'
+      +     '<input id="memory-create-scope" type="text" placeholder="(global)" style="width:100%;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px;font:inherit">'
+      +   '</label>'
+      + '</div>'
+      + '<label style="display:block;color:var(--text-dim);font-size:0.8em;margin-top:8px">tags (comma-separated)'
+      +   '<input id="memory-create-tags" type="text" placeholder="e.g. work, urgent" style="width:100%;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px;font:inherit">'
+      + '</label>'
+      + '<div style="display:flex;justify-content:flex-end;gap:6px;margin-top:14px">'
+      +   '<button class="tb-btn" id="memory-create-cancel-btn">cancel</button>'
+      +   '<button class="tb-btn" id="memory-create-save-btn" style="color:var(--green);border-color:var(--green)">create</button>'
+      + '</div>';
+    setTimeout(function() {
+      const k = document.getElementById('memory-create-key');
+      if (k) k.focus();
+    }, 50);
+  }
+
+  async function saveCreate() {
+    const key = ((document.getElementById('memory-create-key') || {}).value || '').trim();
+    const content = ((document.getElementById('memory-create-content') || {}).value || '').trim();
+    const mtype = (document.getElementById('memory-create-type') || {}).value || 'fact';
+    const scope = ((document.getElementById('memory-create-scope') || {}).value || '').trim();
+    const tagsRaw = ((document.getElementById('memory-create-tags') || {}).value || '');
+    const tags = tagsRaw.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+    if (!key) { alert('Key required.'); return; }
+    if (!content) { alert('Content required.'); return; }
+    try {
+      const resp = await fetch(apiBase + '/memory', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({key: key, content: content, type: mtype, scope: scope, tags: tags}),
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(function(){return {};});
+        alert('Create failed: ' + (data.error || resp.statusText));
+        return;
+      }
+      memoryInspectOverlay.style.display = 'none';
+      loadMemoryStats();
+      loadMemoryScopeFilter();
+      loadMemoryTagFilter();
+      loadMemoryList(memorySearchEl ? memorySearchEl.value.trim() : '');
+    } catch (err) {
+      alert('Create failed: ' + err.message);
+    }
+  }
 
   function renderInspectEdit() {
     let e;

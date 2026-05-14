@@ -2471,6 +2471,91 @@ class GatewayServer:
                 status_code=200 if resp.is_success else 502,
             )
 
+        async def memory_create(request: Request) -> JSONResponse:
+            """Create a new memory. Refuses if the key already exists.
+
+            Body shape::
+
+                {"key": "...", "content": "...", "type": "fact",
+                 "tags": [...], "scope": "..."}
+
+            Returns 409 if the key already exists — the operator can
+            then choose PATCH for update or another key. Keeps create
+            and update semantics distinct so the web UI's "+ new"
+            button can't silently clobber existing data.
+            """
+            from towel.memory.store import MEMORY_TYPES
+
+            memory = getattr(self.agent, "memory", None)
+            if memory is None:
+                return JSONResponse({"error": "no memory backend"}, status_code=503)
+            try:
+                body = await request.json()
+            except Exception:
+                return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+            if not isinstance(body, dict):
+                return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+            key = body.get("key")
+            content = body.get("content")
+            if not (isinstance(key, str) and key.strip()):
+                return JSONResponse({"error": "key required"}, status_code=400)
+            if not (isinstance(content, str) and content.strip()):
+                return JSONResponse({"error": "content required"}, status_code=400)
+            mtype = body.get("type", "fact")
+            if mtype not in MEMORY_TYPES:
+                return JSONResponse(
+                    {"error": f"type must be one of {list(MEMORY_TYPES)}"},
+                    status_code=400,
+                )
+            tags = body.get("tags")
+            if tags is not None and not (
+                isinstance(tags, list) and all(isinstance(t, str) for t in tags)
+            ):
+                return JSONResponse({"error": "tags must be a list of strings"}, status_code=400)
+            scope = body.get("scope")
+            if scope is not None and not isinstance(scope, str):
+                return JSONResponse({"error": "scope must be a string"}, status_code=400)
+
+            if memory.recall(key) is not None:
+                return JSONResponse(
+                    {"error": f"key {key!r} already exists; use PATCH to update"},
+                    status_code=409,
+                )
+            try:
+                entry = memory.remember(
+                    key, content, memory_type=mtype,
+                    source="api", tags=tags, scope=scope,
+                )
+            except Exception as exc:
+                log.exception("memory.create(%r) failed: %s", key, exc)
+                return JSONResponse({"error": str(exc)}, status_code=500)
+            return JSONResponse(entry.to_dict(), status_code=201)
+
+        async def memory_nudge(request: Request) -> JSONResponse:
+            """Manually bump an entry's recall_count by 1.
+
+            Operator-driven counter to ``forget``: mark an entry as
+            useful so the salience score (and the doctor cold-pattern
+            check) stop treating it as never-recalled. Uses the same
+            _bump_recall path the retrieval code uses, so the effect
+            is indistinguishable from a real surface in the prompt.
+            """
+            memory = getattr(self.agent, "memory", None)
+            if memory is None:
+                return JSONResponse({"error": "no memory backend"}, status_code=503)
+            key = request.path_params["key"]
+            if memory.recall(key) is None:
+                return JSONResponse(
+                    {"error": f"no memory with key {key!r}"}, status_code=404
+                )
+            try:
+                memory._bump_recall([key])
+            except Exception as exc:
+                log.exception("memory.nudge(%r) failed: %s", key, exc)
+                return JSONResponse({"error": str(exc)}, status_code=500)
+            entry = memory.recall(key)
+            return JSONResponse(entry.to_dict())
+
         async def memory_edit(request: Request) -> JSONResponse:
             """Update an existing memory's content, type, tags, or scope.
 
@@ -2970,10 +3055,12 @@ class GatewayServer:
             Route("/dispatch/explain", dispatch_explain),
             Route("/skills", skills_list),
             Route("/memory", memory_list),
+            Route("/memory", memory_create, methods=["POST"]),
             Route("/memory/stats", memory_stats),
             # Order matters: more-specific routes first so /memory/stats
             # and /memory/{key}/inspect don't get shadowed by /memory/{key}.
             Route("/memory/{key}/inspect", memory_inspect),
+            Route("/memory/{key}/nudge", memory_nudge, methods=["POST"]),
             Route("/memory/{key}", memory_edit, methods=["PATCH"]),
             Route("/memory/{key}", memory_forget, methods=["DELETE"]),
             Route("/fleet/spawn", fleet_spawn, methods=["POST"]),
