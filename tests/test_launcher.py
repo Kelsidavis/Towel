@@ -56,15 +56,17 @@ class TestArgvBuilder:
         assert "http://gpu-box:11434" in argv
         assert "--worker-id" in argv
         assert "w-gpu-1" in argv
-        assert "--no-tools" in argv
+        assert "--no-allow-tools" in argv
 
     def test_empty_optionals_are_omitted(self):
         argv, _ = _build_worker_argv({"controller": "ws://x"})
-        # No --backend, --ollama-url, --worker-id, --no-tools when not specified.
+        # No --backend, --ollama-url, --worker-id, --allow-tools flags when
+        # not specified — the worker CLI's default applies.
         assert "--backend" not in argv
         assert "--ollama-url" not in argv
         assert "--worker-id" not in argv
-        assert "--no-tools" not in argv
+        assert "--no-allow-tools" not in argv
+        assert "--allow-tools" not in argv
         # Most importantly: no --model when not specified, so the worker
         # uses its config.toml default rather than being forced onto a
         # stale value.

@@ -112,8 +112,15 @@ def _build_worker_argv(payload: dict[str, Any]) -> tuple[list[str], str | None]:
     worker_id = payload.get("worker_id")
     if worker_id:
         argv.extend(["--worker-id", str(worker_id)])
-    if payload.get("allow_tools") is False:
-        argv.append("--no-tools")
+    # Forward the operator's allow_tools choice. Default at the worker CLI
+    # is enabled, so we only emit a flag when the payload explicitly pins
+    # it — and the flag must match Click's registered names
+    # (--allow-tools / --no-allow-tools), not the shorthand --no-tools.
+    allow = payload.get("allow_tools")
+    if allow is False:
+        argv.append("--no-allow-tools")
+    elif allow is True:
+        argv.append("--allow-tools")
     return argv, None
 
 
@@ -206,6 +213,12 @@ _DEFAULT_UPGRADE_COMMANDS: dict[str, list[str]] = {
     # uv equivalent for hosts on the uv toolchain.
     "uv": ["uv", "pip", "install", "--upgrade", "towel"],
 }
+
+
+# Public alias — re-used by `towel worker --auto-update` so the in-process
+# self-upgrade path runs the exact same commands as the remote upgrade RPC.
+# Renaming any strategy below changes behavior on both endpoints in lock-step.
+UPGRADE_STRATEGIES = _DEFAULT_UPGRADE_COMMANDS
 
 
 def build_app(token: str) -> Starlette:

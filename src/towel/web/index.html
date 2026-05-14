@@ -913,7 +913,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
               <button class="fleet-btn warn" data-worker-id="${escHtml(worker.id)}" data-worker-op="${worker.draining ? 'undrain' : 'drain'}">${worker.draining ? 'undrain' : 'drain'}</button>
               <button class="fleet-btn err" data-worker-id="${escHtml(worker.id)}" data-worker-op="${worker.enabled === false ? 'enable' : 'disable'}">${worker.enabled === false ? 'enable' : 'disable'}</button>
               <button class="fleet-btn" data-worker-id="${escHtml(worker.id)}" data-worker-op="replace" title="Drain and respawn this worker via its launcher (optionally with a new model)">replace</button>
-              <button class="fleet-btn" data-worker-id="${escHtml(worker.id)}" data-worker-op="upgrade" title="Run an upgrade command on this worker's host via its launcher">upgrade</button>
+              <button class="fleet-btn" data-worker-id="${escHtml(worker.id)}" data-worker-op="upgrade" title="One-click software upgrade via the worker's advertised launcher (defaults: launcher_url from capabilities, strategy=pip, token remembered after first prompt). Shift-click to override URL / token / strategy.">upgrade</button>
             </div>
           </div>
         `;
@@ -1383,6 +1383,16 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   function rememberLauncherToken(token) {
     if (token) sessionStorage.setItem('towel.launcher.token', token);
   }
+  // Last upgrade strategy used — persistent so the one-click button can
+  // skip the prompt on subsequent clicks. Per-worker so a fleet with
+  // mixed install methods (pip vs git-pull vs uv) still does the right
+  // thing for each host.
+  function rememberedLauncherStrategy(workerId) {
+    return localStorage.getItem('towel.launcher.' + workerId + '.strategy') || '';
+  }
+  function rememberLauncherStrategy(workerId, strategy) {
+    if (strategy) localStorage.setItem('towel.launcher.' + workerId + '.strategy', strategy);
+  }
 
   async function replaceWorker(workerId) {
     // Prefer the URL the worker advertised in capabilities (auto-detected
@@ -1493,26 +1503,48 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     }
   }
 
-  async function upgradeWorker(workerId) {
+  async function upgradeWorker(workerId, opts) {
+    // True one-click: URL comes from the worker's own capability
+    // advertisement, strategy defaults to "pip" (overridable per-worker
+    // via localStorage), and we only prompt for the bearer token the
+    // first time (then it lives in sessionStorage). Shift-click the
+    // upgrade button (opts.forcePrompt) to override URL/token/strategy
+    // — e.g. to switch a host from pip to git-pull.
     const advertised = advertisedLauncherUrl(workerId);
-    const defaultUrl = advertised || rememberedLauncherUrl(workerId);
-    const launcherUrl = prompt(
-      `Upgrade software on worker "${workerId}" — launcher URL on its host:`,
-      defaultUrl
-    );
-    if (!launcherUrl) return;
-    const token = prompt(
-      'Launcher bearer token:',
-      rememberedLauncherToken()
-    );
-    if (token === null) return;
-    const strategy = prompt(
-      'Upgrade strategy (pip / git-pull / uv):',
-      'pip'
-    );
-    if (!strategy) return;
+    const fallbackUrl = rememberedLauncherUrl(workerId);
+    const knownToken = rememberedLauncherToken();
+    const knownStrategy = rememberedLauncherStrategy(workerId) || 'pip';
+    const forcePrompt = !!(opts && opts.forcePrompt);
+
+    let launcherUrl = advertised || fallbackUrl;
+    let token = knownToken;
+    let strategy = knownStrategy;
+
+    if (forcePrompt || !launcherUrl) {
+      launcherUrl = prompt(
+        `Upgrade software on worker "${workerId}" — launcher URL on its host:`,
+        launcherUrl
+      );
+      if (!launcherUrl) return;
+    }
+    if (forcePrompt || !token) {
+      token = prompt(
+        `Launcher bearer token for "${workerId}":`,
+        token
+      );
+      if (token === null || token === '') return;
+    }
+    if (forcePrompt) {
+      const next = prompt(
+        'Upgrade strategy (pip / git-pull / uv):',
+        strategy
+      );
+      if (!next) return;
+      strategy = next.trim();
+    }
     rememberLauncherUrl(workerId, launcherUrl);
     rememberLauncherToken(token);
+    rememberLauncherStrategy(workerId, strategy);
     try {
       const resp = await fetch(apiBase + '/fleet/upgrade', {
         method: 'POST',
@@ -1520,7 +1552,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         body: JSON.stringify({
           launcher_url: launcherUrl,
           launcher_token: token,
-          strategy: strategy.trim(),
+          strategy: strategy,
         }),
       });
       const data = await resp.json();
@@ -1708,7 +1740,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       if (op === 'disable') await updateWorkerState(workerId, { enabled: false });
       if (op === 'enable') await updateWorkerState(workerId, { enabled: true });
       if (op === 'replace') { await replaceWorker(workerId); return; }
-      if (op === 'upgrade') { await upgradeWorker(workerId); return; }
+      if (op === 'upgrade') { await upgradeWorker(workerId, { forcePrompt: e.shiftKey }); return; }
       if (op === 'save-tasks') {
         const select = btn.closest('.fleet-card').querySelector('.fleet-task-select');
         const tasks = Array.from(select.selectedOptions).map(function(o){return o.value;});

@@ -74,6 +74,59 @@ def _build_skill_registry(config: TowelConfig, memory_store: Any = None) -> Skil
     return registry
 
 
+def _self_update_and_reexec(strategy: str) -> None:
+    """Upgrade towel in place, then re-exec the current process.
+
+    Used by ``towel worker --auto-update`` so a freshly-booted worker
+    picks up the latest code before connecting to the controller. The
+    re-exec is required: once Python has imported ``towel`` the module
+    is pinned in memory, so simply continuing after ``pip install``
+    would still run the previous version.
+
+    Sets ``TOWEL_AUTO_UPDATE_DONE=1`` in the re-exec environment so the
+    post-exec pass skips the upgrade — otherwise every restart would
+    loop. On upgrade failure we log and continue with the existing
+    code rather than blocking the worker; a stale worker is more
+    useful than no worker.
+    """
+    import subprocess
+
+    from towel.launcher import UPGRADE_STRATEGIES
+
+    cmd = UPGRADE_STRATEGIES.get(strategy)
+    if cmd is None:
+        console.print(
+            f"[yellow]auto-update: unknown strategy {strategy!r}; "
+            f"skipping (known: {sorted(UPGRADE_STRATEGIES)}).[/yellow]"
+        )
+        return
+    console.print(f"[dim]auto-update: running {' '.join(cmd)}…[/dim]")
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=300
+        )
+    except FileNotFoundError as exc:
+        console.print(f"[yellow]auto-update: command not found ({exc}); continuing.[/yellow]")
+        return
+    except subprocess.TimeoutExpired:
+        console.print("[yellow]auto-update: timed out after 300s; continuing.[/yellow]")
+        return
+    if result.returncode != 0:
+        tail = (result.stderr or result.stdout or "").splitlines()[-3:]
+        console.print(
+            f"[yellow]auto-update: exit {result.returncode}; continuing with current code.[/yellow]\n"
+            + "\n".join(tail)
+        )
+        return
+    console.print("[green]auto-update: succeeded, re-executing with new code.[/green]")
+    env = dict(os.environ)
+    env["TOWEL_AUTO_UPDATE_DONE"] = "1"
+    # sys.argv[0] is whatever invoked us (e.g. "towel" on PATH, or the
+    # absolute path systemd's ExecStart pointed at). execvpe resolves
+    # bare names via PATH so both forms work.
+    os.execvpe(sys.argv[0], sys.argv, env)
+
+
 BANNER = rf"""
  _____ _____        _______ _
 |_   _|  _  |      | _____ | |
@@ -373,8 +426,30 @@ async def _start(agent: Any, gateway: Any) -> None:
 )
 @click.option(
     "--allow-tools/--no-allow-tools",
+    default=True,
+    help=(
+        "Allow tools to run on the remote worker machine. Default: enabled — "
+        "the coordinator schedules tool-bearing tasks (lint, test-run, "
+        "git_ops, …) only to workers that advertise tools=yes. Pass "
+        "--no-allow-tools to harden a worker for inference-only duty."
+    ),
+)
+@click.option(
+    "--auto-update/--no-auto-update",
     default=False,
-    help="Allow tools to run on the remote worker machine",
+    help=(
+        "Self-upgrade before connecting (pip install --upgrade towel by "
+        "default). On success the worker re-execs itself so the new code "
+        "is loaded; pair with systemd Restart=always (or the launcher) to "
+        "get fresh workers on every boot."
+    ),
+)
+@click.option(
+    "--update-strategy",
+    type=click.Choice(["pip", "git-pull", "uv"]),
+    default="pip",
+    show_default=True,
+    help="Which recipe --auto-update runs. Same names as /fleet/upgrade.",
 )
 def worker(
     master: str | None,
@@ -389,8 +464,16 @@ def worker(
     llama_model: str | None,
     model_override: str | None,
     allow_tools: bool,
+    auto_update: bool,
+    update_strategy: str,
 ) -> None:
     """Start a remote worker that executes jobs for a controller."""
+    # Self-upgrade before any heavy imports so the new code is what
+    # actually runs. The env-var sentinel prevents the post-exec pass
+    # from upgrading again, which would loop forever.
+    if auto_update and os.environ.get("TOWEL_AUTO_UPDATE_DONE") != "1":
+        _self_update_and_reexec(update_strategy)
+
     console.print(Panel(Text(BANNER, style="bold green"), border_style="green"))
 
     # Discover coordinator via mDNS if --master not given
@@ -1652,6 +1735,23 @@ def doctor() -> None:
         "system prompts — bump this if you load many skills."
     ),
 )
+@click.option(
+    "--auto-update/--no-auto-update",
+    default=False,
+    help=(
+        "Bake --auto-update into the worker unit's ExecStart so the "
+        "host pulls the latest towel on every (re)start. Combined with "
+        "Restart=always, this is the simplest way to keep a fleet on "
+        "the same version without per-host operator action."
+    ),
+)
+@click.option(
+    "--update-strategy",
+    type=click.Choice(["pip", "git-pull", "uv"]),
+    default="pip",
+    show_default=True,
+    help="Strategy --auto-update will use; ignored without --auto-update.",
+)
 def install_worker(
     master: str | None,
     inhibit_sleep: bool,
@@ -1659,6 +1759,8 @@ def install_worker(
     llama_port: int,
     llama_ngl: int,
     llama_ctx: int,
+    auto_update: bool,
+    update_strategy: str,
 ) -> None:
     """Install systemd user service for auto-starting the Towel worker on boot.
 
@@ -1734,6 +1836,8 @@ WantedBy=default.target
     # passed, so it would miss config.toml's llama_url field on a custom port.
     if llama_model:
         worker_cmd += f" --llama-url http://localhost:{llama_port}"
+    if auto_update:
+        worker_cmd += f" --auto-update --update-strategy {update_strategy}"
     if inhibit_sleep:
         inhibit_bin = shutil.which("systemd-inhibit") or "/usr/bin/systemd-inhibit"
         worker_exec = (
