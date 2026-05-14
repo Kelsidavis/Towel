@@ -273,6 +273,39 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   </div>
 </div>
 
+<div id="replay-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1100;display:none;align-items:center;justify-content:center">
+  <div style="width:min(900px,96vw);max-height:88vh;overflow:hidden;background:var(--bg);border:1px solid var(--border);border-radius:8px;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border)">
+      <div>
+        <strong>SESSION REPLAY</strong>
+        <div style="font-size:0.8em;color:var(--text-dim)">Step through any saved conversation: prompts, tool calls, responses.</div>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <select id="replay-picker" style="background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font:inherit"></select>
+        <button class="tb-btn" id="replay-close-btn" title="Close replay">close</button>
+      </div>
+    </div>
+    <div id="replay-stage" style="padding:14px 18px;overflow:auto;flex:1;min-height:280px">
+      <div style="color:var(--text-dim)">Pick a conversation to begin.</div>
+    </div>
+    <div style="display:flex;gap:6px;align-items:center;padding:10px 18px;border-top:1px solid var(--border);background:rgba(0,0,0,0.15)">
+      <button class="tb-btn" id="replay-rewind">⏮</button>
+      <button class="tb-btn" id="replay-step-back">◀</button>
+      <button class="tb-btn" id="replay-play">▶</button>
+      <button class="tb-btn" id="replay-step-fwd">▶▶</button>
+      <button class="tb-btn" id="replay-end">⏭</button>
+      <span style="color:var(--text-dim);font-size:0.85em">speed</span>
+      <select id="replay-speed" style="background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px">
+        <option value="2000">0.5×</option>
+        <option value="1000" selected>1×</option>
+        <option value="500">2×</option>
+        <option value="250">4×</option>
+      </select>
+      <div id="replay-position" style="margin-left:auto;color:var(--text-dim);font-size:0.85em">—</div>
+    </div>
+  </div>
+</div>
+
 <div id="memory-inspect-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.66);z-index:1110;display:none;align-items:center;justify-content:center">
   <div style="width:min(640px,92vw);max-height:84vh;overflow:auto;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:18px">
     <div id="memory-inspect-body">Loading…</div>
@@ -435,6 +468,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     <div class="actions">
       <button class="tb-btn" id="tb-fleet" title="Open worker and route controls">fleet</button>
       <button class="tb-btn" id="tb-memory" title="View persistent memory: stats, recent captures, search">memory</button>
+      <button class="tb-btn" id="tb-replay" title="Replay any saved conversation step-by-step with play/pause/scrub">replay</button>
       <button class="tb-btn" id="tb-export" title="Export as markdown">export</button>
       <button class="tb-btn" id="tb-delete" title="Delete conversation">delete</button>
     </div>
@@ -2035,6 +2069,164 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     }
   }
 
+  // ── Session replay ────────────────────────────────────────────────
+  const replayOverlay = document.getElementById('replay-overlay');
+  const replayPicker = document.getElementById('replay-picker');
+  const replayStage = document.getElementById('replay-stage');
+  const replayPosEl = document.getElementById('replay-position');
+  const replaySpeedEl = document.getElementById('replay-speed');
+  const tbReplay = document.getElementById('tb-replay');
+
+  // Replay state lives outside the open() handler so play/pause keeps
+  // working across clicks.
+  let replayMessages = [];
+  let replayIndex = 0;
+  let replayTimer = null;
+  let replayPlaying = false;
+
+  async function openReplay() {
+    replayOverlay.style.display = 'flex';
+    // Populate the picker with the most recent conversations.
+    try {
+      const resp = await fetch(apiBase + '/conversations');
+      const data = await resp.json();
+      const items = (data.conversations || []).slice(0, 50);
+      replayPicker.innerHTML = '<option value="">— pick conversation —</option>'
+        + items.map(function(c) {
+            const title = c.title || c.summary || c.id;
+            const when = (c.created_at || '').slice(0, 10);
+            return '<option value="' + escHtml(c.id) + '">'
+              + escHtml(title.slice(0, 60)) + ' · ' + escHtml(when)
+              + '</option>';
+          }).join('');
+    } catch (err) {
+      replayStage.innerHTML = '<div style="color:var(--red)">conversation list failed: ' + escHtml(err.message) + '</div>';
+    }
+  }
+
+  function closeReplay() {
+    replayOverlay.style.display = 'none';
+    if (replayTimer) { clearInterval(replayTimer); replayTimer = null; }
+    replayPlaying = false;
+    document.getElementById('replay-play').textContent = '▶';
+  }
+
+  async function loadConversation(convId) {
+    if (!convId) {
+      replayStage.innerHTML = '<div style="color:var(--text-dim)">Pick a conversation to begin.</div>';
+      replayMessages = [];
+      replayIndex = 0;
+      updateReplayPosition();
+      return;
+    }
+    replayStage.innerHTML = '<div style="color:var(--text-dim)">Loading…</div>';
+    try {
+      const resp = await fetch(apiBase + '/conversations/' + encodeURIComponent(convId));
+      if (!resp.ok) {
+        replayStage.innerHTML = '<div style="color:var(--red)">load failed: ' + resp.statusText + '</div>';
+        return;
+      }
+      const conv = await resp.json();
+      replayMessages = conv.messages || [];
+      replayIndex = 0;
+      renderReplay();
+    } catch (err) {
+      replayStage.innerHTML = '<div style="color:var(--red)">load failed: ' + escHtml(err.message) + '</div>';
+    }
+  }
+
+  function renderReplay() {
+    if (!replayMessages.length) {
+      replayStage.innerHTML = '<div style="color:var(--text-dim)">Empty conversation.</div>';
+      updateReplayPosition();
+      return;
+    }
+    // Show the timeline up to the current index, dimmed beyond. Makes
+    // play visually progressive without redrawing every message each
+    // tick.
+    const html = replayMessages.map(function(m, i) {
+      const role = m.role || 'unknown';
+      const time = (m.timestamp || '').slice(11, 19);
+      const dim = i > replayIndex;
+      const cur = i === replayIndex;
+      const border = cur ? '2px solid var(--green)' : '1px solid var(--border)';
+      const opacity = dim ? '0.25' : '1';
+      const tag = role === 'user' ? '👤 user'
+                : role === 'assistant' ? '🤖 assistant'
+                : role === 'tool' ? '🔧 ' + escHtml(m.tool_name || m.metadata?.tool_name || 'tool')
+                : escHtml(role);
+      return '<div style="opacity:' + opacity + ';border:' + border + ';border-radius:6px;padding:8px 10px;margin-bottom:6px">'
+        + '<div style="display:flex;justify-content:space-between;color:var(--text-dim);font-size:0.8em;margin-bottom:4px">'
+        +   '<span>' + tag + '</span><span>' + escHtml(time) + '</span>'
+        + '</div>'
+        + '<div style="white-space:pre-wrap;font-family:inherit">' + escHtml((m.content || '').slice(0, 2000)) + ((m.content || '').length > 2000 ? '…' : '') + '</div>'
+        + '</div>';
+    }).join('');
+    replayStage.innerHTML = html;
+    // Scroll the current message into view.
+    const cur = replayStage.children[replayIndex];
+    if (cur && typeof cur.scrollIntoView === 'function') {
+      cur.scrollIntoView({block: 'center', behavior: 'smooth'});
+    }
+    updateReplayPosition();
+  }
+
+  function updateReplayPosition() {
+    if (!replayMessages.length) {
+      replayPosEl.textContent = '—';
+    } else {
+      replayPosEl.textContent = (replayIndex + 1) + ' / ' + replayMessages.length;
+    }
+  }
+
+  function stepReplay(delta) {
+    if (!replayMessages.length) return;
+    replayIndex = Math.max(0, Math.min(replayMessages.length - 1, replayIndex + delta));
+    renderReplay();
+  }
+
+  function togglePlay() {
+    if (!replayMessages.length) return;
+    if (replayPlaying) {
+      clearInterval(replayTimer);
+      replayTimer = null;
+      replayPlaying = false;
+      document.getElementById('replay-play').textContent = '▶';
+      return;
+    }
+    replayPlaying = true;
+    document.getElementById('replay-play').textContent = '⏸';
+    replayTimer = setInterval(function() {
+      if (replayIndex >= replayMessages.length - 1) {
+        clearInterval(replayTimer);
+        replayTimer = null;
+        replayPlaying = false;
+        document.getElementById('replay-play').textContent = '▶';
+        return;
+      }
+      stepReplay(1);
+    }, parseInt(replaySpeedEl.value, 10));
+  }
+
+  tbReplay.addEventListener('click', openReplay);
+  document.getElementById('replay-close-btn').addEventListener('click', closeReplay);
+  replayOverlay.addEventListener('click', function(e) { if (e.target === replayOverlay) closeReplay(); });
+  replayPicker.addEventListener('change', function() { loadConversation(replayPicker.value); });
+  document.getElementById('replay-rewind').addEventListener('click', function() {
+    replayIndex = 0; renderReplay();
+  });
+  document.getElementById('replay-step-back').addEventListener('click', function() { stepReplay(-1); });
+  document.getElementById('replay-step-fwd').addEventListener('click', function() { stepReplay(1); });
+  document.getElementById('replay-end').addEventListener('click', function() {
+    if (!replayMessages.length) return;
+    replayIndex = replayMessages.length - 1; renderReplay();
+  });
+  document.getElementById('replay-play').addEventListener('click', togglePlay);
+  replaySpeedEl.addEventListener('change', function() {
+    // Restart the timer at the new speed if currently playing.
+    if (replayPlaying) { togglePlay(); togglePlay(); }
+  });
+
   // Click a related entry to chain into its inspect view.
   memoryInspectBody.addEventListener('click', function(e) {
     const tgt = e.target.closest('[data-inspect-key]');
@@ -2123,6 +2315,12 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     if(e.key==='Escape'&&isStreaming)stopGeneration();
   });
   document.addEventListener('keydown',function(e){
+    if(e.key==='Escape'&&replayOverlay.style.display==='flex'){closeReplay(); return;}
+    // Space toggles play when the replay overlay is open (and the
+    // user isn't typing in an input).
+    if(e.key===' '&&replayOverlay.style.display==='flex'&&e.target.tagName!=='INPUT'&&e.target.tagName!=='TEXTAREA'&&e.target.tagName!=='SELECT'){
+      e.preventDefault(); togglePlay(); return;
+    }
     if(e.key==='Escape'&&memoryInspectOverlay.style.display==='flex'){memoryInspectOverlay.style.display='none'; return;}
     if(e.key==='Escape'&&memoryOverlay.style.display==='flex'){closeMemoryPanel(); return;}
     if(e.key==='Escape'&&fleetOverlay.classList.contains('visible')){closeFleetPanel(); return;}
