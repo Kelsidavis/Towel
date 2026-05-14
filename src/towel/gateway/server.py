@@ -2192,10 +2192,22 @@ class GatewayServer:
             max_param_b = 0.0
             for worker in self._workers.list():
                 caps = worker.capabilities or {}
-                models = caps.get("available_models") or []
-                for name in models:
-                    if not isinstance(name, str) or not name:
-                        continue
+                # available_models is what the worker reports it has
+                # cached on disk; the currently-loaded `model` is
+                # always cached too (it's loaded in RAM, must be on
+                # disk). Some llama-server builds don't expose
+                # /v1/models so available_models comes back empty —
+                # if we trust that alone, an actively-serving worker
+                # contributes nothing to the inventory. Merge both
+                # sources, deduplicated per worker.
+                names: set[str] = set()
+                for name in caps.get("available_models") or []:
+                    if isinstance(name, str) and name:
+                        names.add(name)
+                current_model = caps.get("model")
+                if isinstance(current_model, str) and current_model:
+                    names.add(current_model)
+                for name in names:
                     inventory.setdefault(name, []).append(worker.id)
                 cap = caps.get("max_param_b_est")
                 if isinstance(cap, (int, float)) and cap > max_param_b:
