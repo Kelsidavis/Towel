@@ -110,6 +110,59 @@ class TestNodeCapability:
         assert node.resources.vram_total_mb == 65536
         assert node.tools is True
 
+    def test_from_worker_capabilities_hoists_top_level_vram(self):
+        """Live workers report VRAM at the top level (`total_vram_mb`)
+        and inside a `gpus` array, NOT inside `resources`. Without the
+        hoist, `/cluster/nodes` reported vram_total_mb=0 for every
+        worker even when a GPU was present."""
+        caps = {
+            "hostname": "SparklesMint",
+            "backend": "llama",
+            "total_vram_mb": 16303,
+            "gpus": [{"name": "NVIDIA GeForce RTX 5080", "vram_mb": 16303}],
+            "resources": {
+                "hostname": "SparklesMint",
+                "cpu_count": 32,
+                "ram_total_mb": 128709,
+                "ram_available_mb": 117307,
+            },
+        }
+        node = NodeCapability.from_worker_capabilities("w-spark", caps)
+        assert node.resources.vram_total_mb == 16303
+        # ram_used must be derived from total - available since workers
+        # report psutil's `ram_available_mb`, not `ram_used_mb`.
+        assert node.resources.ram_used_mb == 128709 - 117307
+
+    def test_from_worker_capabilities_sums_gpus_when_total_absent(self):
+        """Older workers may report only per-GPU `vram_mb` without a
+        top-level total. Sum the array so the cluster view is still
+        accurate."""
+        caps = {
+            "hostname": "dual-gpu",
+            "backend": "llama",
+            "gpus": [
+                {"name": "A", "vram_mb": 8000},
+                {"name": "B", "vram_mb": 8000},
+            ],
+            "resources": {"hostname": "dual-gpu"},
+        }
+        node = NodeCapability.from_worker_capabilities("w-dual", caps)
+        assert node.resources.vram_total_mb == 16000
+
+    def test_from_worker_capabilities_resources_value_wins(self):
+        """If a future worker fixes the omission and DOES set
+        vram_total_mb inside resources, that value must win over the
+        hoist — we shouldn't double-count."""
+        caps = {
+            "total_vram_mb": 999999,  # ignored
+            "resources": {
+                "hostname": "self-reporting",
+                "vram_total_mb": 8000,
+            },
+        }
+        node = NodeCapability.from_worker_capabilities("w-self", caps)
+        assert node.resources.vram_total_mb == 8000
+
 
 class TestNodeTracker:
     def test_register_and_get(self):
