@@ -355,6 +355,24 @@ class TestSimpleAskAPI:
         session = gateway.sessions.get_or_create("test-ask")
         assert len(session.conversation) >= 1  # at least the user message
 
+    def test_ask_accepts_session_id_key(self, gateway, client):
+        """Clients reasonably pass ``session_id`` (the convention used
+        everywhere else in towel — path params, internal APIs, the
+        session list). Previously only ``session`` was honored, so
+        ``session_id`` was silently dropped and every such request
+        was merged into ``api-default``, sharing context with everyone."""
+        _resp = client.post(
+            "/api/ask",
+            json={"message": "hello", "session_id": "test-ask-via-id-key"},
+        )
+        session = gateway.sessions.get_or_create("test-ask-via-id-key")
+        assert len(session.conversation) >= 1
+        # And api-default must NOT have received this message — the old
+        # bug would route it there and contaminate the shared session.
+        api_default = gateway.sessions.get_or_create("api-default")
+        contents = [m.content for m in api_default.conversation.messages]
+        assert "hello" not in contents
+
 
 class TestApiSessions:
     def test_api_sessions_empty(self, client):

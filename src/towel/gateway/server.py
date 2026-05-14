@@ -3225,8 +3225,15 @@ class GatewayServer:
         async def simple_ask(request: Request) -> JSONResponse:
             """POST /api/ask — simple one-shot question/answer endpoint.
 
-            Body: {"message": "...", "session": "default", "system": null}
+            Body: {"message": "...", "session_id": "default", "system": null}
             Response: {"response": "...", "session": "...", "tokens": N, "tps": N.N}
+
+            Either ``session`` or ``session_id`` is accepted; the rest of
+            the codebase calls it ``session_id`` (path params, internal
+            APIs, /api/sessions output), so clients reasonably expect that
+            name here too. Previously only ``session`` worked and any
+            client passing ``session_id`` was silently merged into
+            ``api-default``, sharing context with every other caller.
 
             Much simpler than /v1/chat/completions for quick integrations.
             """
@@ -3239,7 +3246,7 @@ class GatewayServer:
             if not message:
                 return JSONResponse({"error": "message is required"}, status_code=400)
 
-            session_id = body.get("session", "api-default")
+            session_id = body.get("session_id") or body.get("session") or "api-default"
             system_override = body.get("system")
 
             session = self.sessions.get_or_create(session_id)
