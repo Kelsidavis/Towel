@@ -2214,6 +2214,20 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
             }).join('')
           + '</ul></div>'
         : '<div style="margin-top:14px;color:var(--text-dim);font-size:0.9em">No co-recall links yet.</div>';
+      const recentRecalls = data.recent_recalls || [];
+      const recallsHtml = recentRecalls.length
+        ? '<div style="margin-top:12px"><strong>Recent recalls returning this</strong>:'
+          + '<ul style="margin:6px 0 0 0;padding-left:18px">'
+          + recentRecalls.map(function(rc) {
+              const ts = (rc.ts || '').slice(0, 19).replace('T', ' ');
+              return '<li style="margin:2px 0;font-size:0.9em">'
+                + '<span style="color:var(--green)">#' + (rc.rank + 1) + '/' + rc.result_size + '</span>'
+                + ' <span style="color:var(--text-dim)">' + escHtml(ts) + '</span> '
+                + escHtml((rc.query || '').slice(0, 80))
+                + '</li>';
+            }).join('')
+          + '</ul></div>'
+        : '';
       const tags = Array.isArray(e.tags) ? e.tags : [];
       const tagsRow = tags.length
         ? '<div style="margin-top:6px">'
@@ -2241,6 +2255,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         +   '<div>created: ' + escHtml(created) + '</div>'
         + '</div>'
         + relatedHtml
+        + recallsHtml
         + '<div style="margin-top:14px;text-align:right;display:flex;justify-content:flex-end;gap:6px">'
         +   '<button class="tb-btn" id="memory-inspect-nudge-btn" title="Mark this memory as useful — bumps recall_count, counters auto-forget">nudge</button>'
         +   '<button class="tb-btn" id="memory-inspect-edit-btn">edit</button>'

@@ -638,6 +638,41 @@ class TestRecallLog:
         assert rows[0]["query"] == "q4"
 
 
+class TestRecallsReturning:
+    def test_finds_recalls_that_returned_key(self, store):
+        store.remember("alpha", "x", "fact")
+        store.remember("beta", "y", "fact")
+        # Two prompt-block calls that return alpha; one returns beta.
+        store.to_prompt_block(query="x")
+        store.to_prompt_block(query="x again")
+        store.to_prompt_block(query="y")
+        rows = store.recalls_returning("alpha")
+        assert len(rows) == 2
+        assert all(r["rank"] == 0 for r in rows)  # alpha was top hit
+
+    def test_ranks_record_position_in_result(self, store):
+        store.remember("a", "alpha keyword content", "fact")
+        store.remember("b", "alpha second match", "fact")
+        store.to_prompt_block(query="alpha", limit=5)
+        # Both should appear; one at rank 0, one at rank 1.
+        rows_a = store.recalls_returning("a")
+        rows_b = store.recalls_returning("b")
+        # Each got one recall entry.
+        assert len(rows_a) == 1
+        assert len(rows_b) == 1
+        # Ranks together cover 0 and 1.
+        assert {rows_a[0]["rank"], rows_b[0]["rank"]} == {0, 1}
+
+    def test_substring_safety(self, store):
+        # "vim" must not match a recall that returned "vimal".
+        store.remember("vimal", "x", "fact")
+        store.to_prompt_block(query="x")  # returns "vimal"
+        assert store.recalls_returning("vim") == []
+
+    def test_empty_key_returns_empty(self, store):
+        assert store.recalls_returning("") == []
+
+
 class TestActivity:
     def test_dense_buckets_zero_when_empty(self, store):
         buckets = store.activity(hours=3, bucket_hours=1)

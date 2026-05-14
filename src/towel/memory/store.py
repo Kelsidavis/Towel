@@ -1173,6 +1173,48 @@ class MemoryStore:
                     pairs,
                 )
 
+    def recalls_returning(
+        self, key: str, limit: int = 10
+    ) -> list[dict[str, Any]]:
+        """Recent recalls whose returned keys list contains ``key``.
+
+        Pairs with the inspect view: when an operator opens an entry,
+        we can show "this was returned in response to these queries"
+        so the auditing question "why does the agent know X?" turns
+        from grep-the-logs into one click. JSON-LIKE prefilter +
+        Python re-check for the same substring-safety reason
+        recent_recalls uses.
+        """
+        if not key:
+            return []
+        con = self._connect()
+        try:
+            rows = con.execute(
+                'SELECT ts, query, keys, scope FROM recall_log '
+                'WHERE keys LIKE ? ORDER BY id DESC LIMIT ?',
+                (f'%"{key}"%', limit * 4),
+            ).fetchall()
+        finally:
+            con.close()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            try:
+                keys = json.loads(r["keys"])
+            except json.JSONDecodeError:
+                continue
+            if key not in keys:
+                continue
+            out.append({
+                "ts": r["ts"],
+                "query": r["query"],
+                "rank": keys.index(key),
+                "result_size": len(keys),
+                "scope": r["scope"] or "",
+            })
+            if len(out) >= limit:
+                break
+        return out
+
     def record_recall(
         self,
         query: str,

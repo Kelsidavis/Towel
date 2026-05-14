@@ -2963,6 +2963,20 @@ def memory_inspect(key: str) -> None:
                 f"  [dim]{weight:3d}×[/dim] [{rel.memory_type}] {rel.key}"
             )
 
+    recent_recalls = store.recalls_returning(key, limit=5)
+    if recent_recalls:
+        console.print(
+            "\n[bold]Recent recalls returning this[/bold] "
+            "(query → rank in result):"
+        )
+        for r in recent_recalls:
+            ts = r["ts"][:19].replace("T", " ")
+            console.print(
+                f"  [dim]{ts}[/dim] "
+                f"[green]#{r['rank'] + 1}/{r['result_size']}[/green] "
+                f"{r['query'][:80]}"
+            )
+
 
 @memory.command(name="backup")
 @click.option(

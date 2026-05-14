@@ -1936,6 +1936,10 @@ class GatewayServer:
                 related = memory.recall_related(key, limit=5)
             except Exception:
                 related = []
+            try:
+                recent_recalls = memory.recalls_returning(key, limit=5)
+            except Exception:
+                recent_recalls = []
             return JSONResponse(
                 {
                     "entry": entry.to_dict(),
@@ -1943,6 +1947,7 @@ class GatewayServer:
                     "related": [
                         {"weight": w, **rel.to_dict()} for rel, w in related
                     ],
+                    "recent_recalls": recent_recalls,
                 }
             )
 

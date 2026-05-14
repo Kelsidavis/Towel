@@ -637,6 +637,24 @@ def check_memory_store() -> Check:
         return c
     c.ok(f"Memory store: {count} entries in {db_path}")
 
+    # Recall-log sanity: with a populated corpus, we'd expect the
+    # log to have at least a few rows if the agent has ever
+    # retrieved anything. Surface this only when count > 5 — small
+    # stores legitimately don't have recall history yet.
+    try:
+        recalls = store.recent_recalls(limit=1)
+        if count > 5 and not recalls:
+            c.warn(
+                "No recall events logged — has the agent run any "
+                "queries since the recall_log was introduced?"
+            )
+            c.suggestions.append(
+                "Send a message through the agent or run "
+                "`towel memory search QUERY` to populate the log."
+            )
+    except Exception:
+        pass
+
     # Noisy auto-capture: flag when most of the corpus is heuristic
     # captures that the agent has never actually used. Either the
     # patterns are firing too aggressively, or the operator hasn't
