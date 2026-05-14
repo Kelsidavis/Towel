@@ -4,14 +4,23 @@ The launcher lets a coordinator (or any client with the shared bearer token)
 ask a remote host to start a fresh Towel worker process without SSH access.
 A host running ``towel launcher`` listens on an HTTP port and exposes:
 
-  - ``GET /health``  — liveness probe (no auth)
-  - ``POST /launch`` — spawn a ``towel worker`` subprocess (token required)
+  - ``GET /health``        — liveness probe (no auth)
+  - ``POST /launch``       — spawn a ``towel worker`` subprocess (token required)
+  - ``GET /launches/{pid}`` — fetch boot log for a previously-spawned worker
+    (token required)
 
 The launcher is intentionally minimal: it doesn't track worker lifecycles,
 restart crashed children, or load-balance. Its job is "the controller asked
 us to bring up a worker; do it and report the PID." Once the worker is
 running it talks directly to the controller over its own WebSocket, so the
 launcher can be killed afterwards without affecting the worker.
+
+To make boot failures visible (model not found, port in use, ImportError,
+OOM), the launcher writes each spawned worker's stdout+stderr to a
+per-pid file under ``$TOWEL_HOME/launcher-logs/`` and waits ~1s after
+spawn before responding. If the worker has already exited at that point,
+the response is 500 with the captured tail instead of the optimistic
+200/ok that previously masked instant crashes.
 
 Auth: a shared bearer token sourced from the ``TOWEL_TRIGGER_TOKEN`` env
 var. The launcher refuses to start if the env var is unset — fail-secure
@@ -24,6 +33,8 @@ import logging
 import os
 import shutil
 import subprocess
+import time
+from pathlib import Path
 from typing import Any
 
 from starlette.applications import Starlette
@@ -31,11 +42,23 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from towel.config import TOWEL_HOME
+
 log = logging.getLogger("towel.launcher")
 
 DEFAULT_PORT = 18751
 TOKEN_ENV = "TOWEL_TRIGGER_TOKEN"
 _VALID_BACKENDS = {"mlx", "ollama", "llama", "claude"}
+# Where boot logs land. The pid-keyed log file gives operators something
+# concrete to read when a worker doesn't register with the coordinator.
+LAUNCHER_LOG_DIR = TOWEL_HOME / "launcher-logs"
+# How long to wait after spawn before deciding the worker booted cleanly.
+# Workers that don't crash within this window almost always go on to
+# register with the coordinator; ones that do crash usually do so on
+# import or argument-parse, well within 1s.
+_BOOT_GRACE_SECS = 1.0
+# Cap the in-response tail so a chatty traceback doesn't blow up the body.
+_LOG_TAIL_BYTES = 4000
 
 
 def _check_token(request: Request, token: str) -> JSONResponse | None:
@@ -94,26 +117,82 @@ def _build_worker_argv(payload: dict[str, Any]) -> tuple[list[str], str | None]:
     return argv, None
 
 
-def _spawn_worker(argv: list[str], env_overrides: dict[str, str] | None) -> subprocess.Popen[bytes]:
+def _log_path_for(pid: int) -> Path:
+    """Where to write a given worker's boot log."""
+    LAUNCHER_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    return LAUNCHER_LOG_DIR / f"worker-{pid}.log"
+
+
+def _tail_bytes(path: Path, limit: int = _LOG_TAIL_BYTES) -> str:
+    """Return the last ``limit`` bytes of a file as a UTF-8 string.
+
+    Returns an empty string if the file doesn't exist or can't be read —
+    boot logs are best-effort, so callers shouldn't have to special-case
+    missing files.
+    """
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return ""
+    if len(data) > limit:
+        data = data[-limit:]
+        return "…" + data.decode("utf-8", errors="replace")
+    return data.decode("utf-8", errors="replace")
+
+
+def _spawn_worker(
+    argv: list[str], env_overrides: dict[str, str] | None
+) -> tuple[subprocess.Popen[bytes], Path]:
     """Spawn the worker as a detached subprocess.
 
     The child inherits the launcher's environment (so HF cache locations,
     Ollama URLs, etc. work). ``env_overrides`` lets the caller add or replace
     individual variables — useful for forwarding ``TOWEL_HOME`` or specifying
     a different model cache without restarting the launcher.
+
+    Returns ``(proc, log_path)``. Stdout and stderr are merged into the
+    log file so operators have something to read when a worker fails to
+    register with the coordinator. The log is named after the spawned
+    pid so ``GET /launches/{pid}`` can find it deterministically.
     """
+    import tempfile
+
     env = dict(os.environ)
     if env_overrides:
         env.update({k: str(v) for k, v in env_overrides.items()})
-    return subprocess.Popen(
+    LAUNCHER_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    # Unique tmp name per call so concurrent /launch requests don't stomp
+    # on each other's log file. Rename to pid-keyed path post-spawn.
+    tmp_fd, tmp_name = tempfile.mkstemp(
+        prefix="spawn-", suffix=".log", dir=LAUNCHER_LOG_DIR
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        log_handle = os.fdopen(tmp_fd, "wb")
+    except Exception:
+        os.close(tmp_fd)
+        raise
+    proc = subprocess.Popen(
         argv,
         env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
         # ``start_new_session`` detaches from this launcher's process group, so
         # killing the launcher doesn't drag the worker down with it.
         start_new_session=True,
     )
+    log_handle.close()
+    # Rename to the pid-keyed path now that we know the pid. The child has
+    # its own fd pointing at the inode so writes follow the file, not the
+    # path; the rename is safe.
+    final_path = _log_path_for(proc.pid)
+    try:
+        tmp_path.replace(final_path)
+    except OSError:
+        # Cross-filesystem or permission failure — keep the tmp path so
+        # the response can still show *something*.
+        final_path = tmp_path
+    return proc, final_path
 
 
 _DEFAULT_UPGRADE_COMMANDS: dict[str, list[str]] = {
@@ -241,7 +320,7 @@ def build_app(token: str) -> Starlette:
             )
 
         try:
-            proc = _spawn_worker(argv, env_overrides)
+            proc, log_path = _spawn_worker(argv, env_overrides)
         except FileNotFoundError as exc:
             return JSONResponse(
                 {"error": f"towel binary not found: {exc}"}, status_code=500
@@ -249,12 +328,75 @@ def build_app(token: str) -> Starlette:
         except OSError as exc:
             return JSONResponse({"error": f"spawn failed: {exc}"}, status_code=500)
 
-        log.info("Spawned worker pid=%s argv=%s", proc.pid, argv)
+        log.info("Spawned worker pid=%s argv=%s log=%s", proc.pid, argv, log_path)
+        # Give the worker a short window to crash on import/argparse before
+        # claiming success. Workers that survive this almost always go on
+        # to register with the coordinator.
+        time.sleep(_BOOT_GRACE_SECS)
+        exit_code = proc.poll()
+        log_tail = _tail_bytes(log_path)
+        if exit_code is not None:
+            log.warning(
+                "Spawned worker pid=%s exited immediately with code=%s — "
+                "see %s for the full log",
+                proc.pid,
+                exit_code,
+                log_path,
+            )
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "pid": proc.pid,
+                    "argv": argv,
+                    "exit_code": exit_code,
+                    "log_path": str(log_path),
+                    "log_tail": log_tail,
+                    "error": (
+                        f"worker exited within {_BOOT_GRACE_SECS}s of spawn "
+                        f"(code {exit_code}); see log_tail for the cause"
+                    ),
+                },
+                status_code=500,
+            )
         return JSONResponse(
             {
                 "ok": True,
                 "pid": proc.pid,
                 "argv": argv,
+                "log_path": str(log_path),
+                # Include any startup output that landed in the grace
+                # window so a curl client can sanity-check what was logged
+                # even on a successful spawn.
+                "log_tail": log_tail,
+            }
+        )
+
+    async def get_launch_log(request: Request) -> JSONResponse:
+        """Return the captured boot log for a previously-spawned worker.
+
+        Useful when a worker registered fine but later crashed, or when
+        the operator wants the full tail rather than the snippet bundled
+        in the original ``/launch`` response. The log file persists for
+        the lifetime of ``LAUNCHER_LOG_DIR`` — operators can rotate it
+        externally if disk pressure becomes a concern.
+        """
+        denied = _check_token(request, token)
+        if denied is not None:
+            return denied
+        try:
+            pid = int(request.path_params["pid"])
+        except (KeyError, ValueError):
+            return JSONResponse({"error": "pid must be an integer"}, status_code=400)
+        log_path = _log_path_for(pid)
+        if not log_path.exists():
+            return JSONResponse(
+                {"error": f"no log for pid {pid}"}, status_code=404
+            )
+        return JSONResponse(
+            {
+                "pid": pid,
+                "log_path": str(log_path),
+                "log_tail": _tail_bytes(log_path),
             }
         )
 
@@ -263,6 +405,7 @@ def build_app(token: str) -> Starlette:
             Route("/health", health),
             Route("/launch", launch, methods=["POST"]),
             Route("/upgrade", upgrade, methods=["POST"]),
+            Route("/launches/{pid}", get_launch_log),
         ]
     )
 

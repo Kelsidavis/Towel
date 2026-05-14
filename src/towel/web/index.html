@@ -1404,10 +1404,18 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       if (!resp.ok) {
         const inner = (data.launcher_response && data.launcher_response.error) ||
                       data.error || resp.statusText;
-        alert('Replace failed: ' + inner);
+        // Surface the launcher's captured boot log when present — most
+        // useful failure mode (worker imploded on import / wrong model
+        // name) shows up here.
+        const tail = (data.launcher_response || {}).log_tail || '';
+        const detail = tail ? '\n\n--- worker boot log tail ---\n' + tail : '';
+        alert('Replace failed: ' + inner + detail);
         return;
       }
-      alert(`Worker ${workerId} replaced. New PID: ${(data.launcher_response || {}).pid || '?'}`);
+      const launcherResp = data.launcher_response || {};
+      const tail = launcherResp.log_tail || '';
+      const detail = tail ? '\n\nBoot log:\n' + tail : '';
+      alert(`Worker ${workerId} replaced. New PID: ${launcherResp.pid || '?'}` + detail);
       await loadFleetState();
     } catch (err) {
       alert('Replace failed: ' + err.message);

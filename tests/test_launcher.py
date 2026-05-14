@@ -8,6 +8,7 @@ processes.
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from starlette.testclient import TestClient
@@ -139,11 +140,37 @@ class TestLaunch:
     def _headers(self) -> dict[str, str]:
         return {"authorization": f"Bearer {self.TOKEN}"}
 
-    def _patched_spawn(self):
-        """Patch _spawn_worker to return a fake Popen so we don't fork."""
+    def _patched_spawn(self, exit_code=None, log_tail="ok"):
+        """Patch _spawn_worker to return (fake_proc, fake_log_path).
+
+        ``exit_code`` controls what ``proc.poll()`` returns after the
+        boot-grace sleep: ``None`` means "still running, looks healthy",
+        an int means "crashed at boot, here's the exit code".
+        """
         fake_proc = MagicMock()
         fake_proc.pid = 12345
-        return patch.object(launcher, "_spawn_worker", return_value=fake_proc)
+        fake_proc.poll.return_value = exit_code
+        # Use a non-existent path so _tail_bytes returns "". Tests that
+        # care about log_tail patch _tail_bytes separately.
+        fake_log_path = Path("/tmp/towel-test-no-such-log")
+
+        spawn_patch = patch.object(
+            launcher, "_spawn_worker", return_value=(fake_proc, fake_log_path)
+        )
+        # Skip the real boot-grace sleep so the suite stays fast.
+        sleep_patch = patch.object(launcher.time, "sleep", new=lambda _s: None)
+
+        class _BothPatches:
+            def __enter__(self):
+                spawn_patch.__enter__()
+                sleep_patch.__enter__()
+                return fake_proc
+
+            def __exit__(self, *exc):
+                sleep_patch.__exit__(*exc)
+                spawn_patch.__exit__(*exc)
+
+        return _BothPatches()
 
     def test_happy_path_returns_pid_and_argv(self):
         client = TestClient(build_app(self.TOKEN))
@@ -218,6 +245,80 @@ class TestLaunch:
             )
         assert resp.status_code == 500
         assert "towel" in resp.json()["error"]
+
+    def test_worker_crashes_in_boot_grace_returns_500_with_tail(self):
+        """A worker that exits inside the boot-grace window should turn
+        the optimistic 200 into a 500 with the log tail attached so the
+        operator can see *why* — the previous behaviour silently masked
+        instant crashes."""
+        client = TestClient(build_app(self.TOKEN))
+        with self._patched_spawn(exit_code=2), \
+             patch.object(launcher, "_tail_bytes", return_value="ImportError: no module foo"):
+            resp = client.post(
+                "/launch",
+                json={"controller": "ws://x", "backend": "mlx"},
+                headers=self._headers(),
+            )
+        assert resp.status_code == 500
+        data = resp.json()
+        assert data["ok"] is False
+        assert data["exit_code"] == 2
+        assert "ImportError" in data["log_tail"]
+        # Operator-friendly error message points at the log tail.
+        assert "log_tail" in data["error"]
+
+    def test_worker_survives_boot_grace_returns_200_with_tail(self):
+        """When the worker is still alive after the grace window the
+        response is still 200 but it also carries the (possibly empty)
+        log tail so the caller can sanity-check startup output."""
+        client = TestClient(build_app(self.TOKEN))
+        with self._patched_spawn(exit_code=None), \
+             patch.object(launcher, "_tail_bytes", return_value="Listening on..."):
+            resp = client.post(
+                "/launch",
+                json={"controller": "ws://x"},
+                headers=self._headers(),
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["pid"] == 12345
+        assert data["log_tail"] == "Listening on..."
+
+
+class TestGetLaunchLog:
+    TOKEN = "test-secret"
+
+    def _headers(self) -> dict[str, str]:
+        return {"authorization": f"Bearer {self.TOKEN}"}
+
+    def test_requires_token(self):
+        client = TestClient(build_app(self.TOKEN))
+        resp = client.get("/launches/12345")
+        assert resp.status_code == 401
+
+    def test_returns_404_when_no_log(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(launcher, "LAUNCHER_LOG_DIR", tmp_path / "logs")
+        client = TestClient(build_app(self.TOKEN))
+        resp = client.get("/launches/99999", headers=self._headers())
+        assert resp.status_code == 404
+
+    def test_returns_log_when_present(self, tmp_path, monkeypatch):
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "worker-12345.log").write_text("the worker said hi", encoding="utf-8")
+        monkeypatch.setattr(launcher, "LAUNCHER_LOG_DIR", log_dir)
+        client = TestClient(build_app(self.TOKEN))
+        resp = client.get("/launches/12345", headers=self._headers())
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["pid"] == 12345
+        assert data["log_tail"] == "the worker said hi"
+
+    def test_rejects_non_integer_pid(self):
+        client = TestClient(build_app(self.TOKEN))
+        resp = client.get("/launches/not-a-pid", headers=self._headers())
+        assert resp.status_code == 400
 
 
 class TestUpgrade:
