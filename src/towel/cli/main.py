@@ -2294,6 +2294,18 @@ def memory_stats() -> None:
             f"[dim]({unrecalled} never recalled)[/dim]"
         )
 
+    # Source breakdown — operator-set vs each auto_capture pattern.
+    # Surfaces which heuristics are firing the most and whether
+    # auto-capture is healthy.
+    by_source: dict[str, int] = {}
+    for e in entries:
+        key = e.source or "operator"
+        by_source[key] = by_source.get(key, 0) + 1
+    if len(by_source) > 1 or "operator" not in by_source:
+        console.print("\n[bold]By source:[/bold]")
+        for src in sorted(by_source, key=lambda s: -by_source[s]):
+            console.print(f"  {src:30s} {by_source[src]:4d}")
+
     # Surface the most recent auto-captures that haven't been validated
     # by a real query yet. These are the most likely false positives.
     pending = sorted(
@@ -2331,7 +2343,17 @@ def memory_stats() -> None:
     default=False,
     help="Also print every memory ranked by salience (lowest first).",
 )
-def memory_tidy(max_age_days: float, dry_run: bool, show_scores: bool) -> None:
+@click.option(
+    "--auto-only/--all-sources",
+    default=False,
+    help=(
+        "Only prune auto-captured entries (source starts with "
+        "'auto_capture:'). Operator-set entries stay regardless of age."
+    ),
+)
+def memory_tidy(
+    max_age_days: float, dry_run: bool, show_scores: bool, auto_only: bool
+) -> None:
     """Prune stale memories that were never recalled.
 
     Drops fact-type entries older than --max-age-days that have a zero
@@ -2351,7 +2373,11 @@ def memory_tidy(max_age_days: float, dry_run: bool, show_scores: bool) -> None:
                 f"updated={entry.updated_at.date()}"
             )
         console.print()
-    victims = store.auto_forget(max_age_days=max_age_days, dry_run=dry_run)
+    victims = store.auto_forget(
+        max_age_days=max_age_days,
+        dry_run=dry_run,
+        source_prefix="auto_capture:" if auto_only else None,
+    )
     if not victims:
         console.print("[green]Nothing to prune — store is already tidy.[/green]")
         return

@@ -214,7 +214,14 @@ def apply(
         existing = store.recall(cap.key)
         if existing is not None and not overwrite:
             continue
-        store.remember(cap.key, cap.content, memory_type=cap.memory_type)
+        # Tag the source so memory stats / tidy can distinguish
+        # heuristic captures from operator-set entries.
+        store.remember(
+            cap.key,
+            cap.content,
+            memory_type=cap.memory_type,
+            source=f"auto_capture:{cap.source_pattern}",
+        )
         log.info(
             "Auto-captured %s=%r via pattern=%s",
             cap.key, cap.content, cap.source_pattern,

@@ -407,6 +407,47 @@ class TestAutoForget:
         assert keys_by_rank[-1] == "popular"
 
 
+class TestSourceTracking:
+    def test_remember_records_source(self, tmp_path):
+        store = MemoryStore(store_dir=tmp_path)
+        store.remember("k", "v", source="auto_capture:role")
+        e = store.recall("k")
+        assert e.source == "auto_capture:role"
+
+    def test_default_source_is_empty(self, tmp_path):
+        store = MemoryStore(store_dir=tmp_path)
+        store.remember("k", "v")
+        assert store.recall("k").source == ""
+
+    def test_update_preserves_original_source(self, tmp_path):
+        # Operator-set memories keep their provenance even when content
+        # is updated — important so heuristic re-firing on the same key
+        # doesn't relabel a deliberate entry as auto-captured.
+        store = MemoryStore(store_dir=tmp_path)
+        store.remember("role", "engineer", source="")
+        store.remember("role", "senior engineer", source="auto_capture:role")
+        assert store.recall("role").source == ""
+
+    def test_auto_forget_source_prefix_filter(self, tmp_path):
+        from datetime import UTC, datetime, timedelta
+        import sqlite3
+        store = MemoryStore(store_dir=tmp_path)
+        store.remember("op_fact", "x", "fact", source="")
+        store.remember("auto_fact", "y", "fact", source="auto_capture:role")
+        # Age both so they're prune candidates.
+        old = (datetime.now(UTC) - timedelta(days=120)).isoformat()
+        con = sqlite3.connect(str(tmp_path / "memory.db"))
+        con.execute("UPDATE memories SET updated_at = ?", (old,))
+        con.commit()
+        con.close()
+
+        pruned = store.auto_forget(
+            max_age_days=90, source_prefix="auto_capture:"
+        )
+        assert [p.key for p in pruned] == ["auto_fact"]
+        assert store.recall("op_fact") is not None
+
+
 class TestMemoryEntry:
     def test_serialization_roundtrip(self):
         entry = MemoryEntry(key="test", content="value", memory_type="fact")

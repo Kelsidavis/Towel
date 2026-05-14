@@ -75,6 +75,12 @@ class MemoryEntry:
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     last_recalled_at: datetime | None = None
     recall_count: int = 0
+    # Where this memory came from. "" / None means operator-set (the
+    # remember() tool, CLI, or the legacy JSON import); a non-empty
+    # value comes from auto_capture and names the pattern that fired.
+    # Lets stats show heuristic vs deliberate, and lets tidy be picky
+    # about which sources it prunes.
+    source: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -87,6 +93,8 @@ class MemoryEntry:
         }
         if self.last_recalled_at is not None:
             out["last_recalled_at"] = self.last_recalled_at.isoformat()
+        if self.source:
+            out["source"] = self.source
         return out
 
     @classmethod
@@ -100,6 +108,7 @@ class MemoryEntry:
             updated_at=datetime.fromisoformat(data["updated_at"]),
             last_recalled_at=datetime.fromisoformat(last) if last else None,
             recall_count=int(data.get("recall_count", 0)),
+            source=data.get("source", ""),
         )
 
     def __str__(self) -> str:
@@ -121,7 +130,10 @@ CREATE TABLE IF NOT EXISTS memories (
     recall_count     INTEGER NOT NULL DEFAULT 0,
     -- Reserved for the embeddings follow-up. Nullable so PR 1 doesn't
     -- need to populate it; PR 2 fills it in lazily on first recall.
-    embedding        BLOB
+    embedding        BLOB,
+    -- Capture source: "" / NULL = operator-set (remember tool, CLI,
+    -- legacy JSON import); non-empty = auto_capture pattern label.
+    source           TEXT NOT NULL DEFAULT ''
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
@@ -145,6 +157,13 @@ END;
 
 def _row_to_entry(row: sqlite3.Row) -> MemoryEntry:
     last = row["last_recalled_at"]
+    # Older rows may predate the `source` column — sqlite.Row treats
+    # missing columns as a KeyError when accessed by name, so use a
+    # cautious lookup. Newly-created DBs have it from _SCHEMA above.
+    try:
+        source = row["source"] or ""
+    except (IndexError, KeyError):
+        source = ""
     return MemoryEntry(
         key=row["key"],
         content=row["content"],
@@ -153,6 +172,7 @@ def _row_to_entry(row: sqlite3.Row) -> MemoryEntry:
         updated_at=datetime.fromisoformat(row["updated_at"]),
         last_recalled_at=datetime.fromisoformat(last) if last else None,
         recall_count=int(row["recall_count"]),
+        source=source,
     )
 
 
@@ -217,6 +237,19 @@ class MemoryStore:
                     "sqlite with FTS5 enabled (Python's stdlib build "
                     "ships it on macOS Homebrew and Debian 11+)."
                 ) from exc
+            # Idempotent column additions for stores that predate them.
+            # ADD COLUMN with a NOT NULL default backfills existing rows
+            # to the default in modern SQLite, so this is safe to run on
+            # every open. Wrapped in try/except in case the column is
+            # already there (older sqlite raises rather than no-op).
+            for ddl in (
+                "ALTER TABLE memories ADD COLUMN source TEXT NOT NULL DEFAULT ''",
+            ):
+                try:
+                    con.execute(ddl)
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column" not in str(exc).lower():
+                        raise
         finally:
             con.close()
 
@@ -303,23 +336,37 @@ class MemoryStore:
     # ── CRUD ──────────────────────────────────────────────────────────
 
     def remember(
-        self, key: str, content: str, memory_type: str = "fact"
+        self,
+        key: str,
+        content: str,
+        memory_type: str = "fact",
+        *,
+        source: str = "",
     ) -> MemoryEntry:
-        """Store or update a memory."""
+        """Store or update a memory.
+
+        ``source`` is opaque to the store but conventionally identifies
+        the writer: ``""`` for operator-driven writes (remember tool,
+        CLI, JSON import), or a pattern name like ``"auto_capture:role"``
+        for heuristic captures. Stored on inserts only — updating an
+        existing memory leaves its original source intact so we don't
+        lose provenance of operator-set entries that get re-touched.
+        """
         now = datetime.now(UTC)
         now_iso = now.isoformat()
         with self._txn() as con:
             row = con.execute(
-                "SELECT created_at FROM memories WHERE key = ?", (key,)
+                "SELECT created_at, source FROM memories WHERE key = ?", (key,)
             ).fetchone()
             if row is None:
                 con.execute(
                     "INSERT INTO memories "
-                    "(key, content, memory_type, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (key, content, memory_type, now_iso, now_iso),
+                    "(key, content, memory_type, created_at, updated_at, source) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (key, content, memory_type, now_iso, now_iso, source),
                 )
                 created_at = now
+                stored_source = source
             else:
                 con.execute(
                     "UPDATE memories SET content = ?, memory_type = ?, "
@@ -327,6 +374,10 @@ class MemoryStore:
                     (content, memory_type, now_iso, key),
                 )
                 created_at = datetime.fromisoformat(row["created_at"])
+                try:
+                    stored_source = row["source"] or ""
+                except (IndexError, KeyError):
+                    stored_source = ""
         log.info("Remembered: %s", key)
         return MemoryEntry(
             key=key,
@@ -334,6 +385,7 @@ class MemoryStore:
             memory_type=memory_type,
             created_at=created_at,
             updated_at=now,
+            source=stored_source,
         )
 
     def forget(self, key: str) -> bool:
@@ -503,6 +555,7 @@ class MemoryStore:
         *,
         dry_run: bool = False,
         protected_types: tuple[str, ...] = _PROTECTED_TYPES,
+        source_prefix: str | None = None,
     ) -> list[MemoryEntry]:
         """Prune stale, never-recalled memories.
 
@@ -530,11 +583,15 @@ class MemoryStore:
         sql_where = (
             f"recall_count = 0 AND updated_at < ? AND memory_type NOT IN ({placeholders})"
         )
+        params: list[Any] = [cutoff_iso, *protected]
+        if source_prefix is not None:
+            sql_where += " AND source LIKE ?"
+            params.append(f"{source_prefix}%")
         con = self._connect()
         try:
             rows = con.execute(
                 f"SELECT * FROM memories WHERE {sql_where}",
-                (cutoff_iso, *protected),
+                params,
             ).fetchall()
         finally:
             con.close()
