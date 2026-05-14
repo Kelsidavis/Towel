@@ -1618,6 +1618,15 @@ def doctor() -> None:
     ),
 )
 @click.option(
+    "--inhibit-sleep/--no-inhibit-sleep",
+    default=True,
+    help=(
+        "Wrap the worker in systemd-inhibit so the host cannot suspend, "
+        "idle-suspend, or sleep on lid-close while the worker is active. "
+        "Default: enabled."
+    ),
+)
+@click.option(
     "--llama-model",
     default=None,
     type=click.Path(exists=True, dir_okay=False),
@@ -1645,6 +1654,7 @@ def doctor() -> None:
 )
 def install_worker(
     master: str | None,
+    inhibit_sleep: bool,
     llama_model: str | None,
     llama_port: int,
     llama_ngl: int,
@@ -1716,6 +1726,18 @@ WantedBy=default.target
     if llama_model:
         worker_deps += " towel-llama.service"
 
+    worker_cmd = f"{towel_bin} worker"
+    if master:
+        worker_cmd += f" --master {master}"
+    if inhibit_sleep:
+        inhibit_bin = shutil.which("systemd-inhibit") or "/usr/bin/systemd-inhibit"
+        worker_exec = (
+            f"{inhibit_bin} --what=sleep:idle:handle-lid-switch "
+            f'--who=towel-worker --why="Towel worker active" {worker_cmd}'
+        )
+    else:
+        worker_exec = worker_cmd
+
     worker_unit = f"""\
 [Unit]
 Description=Towel AI Worker — auto-discovers GPU, models, and controller
@@ -1724,7 +1746,7 @@ Wants={worker_deps}
 
 [Service]
 Type=simple
-ExecStart={towel_bin} worker{f" --master {master}" if master else ""}
+ExecStart={worker_exec}
 Restart=always
 RestartSec=10
 Environment=PATH={user_path}
