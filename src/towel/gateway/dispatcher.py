@@ -57,6 +57,13 @@ REASON_ROLE_MATCH = "role_match"
 REASON_CAPABILITY_FALLBACK = "capability_fallback"
 REASON_PREEMPT_IDLE = "preempt_idle"
 REASON_NO_WORKERS = "no_workers_available"
+# When the primary worker returned empty text and the coordinator
+# retried on a different worker. Used by /api/ask and
+# /v1/chat/completions so the dispatch log surfaces retries —
+# without this entry, operators looking at /dispatch/recent saw
+# only the failed primary and couldn't tell that a retry rescued
+# the request (or didn't).
+REASON_RETRY_EMPTY = "retry_empty_text"
 
 
 @dataclass
@@ -609,6 +616,36 @@ class Dispatcher:
             if d.session_id == session_id:
                 return d
         return None
+
+    def record_retry(
+        self,
+        session_id: str,
+        retry_worker: "WorkerInfo",
+        original_worker_id: str,
+        intent: str,
+    ) -> DispatchDecision:
+        """Log a coordinator-side retry as its own dispatch decision.
+
+        The retry path (commit 534e40f) didn't go through
+        ``async_select_for_session`` so it never showed up in
+        ``/dispatch/recent``. Operators looking at the log only saw
+        the primary worker's failed dispatch and couldn't tell that a
+        retry on a different worker followed. This method records the
+        retry as a separate decision with ``reason=retry_empty_text``
+        and ``previous_worker_id=<primary>`` so the log entry is
+        self-describing.
+        """
+        decision = DispatchDecision(
+            worker=retry_worker,
+            intent=intent,
+            reason=REASON_RETRY_EMPTY,
+            notes=f"retry after empty response from {original_worker_id}",
+            session_id=session_id,
+            previous_worker_id=original_worker_id,
+            candidates_considered=1,
+        )
+        self._record(decision)
+        return decision
 
     def _record(self, decision: DispatchDecision) -> None:
         self._history.append(decision)

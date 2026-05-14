@@ -3516,6 +3516,18 @@ class GatewayServer:
                                 "worker %s returned empty text; retrying on %s",
                                 worker.id, alt.id,
                             )
+                            # Record the retry as its own dispatch
+                            # decision so /dispatch/recent shows
+                            # operators that a fallback happened. The
+                            # decision's `previous_worker_id` points
+                            # to the failed primary.
+                            if self._dispatcher is not None:
+                                self._dispatcher.record_retry(
+                                    session_id=session_id,
+                                    retry_worker=alt,
+                                    original_worker_id=worker.id,
+                                    intent="chat",
+                                )
                             # Drop the diagnostic placeholder so the
                             # alt worker doesn't see it as its own
                             # prior assistant turn. Remember what we

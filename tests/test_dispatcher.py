@@ -18,6 +18,7 @@ from towel.gateway.dispatcher import (
     REASON_NO_WORKERS,
     REASON_PINNED,
     REASON_PREEMPT_IDLE,
+    REASON_RETRY_EMPTY,
     REASON_ROLE_MATCH,
     REASON_TASK_MATCH,
     Dispatcher,
@@ -401,6 +402,42 @@ class TestObservability:
         hist = d.history()
         assert len(hist) == 3
         assert [h.session_id for h in hist] == ["s3", "s4", "s5"]
+
+    def test_record_retry_appears_in_history(self):
+        """The empty-response retry path lives outside select_for_session;
+        without record_retry it wouldn't show up in /dispatch/recent and
+        operators couldn't see that a fallback happened."""
+        workers = WorkerRegistry()
+        _make_worker(workers, "primary")
+        alt = _make_worker(workers, "alt")
+        d = _make_dispatcher(
+            workers, roles={"primary": [NodeRole.INFERENCE], "alt": [NodeRole.INFERENCE]},
+        )
+
+        # First a primary dispatch lands via the normal path (we don't
+        # care which worker the dispatcher chose — only that the retry
+        # decision goes on top of it).
+        d.select_for_session("s-retry", intent="chat")
+        baseline = len(d.history())
+
+        # Then the retry is recorded externally.
+        retry_decision = d.record_retry(
+            session_id="s-retry",
+            retry_worker=alt,
+            original_worker_id="primary",
+            intent="chat",
+        )
+
+        hist = d.history()
+        assert len(hist) == baseline + 1
+        assert hist[-1] is retry_decision
+        assert hist[-1].reason == REASON_RETRY_EMPTY
+        assert hist[-1].previous_worker_id == "primary"
+        assert hist[-1].worker is alt
+        # And the retry decision is JSON-friendly so /dispatch/recent
+        # can serialize it.
+        import json
+        json.dumps(hist[-1].to_dict())
 
 
 # --------------------------------------------------------------------------- #

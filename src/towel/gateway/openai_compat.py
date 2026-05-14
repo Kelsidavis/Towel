@@ -162,22 +162,53 @@ def build_openai_routes(
                                         exclude={worker.id},
                                     )
                                     if alt is not None:
+                                        # Record the retry as its own
+                                        # dispatch decision so
+                                        # /dispatch/recent shows the
+                                        # fallback path. Same as /api/ask.
+                                        if getattr(gateway, "_dispatcher", None) is not None:
+                                            gateway._dispatcher.record_retry(
+                                                session_id=session_id,
+                                                retry_worker=alt,
+                                                original_worker_id=worker.id,
+                                                intent="chat",
+                                            )
+                                        # Pop the placeholder so the alt
+                                        # worker doesn't see it as a prior
+                                        # assistant turn. Remember it in
+                                        # case the retry crashes — same
+                                        # cleanup pattern as /api/ask in
+                                        # commit ce26cb8.
+                                        popped: Any = None
                                         if sess.conversation.messages and (
                                             sess.conversation.messages[-1].role.value
                                             == "assistant"
                                         ):
-                                            sess.conversation.messages.pop()
-                                        retry = await gateway._quick_remote_infer(
-                                            session_id, sess, alt, max_tokens=512,
-                                        )
-                                        if not (retry.metadata or {}).get(
-                                            "empty_text_fallback"
-                                        ):
-                                            retry.metadata = (retry.metadata or {}) | {
-                                                "fallback_from_worker": worker.id,
-                                                "fallback_reason": "empty_text",
-                                            }
-                                            response = retry
+                                            popped = sess.conversation.messages.pop()
+                                        try:
+                                            retry = await gateway._quick_remote_infer(
+                                                session_id, sess, alt, max_tokens=512,
+                                            )
+                                        except Exception as retry_exc:
+                                            import logging
+                                            logging.getLogger(
+                                                "towel.openai_compat"
+                                            ).warning(
+                                                "retry on %s failed (%s); keeping "
+                                                "original empty-text response from %s",
+                                                alt.id, retry_exc, worker.id,
+                                            )
+                                            if popped is not None:
+                                                sess.conversation.messages.append(popped)
+                                        else:
+                                            if not (retry.metadata or {}).get(
+                                                "empty_text_fallback"
+                                            ):
+                                                retry.metadata = (retry.metadata or {}) | {
+                                                    "fallback_from_worker": worker.id,
+                                                    "fallback_reason": "empty_text",
+                                                }
+                                                response = retry
                             else:
                                 response = await gateway._step_remote_inference(
                                     session_id, sess, worker,
