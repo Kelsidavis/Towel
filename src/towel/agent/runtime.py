@@ -491,6 +491,19 @@ class AgentRuntime:
             metadata={"tps": 0, "tokens": total_tokens, "max_iterations": True},
         )
 
+    def _run_capture_hooks(self, query: str | None) -> None:
+        """Thin shim around towel.agent.capture.run_capture_hooks.
+
+        Kept as an instance method so tests can patch it per-instance,
+        and so subclasses could override capture behavior without
+        intercepting the entire step() body.
+        """
+        from towel.agent.capture import run_capture_hooks
+
+        run_capture_hooks(
+            query, memory=self.memory, config=self.config, runtime=self,
+        )
+
     def _build_system_content(
         self,
         include_tools_section: bool = True,
@@ -639,39 +652,7 @@ class AgentRuntime:
         """
         use_native_tools = bool(self._native_tools_supported)
         query = conversation.latest_user_query()
-        # Heuristic auto-capture: run before the memory block is built
-        # so any new captures land in this same turn's prompt instead
-        # of waiting one round-trip to be useful.
-        regex_captures = []
-        if query and self.memory and getattr(self.config, "auto_capture", True):
-            from towel.memory.auto_capture import apply as _ac_apply
-            regex_captures = _ac_apply(query, self.memory)
-        # LLM-based extract fires only when regex missed and the
-        # operator opted in. Background task — the user's response
-        # is not blocked. Same backend serializes the work behind
-        # the actual turn generation, so an idle moment is when the
-        # extraction actually runs.
-        if (
-            query and self.memory
-            and not regex_captures
-            and getattr(self.config, "auto_llm_extract", False)
-        ):
-            try:
-                from towel.agent.conversation import Conversation as _Conv, Role as _Role
-                from towel.memory.llm_extract import schedule_background_extraction
-
-                async def _step(prompt: str) -> str:
-                    c = _Conv()
-                    c.add(_Role.USER, prompt)
-                    msg = await self.step(c)
-                    return getattr(msg, "content", "") or ""
-
-                schedule_background_extraction(
-                    query, _step, self.memory,
-                    scope=self.memory.default_scope or None,
-                )
-            except Exception as exc:
-                log.debug("auto-llm-extract scheduling failed: %s", exc)
+        self._run_capture_hooks(query)
         system_content = self._build_system_content(
             include_tools_section=not use_native_tools,
             query=query,

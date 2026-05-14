@@ -222,9 +222,8 @@ class OllamaRuntime:
     def _build_messages(self, conversation: Conversation) -> list[dict[str, str]]:
         """Convert conversation to Ollama chat messages format."""
         query = conversation.latest_user_query()
-        if query and self.memory and getattr(self.config, "auto_capture", True):
-            from towel.memory.auto_capture import apply as _ac_apply
-            _ac_apply(query, self.memory)
+        from towel.agent.capture import run_capture_hooks
+        run_capture_hooks(query, memory=self.memory, config=self.config, runtime=self)
         system_content = self._build_system_prompt(
             include_tools_section=not bool(self._native_tools_supported),
             query=query,
@@ -258,9 +257,8 @@ class OllamaRuntime:
         """Build a worker-safe Ollama chat payload for this conversation."""
         use_native = bool(self._native_tools_supported)
         query = conversation.latest_user_query()
-        if query and self.memory and getattr(self.config, "auto_capture", True):
-            from towel.memory.auto_capture import apply as _ac_apply
-            _ac_apply(query, self.memory)
+        from towel.agent.capture import run_capture_hooks
+        run_capture_hooks(query, memory=self.memory, config=self.config, runtime=self)
         request: dict[str, Any] = {
             "mode": "ollama_chat",
             "system": self._build_system_prompt(

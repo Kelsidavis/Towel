@@ -277,9 +277,8 @@ class LlamaRuntime:
     def _build_messages(self, conversation: Conversation) -> list[dict[str, str]]:
         """Convert conversation to OpenAI chat messages format."""
         query = conversation.latest_user_query()
-        if query and self.memory and getattr(self.config, "auto_capture", True):
-            from towel.memory.auto_capture import apply as _ac_apply
-            _ac_apply(query, self.memory)
+        from towel.agent.capture import run_capture_hooks
+        run_capture_hooks(query, memory=self.memory, config=self.config, runtime=self)
         system_content = self._build_system_prompt(
             include_tools_section=not self._native_tools_supported,
             query=query,
@@ -313,9 +312,8 @@ class LlamaRuntime:
         """Build a worker-safe payload for this conversation."""
         use_native = self._native_tools_supported
         query = conversation.latest_user_query()
-        if query and self.memory and getattr(self.config, "auto_capture", True):
-            from towel.memory.auto_capture import apply as _ac_apply
-            _ac_apply(query, self.memory)
+        from towel.agent.capture import run_capture_hooks
+        run_capture_hooks(query, memory=self.memory, config=self.config, runtime=self)
         request: dict[str, Any] = {
             "mode": "llama_chat",
             "system": self._build_system_prompt(

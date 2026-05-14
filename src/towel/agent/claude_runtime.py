@@ -303,9 +303,8 @@ class ClaudeCodeRuntime:
             configured_max_tokens=self.config.model.max_tokens,
         )
         query = conversation.latest_user_query()
-        if query and self.memory and getattr(self.config, "auto_capture", True):
-            from towel.memory.auto_capture import apply as _ac_apply
-            _ac_apply(query, self.memory)
+        from towel.agent.capture import run_capture_hooks
+        run_capture_hooks(query, memory=self.memory, config=self.config, runtime=self)
         maybe_compact_conversation(
             conversation,
             system_content=self._build_system_prompt(
@@ -332,9 +331,8 @@ class ClaudeCodeRuntime:
         """Build a worker-safe Anthropic payload for this conversation."""
         use_native = self._native_tools_supported
         query = conversation.latest_user_query()
-        if query and self.memory and getattr(self.config, "auto_capture", True):
-            from towel.memory.auto_capture import apply as _ac_apply
-            _ac_apply(query, self.memory)
+        from towel.agent.capture import run_capture_hooks
+        run_capture_hooks(query, memory=self.memory, config=self.config, runtime=self)
         request: dict[str, Any] = {
             "mode": "anthropic_messages",
             "system": self._build_system_prompt(
