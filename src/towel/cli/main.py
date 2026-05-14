@@ -3319,8 +3319,17 @@ def memory_stats() -> None:
         "'auto_capture:'). Operator-set entries stay regardless of age."
     ),
 )
+@click.option(
+    "--consolidate/--no-consolidate",
+    default=False,
+    help=(
+        "Also run consolidation pass: any pair above 0.95 similarity "
+        "is merged. Survives the same dry-run/apply gate as pruning."
+    ),
+)
 def memory_tidy(
-    max_age_days: float, dry_run: bool, show_scores: bool, auto_only: bool
+    max_age_days: float, dry_run: bool, show_scores: bool,
+    auto_only: bool, consolidate: bool,
 ) -> None:
     """Prune stale memories that were never recalled.
 
@@ -3346,16 +3355,43 @@ def memory_tidy(
         dry_run=dry_run,
         source_prefix="auto_capture:" if auto_only else None,
     )
-    if not victims:
+    if victims:
+        label = "would prune" if dry_run else "pruned"
+        console.print(f"[yellow]{label} {len(victims)} memor(ies):[/yellow]")
+        for v in victims:
+            console.print(f"  - [{v.memory_type}] {v.key}: {v.content[:60]}")
+    else:
         console.print("[green]Nothing to prune — store is already tidy.[/green]")
-        return
-    label = "would prune" if dry_run else "pruned"
-    console.print(f"[yellow]{label} {len(victims)} memor(ies):[/yellow]")
-    for v in victims:
-        console.print(f"  - [{v.memory_type}] {v.key}: {v.content[:60]}")
-    if dry_run:
+
+    # Optional consolidation pass — high threshold so only clear
+    # duplicates merge. Operator can run `memory consolidate` directly
+    # with a lower threshold for more aggressive cleanup.
+    if consolidate:
+        pairs = store.find_near_duplicates(threshold=0.95)
+        if pairs:
+            label = "would merge" if dry_run else "merged"
+            console.print(
+                f"\n[yellow]{label} {len(pairs)} duplicate pair(s) (≥0.95 similarity):[/yellow]"
+            )
+            for a, b, score in pairs:
+                console.print(
+                    f"  - [{score:.2f}] {a.key} ⇄ {b.key} "
+                    f"@{a.scope or 'global'}"
+                )
+                if not dry_run:
+                    try:
+                        survived = store.consolidate((a, b))
+                        console.print(f"      [green]→[/green] kept {survived.key}")
+                    except ValueError as exc:
+                        console.print(f"      [red]skipped:[/red] {exc}")
+        else:
+            console.print(
+                "\n[green]No duplicates above 0.95 similarity.[/green]"
+            )
+
+    if dry_run and (victims or (consolidate and store.find_near_duplicates(threshold=0.95))):
         console.print(
-            "\n[dim]Run again with --apply to actually delete.[/dim]"
+            "\n[dim]Run again with --apply to actually delete / merge.[/dim]"
         )
 
 

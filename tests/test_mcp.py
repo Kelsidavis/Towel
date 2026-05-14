@@ -59,7 +59,7 @@ class TestHandshake:
 
 
 class TestToolsList:
-    def test_lists_eleven_tools(self, server):
+    def test_lists_twelve_tools(self, server):
         reply = server.handle_request(
             {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
         )
@@ -77,6 +77,7 @@ class TestToolsList:
             "memory_nudge",
             "memory_activity",
             "memory_promote",
+            "memory_recalls",
         }
 
     def test_each_tool_has_input_schema(self):
@@ -267,6 +268,28 @@ class TestActivity:
         data = json.loads(_text(reply))
         assert "buckets" in data
         assert any(b["count"] >= 1 for b in data["buckets"])
+
+
+class TestRecallsViaMCP:
+    def test_survey_mode(self, server):
+        server.store.remember("k", "v", "fact")
+        server.store.to_prompt_block(query="v")
+        reply = _call(server, "memory_recalls", {"limit": 10})
+        data = json.loads(_text(reply))
+        assert data["mode"] == "recent_recalls"
+        assert len(data["rows"]) >= 1
+
+    def test_key_focused_mode(self, server):
+        server.store.remember("vimal", "x", "fact")
+        server.store.to_prompt_block(query="x")
+        reply = _call(server, "memory_recalls", {"key": "vimal", "limit": 5})
+        data = json.loads(_text(reply))
+        assert data["mode"] == "recalls_returning"
+        assert len(data["rows"]) == 1
+        # Substring safety
+        reply2 = _call(server, "memory_recalls", {"key": "vim", "limit": 5})
+        data2 = json.loads(_text(reply2))
+        assert data2["rows"] == []
 
 
 class TestPromote:

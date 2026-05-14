@@ -277,6 +277,37 @@ def _tool_definitions() -> list[dict[str, Any]]:
                 "required": ["key", "scope"],
             },
         },
+        {
+            "name": "memory_recalls",
+            "description": (
+                "Inspect the per-query recall log. Either survey the "
+                "most recent recall events (no `key`) or surface the "
+                "queries that returned a specific memory (`key` set). "
+                "Answers 'why does the agent know X when I asked Y?'"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": (
+                            "Memory key to focus on. Omit to get the "
+                            "recent-recalls survey instead."
+                        ),
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 20,
+                        "minimum": 1,
+                        "maximum": 200,
+                    },
+                    "hours": {
+                        "type": "number",
+                        "description": "Only used when key is omitted.",
+                    },
+                },
+            },
+        },
     ]
 
 
@@ -307,6 +338,7 @@ class MemoryMCPServer:
             "memory_nudge": self._t_nudge,
             "memory_activity": self._t_activity,
             "memory_promote": self._t_promote,
+            "memory_recalls": self._t_recalls,
         }
 
     # ── tool implementations ─────────────────────────────────────────
@@ -473,6 +505,29 @@ class MemoryMCPServer:
         entry = self.store.recall(key)
         new_label = entry.scope or "global"
         return f"Promoted {key} → {new_label}"
+
+    def _t_recalls(self, args: dict[str, Any]) -> str:
+        try:
+            limit = int(args.get("limit", 20))
+        except (TypeError, ValueError):
+            raise RuntimeError("limit must be int")
+        limit = max(1, min(limit, 200))
+        key = args.get("key")
+        if key:
+            rows = self.store.recalls_returning(key, limit=limit)
+            mode = "recalls_returning"
+        else:
+            try:
+                hours = float(args["hours"]) if "hours" in args else None
+            except (TypeError, ValueError):
+                raise RuntimeError("hours must be numeric")
+            rows = self.store.recent_recalls(limit=limit, since_hours=hours)
+            mode = "recent_recalls"
+        return json.dumps(
+            {"mode": mode, "key": key, "limit": limit, "rows": rows},
+            indent=2,
+            ensure_ascii=False,
+        )
 
     def _t_stats(self, args: dict[str, Any]) -> str:
         entries = self.store.recall_all()
