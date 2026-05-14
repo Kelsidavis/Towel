@@ -1729,6 +1729,11 @@ WantedBy=default.target
     worker_cmd = f"{towel_bin} worker"
     if master:
         worker_cmd += f" --master {master}"
+    # When we own the llama service too, point the worker at the right port —
+    # _build_runtime currently hardcodes localhost:8080 if --llama-url is not
+    # passed, so it would miss config.toml's llama_url field on a custom port.
+    if llama_model:
+        worker_cmd += f" --llama-url http://localhost:{llama_port}"
     if inhibit_sleep:
         inhibit_bin = shutil.which("systemd-inhibit") or "/usr/bin/systemd-inhibit"
         worker_exec = (
