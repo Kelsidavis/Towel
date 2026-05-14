@@ -616,9 +616,16 @@ class AgentRuntime:
         model's token budget, dropping oldest messages first.
         """
         use_native_tools = bool(self._native_tools_supported)
+        query = conversation.latest_user_query()
+        # Heuristic auto-capture: run before the memory block is built
+        # so any new captures land in this same turn's prompt instead
+        # of waiting one round-trip to be useful.
+        if query and self.memory and getattr(self.config, "auto_capture", True):
+            from towel.memory.auto_capture import apply as _ac_apply
+            _ac_apply(query, self.memory)
         system_content = self._build_system_content(
             include_tools_section=not use_native_tools,
-            query=conversation.latest_user_query(),
+            query=query,
         )
         all_messages = conversation.to_chat_messages()
         output_reserve = estimate_output_reserve(

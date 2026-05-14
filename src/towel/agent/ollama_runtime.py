@@ -221,9 +221,13 @@ class OllamaRuntime:
 
     def _build_messages(self, conversation: Conversation) -> list[dict[str, str]]:
         """Convert conversation to Ollama chat messages format."""
+        query = conversation.latest_user_query()
+        if query and self.memory and getattr(self.config, "auto_capture", True):
+            from towel.memory.auto_capture import apply as _ac_apply
+            _ac_apply(query, self.memory)
         system_content = self._build_system_prompt(
             include_tools_section=not bool(self._native_tools_supported),
-            query=conversation.latest_user_query(),
+            query=query,
         )
         existing_messages = [
             {"role": msg.role.value, "content": msg.content} for msg in conversation.messages
@@ -253,11 +257,15 @@ class OllamaRuntime:
     def build_inference_request(self, conversation: Conversation) -> dict[str, Any]:
         """Build a worker-safe Ollama chat payload for this conversation."""
         use_native = bool(self._native_tools_supported)
+        query = conversation.latest_user_query()
+        if query and self.memory and getattr(self.config, "auto_capture", True):
+            from towel.memory.auto_capture import apply as _ac_apply
+            _ac_apply(query, self.memory)
         request: dict[str, Any] = {
             "mode": "ollama_chat",
             "system": self._build_system_prompt(
                 include_tools_section=not use_native,
-                query=conversation.latest_user_query(),
+                query=query,
             ),
             "messages": self._build_messages(conversation),
             "model": self.config.model.name,

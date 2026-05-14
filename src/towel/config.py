@@ -106,6 +106,12 @@ class TowelConfig(BaseModel):
     llama_url: str = ""
     claude_model: str = ""
 
+    # Heuristic auto-capture: extract user/preference/project facts from
+    # every user turn and write them to memory. Conservative patterns
+    # (role, employer, project, deadline, preference, explicit remember)
+    # so false positives stay low. Set to False to disable entirely.
+    auto_capture: bool = True
+
     @classmethod
     def load(cls, path: Path | None = None) -> TowelConfig:
         """Load config from TOML file, falling back to defaults."""
