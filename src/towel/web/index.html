@@ -722,6 +722,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
             <span>intent: ${escHtml(d.intent || '-')}</span>
             ${d.task_type ? '<span>task: ' + escHtml(d.task_type) + '</span>' : ''}
             <span>candidates: ${escHtml(String(d.candidates_considered || 0))}</span>
+            ${typeof d.ttft_ms === 'number' ? '<span title="time to first token from the worker">ttft: ' + Math.round(d.ttft_ms) + 'ms</span>' : ''}
+            ${typeof d.total_ms === 'number' ? '<span title="total worker generation time">total: ' + Math.round(d.total_ms) + 'ms</span>' : ''}
             ${when ? '<span>' + escHtml(when) + '</span>' : ''}
           </div>
         </div>

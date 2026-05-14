@@ -1301,6 +1301,17 @@ class GatewayServer:
             if not tool_calls:
                 from towel.agent.conversation import Message
 
+                # Stamp the dispatch decision with the final-iteration
+                # timing so the dispatch log reflects this session's
+                # actual end-to-end latency — not just the routing
+                # decision that triggered it.
+                if self._dispatcher is not None:
+                    decision = self._dispatcher.last_decision_for_session(session_id)
+                    if decision is not None:
+                        decision.record_completion(
+                            ttft_ms=metadata.get("ttft_ms"),
+                            total_ms=metadata.get("total_ms"),
+                        )
                 response = Message(
                     role=Role.ASSISTANT,
                     content=text,
