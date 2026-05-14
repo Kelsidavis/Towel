@@ -197,6 +197,86 @@ def _tool_definitions() -> list[dict[str, Any]]:
             ),
             "inputSchema": {"type": "object", "properties": {}},
         },
+        {
+            "name": "memory_edit",
+            "description": (
+                "Update an existing memory's content / type / tags / "
+                "scope. tags REPLACE the existing list (use memory_tag "
+                "for additive). Returns the updated entry, or an "
+                "isError result if the key doesn't exist."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string"},
+                    "content": {"type": "string"},
+                    "type": {"type": "string", "enum": list(MEMORY_TYPES)},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                    "scope": {"type": "string"},
+                },
+                "required": ["key"],
+            },
+        },
+        {
+            "name": "memory_nudge",
+            "description": (
+                "Mark a memory as useful — bumps its recall_count by 1, "
+                "so salience scoring and the cold-pattern check stop "
+                "treating it as never-recalled. Counter to memory_forget."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {"key": {"type": "string"}},
+                "required": ["key"],
+            },
+        },
+        {
+            "name": "memory_activity",
+            "description": (
+                "Histogram of memory writes over a recent window. "
+                "Returns dense buckets oldest→newest with per-bucket "
+                "counts and source breakdowns. Useful for verifying "
+                "auto-capture is firing or spotting quiet periods."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "hours": {
+                        "type": "number",
+                        "default": 24,
+                        "minimum": 0.5,
+                        "maximum": 168,
+                    },
+                    "bucket_hours": {
+                        "type": "number",
+                        "default": 1,
+                    },
+                    "column": {
+                        "type": "string",
+                        "enum": ["created_at", "updated_at"],
+                        "default": "created_at",
+                    },
+                },
+            },
+        },
+        {
+            "name": "memory_promote",
+            "description": (
+                "Move a memory to a different scope. Pass empty string "
+                "for global. Doesn't change content; preserves updated_at."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string"},
+                    "scope": {
+                        "type": "string",
+                        "description": 'Target scope. "" = global.',
+                    },
+                },
+                "required": ["key", "scope"],
+            },
+        },
     ]
 
 
@@ -223,6 +303,10 @@ class MemoryMCPServer:
             "memory_forget": self._t_forget,
             "memory_related": self._t_related,
             "memory_stats": self._t_stats,
+            "memory_edit": self._t_edit,
+            "memory_nudge": self._t_nudge,
+            "memory_activity": self._t_activity,
+            "memory_promote": self._t_promote,
         }
 
     # ── tool implementations ─────────────────────────────────────────
@@ -308,6 +392,87 @@ class MemoryMCPServer:
             indent=2,
             ensure_ascii=False,
         )
+
+    def _t_edit(self, args: dict[str, Any]) -> str:
+        key = args["key"]
+        existing = self.store.recall(key)
+        if existing is None:
+            raise RuntimeError(f"no memory with key {key!r}")
+        new_type = args.get("type", existing.memory_type)
+        if new_type not in MEMORY_TYPES:
+            raise RuntimeError(f"invalid type: {new_type}")
+        content = args.get("content", existing.content)
+        raw_tags = args.get("tags")
+        # PATCH semantics: tags REPLACE wholesale when supplied.
+        if raw_tags is not None:
+            if not (isinstance(raw_tags, list) and all(isinstance(t, str) for t in raw_tags)):
+                raise RuntimeError("tags must be a list of strings")
+            # Force replace by drop-and-reinsert (remember() merges
+            # otherwise — same approach the HTTP endpoint takes).
+            self.store.forget(key)
+            entry = self.store.remember(
+                key, content, memory_type=new_type,
+                source=existing.source,
+                tags=raw_tags,
+                scope=args.get("scope", existing.scope),
+            )
+        else:
+            entry = self.store.remember(
+                key, content, memory_type=new_type,
+                source=existing.source,
+                scope=args.get("scope"),
+            )
+        return json.dumps(entry.to_dict(), indent=2, ensure_ascii=False)
+
+    def _t_nudge(self, args: dict[str, Any]) -> str:
+        key = args["key"]
+        if self.store.recall(key) is None:
+            raise RuntimeError(f"no memory with key {key!r}")
+        self.store._bump_recall([key])
+        entry = self.store.recall(key)
+        return (
+            f"Nudged [{entry.memory_type}] {entry.key}: "
+            f"recall_count={entry.recall_count}"
+        )
+
+    def _t_activity(self, args: dict[str, Any]) -> str:
+        try:
+            hours = float(args.get("hours", 24))
+            bucket_hours = float(args.get("bucket_hours", 1))
+        except (TypeError, ValueError):
+            raise RuntimeError("hours / bucket_hours must be numeric")
+        hours = max(0.5, min(hours, 168.0))
+        bucket_hours = max(0.1, min(bucket_hours, hours))
+        column = args.get("column", "created_at")
+        if column not in ("created_at", "updated_at"):
+            raise RuntimeError(f"invalid column: {column}")
+        buckets = self.store.activity(
+            hours=hours, bucket_hours=bucket_hours, column=column,
+        )
+        return json.dumps(
+            {
+                "hours": hours,
+                "bucket_hours": bucket_hours,
+                "column": column,
+                "buckets": buckets,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+
+    def _t_promote(self, args: dict[str, Any]) -> str:
+        key = args["key"]
+        scope = args["scope"]
+        if not isinstance(scope, str):
+            raise RuntimeError("scope must be a string")
+        if not self.store.set_scope(key, scope):
+            entry = self.store.recall(key)
+            if entry is None:
+                raise RuntimeError(f"no memory with key {key!r}")
+            return f"Already in {scope or 'global'} — no change."
+        entry = self.store.recall(key)
+        new_label = entry.scope or "global"
+        return f"Promoted {key} → {new_label}"
 
     def _t_stats(self, args: dict[str, Any]) -> str:
         entries = self.store.recall_all()

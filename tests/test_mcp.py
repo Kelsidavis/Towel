@@ -59,7 +59,7 @@ class TestHandshake:
 
 
 class TestToolsList:
-    def test_lists_seven_tools(self, server):
+    def test_lists_eleven_tools(self, server):
         reply = server.handle_request(
             {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
         )
@@ -73,6 +73,10 @@ class TestToolsList:
             "memory_forget",
             "memory_related",
             "memory_stats",
+            "memory_edit",
+            "memory_nudge",
+            "memory_activity",
+            "memory_promote",
         }
 
     def test_each_tool_has_input_schema(self):
@@ -227,6 +231,55 @@ class TestStats:
 
 
 # ── error paths ───────────────────────────────────────────────────────
+
+
+class TestEdit:
+    def test_edit_updates_content(self, server):
+        server.store.remember("k", "old", "fact")
+        reply = _call(server, "memory_edit", {"key": "k", "content": "new"})
+        assert "error" not in reply
+        assert server.store.recall("k").content == "new"
+
+    def test_edit_replaces_tags(self, server):
+        server.store.remember("k", "v", "fact", tags=["a", "b"])
+        _call(server, "memory_edit", {"key": "k", "tags": ["c"]})
+        assert server.store.recall("k").tags == ["c"]
+
+    def test_edit_unknown_key_is_error_result(self, server):
+        reply = _call(server, "memory_edit", {"key": "missing"})
+        # Tool runtime errors come back via result.isError, not
+        # a JSON-RPC error frame.
+        assert reply["result"]["isError"] is True
+
+
+class TestNudge:
+    def test_nudge_bumps_recall(self, server):
+        server.store.remember("k", "v")
+        before = server.store.recall("k").recall_count
+        _call(server, "memory_nudge", {"key": "k"})
+        assert server.store.recall("k").recall_count == before + 1
+
+
+class TestActivity:
+    def test_activity_returns_buckets(self, server):
+        server.store.remember("k", "v")
+        reply = _call(server, "memory_activity", {"hours": 2, "bucket_hours": 1})
+        data = json.loads(_text(reply))
+        assert "buckets" in data
+        assert any(b["count"] >= 1 for b in data["buckets"])
+
+
+class TestPromote:
+    def test_promote_changes_scope(self, server):
+        server.store.remember("k", "v", scope="proj:a")
+        reply = _call(server, "memory_promote", {"key": "k", "scope": ""})
+        assert "Promoted" in _text(reply)
+        assert server.store.recall("k").scope == ""
+
+    def test_promote_no_op_when_already_target(self, server):
+        server.store.remember("k", "v", scope="proj:a")
+        reply = _call(server, "memory_promote", {"key": "k", "scope": "proj:a"})
+        assert "no change" in _text(reply).lower()
 
 
 class TestErrors:
