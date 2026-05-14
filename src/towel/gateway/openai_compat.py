@@ -34,8 +34,22 @@ if TYPE_CHECKING:
     from towel.config import TowelConfig
 
 
-def build_openai_routes(agent: AgentRuntime, config: TowelConfig) -> list[Route]:
-    """Build /v1/* routes for OpenAI API compatibility."""
+def build_openai_routes(
+    agent: AgentRuntime,
+    config: TowelConfig,
+    *,
+    gateway: Any = None,
+) -> list[Route]:
+    """Build /v1/* routes for OpenAI API compatibility.
+
+    ``gateway`` (the GatewayServer instance) is optional and threads
+    the same worker-dispatch path /api/ask uses through to this
+    endpoint. Without it, /v1/chat/completions falls back to running
+    on the coordinator's local agent — which works for single-process
+    setups but bypasses the worker fleet entirely. With it, chat-
+    class queries route to the smallest qualified worker, the same
+    as the rest of the system.
+    """
 
     async def chat_completions(request: Request) -> JSONResponse | StreamingResponse:
         try:
@@ -80,7 +94,42 @@ def build_openai_routes(agent: AgentRuntime, config: TowelConfig) -> list[Route]
                     },
                 )
             else:
-                response = await agent.step(conv)
+                # Non-streaming path: try to route through the worker
+                # fleet first when a gateway was supplied. Falls back
+                # to the local agent for empty-fleet setups or when the
+                # router declines (returns None).
+                response = None
+                if gateway is not None and messages:
+                    last_user = next(
+                        (m.get("content", "") for m in reversed(messages)
+                         if m.get("role") == "user"),
+                        "",
+                    )
+                    session_id = f"openai-{request_id}"
+                    sess = gateway.sessions.get_or_create(session_id)
+                    sess.conversation = conv
+                    try:
+                        worker, intent = await gateway._route_by_role(
+                            last_user, session_id,
+                        )
+                        if worker is not None:
+                            if intent == "chat":
+                                response = await gateway._quick_remote_infer(
+                                    session_id, sess, worker, max_tokens=512,
+                                )
+                            else:
+                                response = await gateway._step_remote_inference(
+                                    session_id, sess, worker,
+                                )
+                    except Exception as exc:
+                        # Worker route failed — fall through to local
+                        # agent rather than 500 the request.
+                        import logging
+                        logging.getLogger("towel.openai_compat").debug(
+                            "worker route failed, falling back: %s", exc,
+                        )
+                if response is None:
+                    response = await agent.step(conv)
                 return JSONResponse(
                     _format_completion(
                         request_id,

@@ -3174,9 +3174,14 @@ class GatewayServer:
             return JSONResponse({"status": "restarting"})
 
         # OpenAI-compatible API routes
-        from towel.gateway.openai_compat import build_openai_routes
+        from towel.gateway.openai_compat import build_openai_routes  # noqa: F401
 
-        openai_routes = build_openai_routes(self.agent, self.config)
+        # Pass `self` so the openai_compat handler can route through
+        # the same worker dispatch as /api/ask. Without this, every
+        # /v1/chat/completions call ran on the coordinator's local
+        # agent regardless of fleet availability — defeating the whole
+        # point of having workers.
+        openai_routes = build_openai_routes(self.agent, self.config, gateway=self)
 
         from towel.agent.streaming_protocol import build_sse_routes
         from towel.setup_server import setup_routes
