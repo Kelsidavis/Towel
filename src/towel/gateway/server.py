@@ -1333,10 +1333,16 @@ class GatewayServer:
                             ttft_ms=metadata.get("ttft_ms"),
                             total_ms=stamped_total,
                         )
+                # Also stamp the coordinator-measured total_ms onto
+                # the response metadata so callers (/api/ask) see real
+                # latency even when the worker didn't report it.
+                response_meta = last_metadata | {"tokens": total_tokens}
+                if "total_ms" not in response_meta:
+                    response_meta["total_ms"] = stamped_total
                 response = Message(
                     role=Role.ASSISTANT,
                     content=text,
-                    metadata=last_metadata | {"tokens": total_tokens},
+                    metadata=response_meta,
                 )
                 session.conversation.messages.append(response)
                 return response
@@ -3267,10 +3273,20 @@ class GatewayServer:
                 # populates it); fall back to total_ms or omit the
                 # field when neither is known.
                 meta = response.metadata or {}
+                # Defensive: workers running pre-fix code occasionally
+                # report tokens=0 even with visible content (llama-server
+                # builds without `usage`, or the reasoning_content
+                # substitution path before that fix shipped). Estimate
+                # from the response body so /api/ask doesn't lie about
+                # what got generated. Worker's reported count still
+                # wins when it's non-zero.
+                reported_tokens = meta.get("tokens", 0)
+                if reported_tokens == 0 and response.content:
+                    reported_tokens = count_tokens_fallback(response.content)
                 body: dict[str, Any] = {
                     "response": response.content,
                     "session": session_id,
-                    "tokens": meta.get("tokens", 0),
+                    "tokens": reported_tokens,
                     "tps": round(meta.get("tps", 0), 1),
                     "worker": meta.get("remote_worker", "coordinator"),
                 }
