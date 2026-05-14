@@ -3272,7 +3272,14 @@ class GatewayServer:
             store = self.sessions.store
             if not store:
                 return JSONResponse({"sessions": []})
-            summaries = store.list_conversations(limit=50)
+            try:
+                limit = int(request.query_params.get("limit", "50"))
+            except ValueError:
+                return JSONResponse(
+                    {"error": "limit must be an integer"}, status_code=400
+                )
+            limit = max(1, min(limit, 500))
+            summaries = store.list_conversations(limit=limit)
             items = []
             for s in summaries:
                 # Tags now ride on the summary itself — no second

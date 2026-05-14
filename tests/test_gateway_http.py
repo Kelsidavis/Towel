@@ -372,3 +372,30 @@ class TestApiSessions:
         data = resp.json()
         assert len(data["sessions"]) == 1
         assert data["sessions"][0]["tags"] == ["work", "urgent"]
+
+    def test_api_sessions_limit_param(self, store, client):
+        for i in range(5):
+            conv = Conversation(id=f"limit-{i}", channel="api")
+            conv.add(Role.USER, f"msg {i}")
+            store.save(conv)
+
+        resp = client.get("/api/sessions?limit=2")
+        assert resp.status_code == 200
+        assert len(resp.json()["sessions"]) == 2
+
+    def test_api_sessions_invalid_limit_rejected(self, client):
+        resp = client.get("/api/sessions?limit=notanumber")
+        assert resp.status_code == 400
+        assert "limit" in resp.json()["error"]
+
+    def test_api_sessions_limit_clamped(self, store, client):
+        for i in range(3):
+            conv = Conversation(id=f"clamp-{i}", channel="api")
+            conv.add(Role.USER, f"msg {i}")
+            store.save(conv)
+
+        # limit=99999 must not crash or read 99999 files; the cap is
+        # 500, but the result here is just "all three saved convos".
+        resp = client.get("/api/sessions?limit=99999")
+        assert resp.status_code == 200
+        assert len(resp.json()["sessions"]) == 3
