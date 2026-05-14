@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -751,6 +752,12 @@ class GatewayServer:
         self._job_queues[job_id] = queue
         self._session_jobs[session_id] = job_id
         self._workers.assign(worker.id, job_id, session_id)
+        # Coordinator-measured start. Used as a fallback when the
+        # worker doesn't report total_ms (older worker code, empty
+        # responses, errors). Without this the dispatch log shows
+        # "no timing" for any worker that produced 0 tokens, which
+        # is exactly the case operators most want to diagnose.
+        coord_start = time.monotonic()
 
         # Send as "infer" with capped tokens — worker uses generate_from_request
         messages = [
@@ -814,6 +821,13 @@ class GatewayServer:
                 remote_meta = result.get("metadata", {}) or {}
                 # Stamp timing onto the dispatch decision so the
                 # operator can see both routing + latency in one view.
+                # Fall back to coordinator-measured total when the
+                # worker didn't report one (older worker code, empty
+                # response). Empty-response cases are exactly the
+                # ones operators most need timing for.
+                coord_total_ms = (time.monotonic() - coord_start) * 1000.0
+                if "total_ms" not in remote_meta:
+                    remote_meta = {**remote_meta, "total_ms": round(coord_total_ms, 1)}
                 if self._dispatcher is not None:
                     decision = self._dispatcher.last_decision_for_session(session_id)
                     if decision is not None:
@@ -1284,6 +1298,9 @@ class GatewayServer:
         total_tokens = 0
         last_metadata: dict[str, Any] = {"remote_worker": worker.id}
         remaining_text = ""
+        # Coordinator-measured start, used as a fallback when the
+        # worker reports no total_ms (same rationale as _quick_remote_infer).
+        coord_start = time.monotonic()
 
         for _ in range(MAX_TOOL_ITERATIONS):
             result = await self._remote_generate(
@@ -1305,12 +1322,16 @@ class GatewayServer:
                 # timing so the dispatch log reflects this session's
                 # actual end-to-end latency — not just the routing
                 # decision that triggered it.
+                coord_total_ms = (time.monotonic() - coord_start) * 1000.0
+                stamped_total = metadata.get("total_ms")
+                if stamped_total is None:
+                    stamped_total = round(coord_total_ms, 1)
                 if self._dispatcher is not None:
                     decision = self._dispatcher.last_decision_for_session(session_id)
                     if decision is not None:
                         decision.record_completion(
                             ttft_ms=metadata.get("ttft_ms"),
-                            total_ms=metadata.get("total_ms"),
+                            total_ms=stamped_total,
                         )
                 response = Message(
                     role=Role.ASSISTANT,
