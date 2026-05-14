@@ -818,6 +818,28 @@ class GatewayServer:
             getattr(self.config, "identity", "")
             or "You are a helpful assistant. Answer concisely."
         )
+        # Inject memory context. Memory lives on the COORDINATOR, but
+        # /api/ask routes chat to a worker whose own runtime memory is
+        # empty. Without this injection, asking "what is my favorite
+        # number?" returned generic placeholder responses despite the
+        # value being recorded as a memory on this host. Use the most
+        # recent user message as the recall query so per-turn retrieval
+        # ranks relevant entries; an empty corpus yields "" and adds
+        # zero tokens.
+        memory = getattr(self.agent, "memory", None)
+        if memory is not None:
+            last_user_msg = next(
+                (m.content for m in reversed(session.conversation.messages)
+                 if m.role == Role.USER),
+                "",
+            )
+            try:
+                memory_block = memory.to_prompt_block(query=last_user_msg)
+            except Exception as exc:
+                log.warning("memory.to_prompt_block failed: %s", exc)
+                memory_block = ""
+            if memory_block:
+                identity = f"{identity}\n\n{memory_block}"
         await worker.ws.send(
             json.dumps(
                 {
