@@ -42,6 +42,7 @@ mlx = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
+    "pytest-timeout>=2.3",
     "ruff>=0.8.0",
     "mypy>=1.13",
 ]
@@ -81,6 +82,11 @@ select = ["E", "F", "I", "N", "W", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# Per-test ceiling so a future infinite loop (cf. the RAGIndex._split
+# regression that wedged every full-suite run for hours) surfaces as a
+# clean failure instead of a hang. Individual tests can override with
+# ``@pytest.mark.timeout(N)``.
+timeout = 60
 
 [tool.mypy]
 python_version = "3.11"
