@@ -1174,6 +1174,34 @@ def launcher(host: str, port: int) -> None:
         console.print("[dim]Launcher stopped.[/dim]")
 
 
+@cli.command(name="mcp")
+def mcp_serve() -> None:
+    """Run the Towel memory store as an MCP server over stdio.
+
+    Speaks JSON-RPC 2.0 per the Model Context Protocol spec
+    (2024-11-05). Lets external agents — Claude Code, Cursor,
+    OpenCode, Gemini CLI, any MCP-compatible client — read and write
+    the same persistent memory the Towel agent uses.
+
+    Wire it up by adding to the client's MCP config. For Claude
+    Code's .mcp.json:
+
+      {"mcpServers": {"towel-memory": {"command": "towel", "args": ["mcp"]}}}
+
+    After the client restarts, seven tools become available:
+    memory_search, memory_recall, memory_list, memory_remember,
+    memory_forget, memory_related, memory_stats.
+    """
+    from towel.mcp import serve_stdio
+
+    # Stay silent on stdout — the protocol owns it. Don't print the
+    # banner here either; setup logs go to stderr inside serve_stdio.
+    try:
+        serve_stdio()
+    except KeyboardInterrupt:
+        pass
+
+
 @cli.command()
 @click.option("--port", default=18749, type=int, help="Port for the setup web server")
 @click.option("--no-open", is_flag=True, help="Don't auto-open the browser")
