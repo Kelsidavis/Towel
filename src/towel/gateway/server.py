@@ -1538,6 +1538,11 @@ class GatewayServer:
                 wd = worker.to_dict()
                 wd["roles"] = [str(r) for r in self._node_roles.get(worker.id, [])]
                 wd["assigned_tasks"] = [str(t) for t in self._node_tasks.get(worker.id, [])]
+                # Flag whether the current task list came from an operator
+                # override (persisted across restarts) vs the auto-assignment
+                # derived from capabilities. The UI uses this to render a
+                # badge so it's clear what survives a restart.
+                wd["tasks_overridden"] = worker.id in self._manual_tasks
                 # Derived quality bucket — same rules the dispatcher uses for
                 # task gating, surfaced so operators see "low/medium/high" at
                 # a glance without having to inspect capabilities by hand.
@@ -1573,25 +1578,32 @@ class GatewayServer:
             except ValueError as e:
                 return JSONResponse({"error": f"Invalid task: {e}"}, status_code=400)
 
-            self._node_tasks[worker_id] = tasks
             # Stash the override so a reconnect doesn't wipe the operator's
-            # choice. An empty list explicitly removes the override and lets
-            # the auto-assigned defaults take over on the next register.
+            # choice. An empty list explicitly removes the override and
+            # immediately re-derives the auto-assigned defaults so the UI
+            # doesn't briefly render an empty task list between the click
+            # and the next worker register.
             if tasks:
                 self._manual_tasks[worker_id] = tasks
+                self._node_tasks[worker_id] = tasks
+                effective = tasks
             else:
                 self._manual_tasks.pop(worker_id, None)
+                roles = self._node_roles.get(worker_id, [])
+                effective = assign_tasks(worker.capabilities or {}, roles)
+                self._node_tasks[worker_id] = effective
             # Persist so the override survives a coordinator restart, not
             # just a worker reconnect.
             self._save_worker_states()
             log.info(
                 "Worker %s tasks manually set: %s",
                 worker_id,
-                ", ".join(str(t) for t in tasks),
+                ", ".join(str(t) for t in effective),
             )
             return JSONResponse({
                 "worker_id": worker_id,
-                "assigned_tasks": [str(t) for t in tasks],
+                "assigned_tasks": [str(t) for t in effective],
+                "tasks_overridden": worker_id in self._manual_tasks,
             })
 
         async def cluster_nodes(_request: Any) -> JSONResponse:

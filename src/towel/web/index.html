@@ -785,11 +785,14 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
             ${renderLiveResources(caps.live_resources)}
             ${renderAvailableModels(caps.available_models)}
             <div class="fleet-tasks">
-              <label style="font-size:0.75em;opacity:0.7">Assigned tasks:</label>
+              <label style="font-size:0.75em;opacity:0.7">Assigned tasks: ${worker.tasks_overridden ? '<span class="fleet-badge warn" title="Operator-set override — persists across reconnect and coordinator restart">manual override</span>' : '<span class="fleet-badge" title="Auto-assigned from worker capabilities">auto</span>'}</label>
               <select multiple size="5" class="fleet-task-select" data-worker-id="${escHtml(worker.id)}" style="width:100%;font-size:0.75em;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:2px">
                 ${taskOptions}
               </select>
-              <button class="fleet-btn" data-worker-id="${escHtml(worker.id)}" data-worker-op="save-tasks" style="margin-top:4px;font-size:0.7em">save tasks</button>
+              <div style="display:flex;gap:4px;margin-top:4px">
+                <button class="fleet-btn" data-worker-id="${escHtml(worker.id)}" data-worker-op="save-tasks" style="font-size:0.7em">save tasks</button>
+                ${worker.tasks_overridden ? `<button class="fleet-btn" data-worker-id="${escHtml(worker.id)}" data-worker-op="reset-tasks" style="font-size:0.7em" title="Clear the override and go back to auto-assigned defaults">reset to auto</button>` : ''}
+              </div>
             </div>
             <div class="fleet-controls">
               <button class="fleet-btn warn" data-worker-id="${escHtml(worker.id)}" data-worker-op="${worker.draining ? 'undrain' : 'drain'}">${worker.draining ? 'undrain' : 'drain'}</button>
@@ -1555,6 +1558,13 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         const select = btn.closest('.fleet-card').querySelector('.fleet-task-select');
         const tasks = Array.from(select.selectedOptions).map(function(o){return o.value;});
         await apiPost('/workers/' + encodeURIComponent(workerId) + '/tasks', { tasks: tasks });
+        loadFleetState();
+        return;
+      }
+      if (op === 'reset-tasks') {
+        // Posting an empty list clears the override; the next register
+        // (or the periodic refresh) will repopulate with auto-assigned defaults.
+        await apiPost('/workers/' + encodeURIComponent(workerId) + '/tasks', { tasks: [] });
         loadFleetState();
         return;
       }

@@ -190,6 +190,89 @@ class TestManualTaskOverridePersistsAcrossRestart:
         )
         assert worker_id not in gateway2._manual_tasks
 
+    def test_reset_to_auto_rederives_defaults_immediately(self, tmp_path, store):
+        """Clearing an override shouldn't leave the worker with an empty
+        task list until the next register — it should re-derive from
+        capabilities right now so the UI reflects auto state immediately."""
+        state_path = tmp_path / "worker_state.json"
+        gateway = GatewayServer(
+            config=TowelConfig(),
+            agent=_FakeAgent(),
+            sessions=SessionManager(store=store),
+            pin_store=SessionPinStore(path=tmp_path / "pins.json"),
+            worker_state_store=WorkerStateStore(path=state_path),
+        )
+        worker_id = "reset-host"
+        # Capabilities that yield non-empty auto-assigned tasks.
+        capabilities = {
+            "backend": "mlx",
+            "modes": ["mlx_prompt"],
+            "tools": True,
+            "context_window": 8192,
+            "total_vram_mb": 24000,
+        }
+        gateway._workers.register(worker_id, ws=MagicMock(), capabilities=capabilities)
+        gateway._node_roles[worker_id] = assign_roles(capabilities)
+        from starlette.testclient import TestClient
+
+        client = TestClient(gateway._build_http_app())
+        # First override with a narrow list.
+        client.post(f"/workers/{worker_id}/tasks", json={"tasks": ["chat"]})
+        assert gateway._node_tasks[worker_id] == [TaskType.CHAT]
+        # Reset: response should already show the broader auto-assigned set.
+        resp = client.post(f"/workers/{worker_id}/tasks", json={"tasks": []})
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["tasks_overridden"] is False
+        # Re-derived list — at minimum more than just [chat] given the
+        # capabilities. The exact tasks depend on TASK_REQUIREMENTS so we
+        # only assert it's non-empty and matches what assign_tasks produces.
+        expected = assign_tasks(capabilities, gateway._node_roles[worker_id])
+        assert gateway._node_tasks[worker_id] == expected
+        assert payload["assigned_tasks"] == [str(t) for t in expected]
+
+
+class TestWorkersEndpointSurfacesOverrideFlag:
+    """The /workers JSON should flag whether each worker's tasks are
+    operator-overridden vs auto-derived, so the UI can render a badge."""
+
+    def test_flag_true_when_override_present(self, tmp_path, store):
+        gateway = GatewayServer(
+            config=TowelConfig(),
+            agent=_FakeAgent(),
+            sessions=SessionManager(store=store),
+            pin_store=SessionPinStore(path=tmp_path / "pins.json"),
+            worker_state_store=WorkerStateStore(path=tmp_path / "worker_state.json"),
+        )
+        worker_id = "flagged-host"
+        gateway._workers.register(worker_id, ws=MagicMock(), capabilities={})
+        gateway._manual_tasks[worker_id] = [TaskType.CHAT]
+        from starlette.testclient import TestClient
+
+        client = TestClient(gateway._build_http_app())
+        resp = client.get("/workers").json()
+        flagged = [w for w in resp["workers"] if w["id"] == worker_id]
+        assert flagged and flagged[0]["tasks_overridden"] is True
+
+    def test_flag_false_when_no_override(self, tmp_path, store):
+        gateway = GatewayServer(
+            config=TowelConfig(),
+            agent=_FakeAgent(),
+            sessions=SessionManager(store=store),
+            pin_store=SessionPinStore(path=tmp_path / "pins.json"),
+            worker_state_store=WorkerStateStore(path=tmp_path / "worker_state.json"),
+        )
+        worker_id = "auto-host"
+        gateway._workers.register(worker_id, ws=MagicMock(), capabilities={})
+        from starlette.testclient import TestClient
+
+        client = TestClient(gateway._build_http_app())
+        resp = client.get("/workers").json()
+        flagged = [w for w in resp["workers"] if w["id"] == worker_id]
+        assert flagged and flagged[0]["tasks_overridden"] is False
+
+
+class TestUnknownTaskOnDisk:
     def test_unknown_task_value_on_disk_is_skipped(self, tmp_path, store):
         """If the schema evolves and an unknown task name is on disk,
         the coordinator should drop it rather than crash on startup."""
