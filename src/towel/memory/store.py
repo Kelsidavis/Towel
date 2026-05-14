@@ -1369,19 +1369,26 @@ class MemoryStore:
             # the result directly, no second-pass round-robin needed.
             entries = self.fused_search(query, limit=limit)
             if not entries:
-                # Empty FTS hit AND empty substring hit — fall back to a
-                # short recent slice so the agent still knows who it's
-                # talking to. Cap at limit so we don't blow the budget
-                # for the unsupervised case.
+                # Empty fused-search means the query had no lexical /
+                # vector / graph signal. Fall back to a short slice
+                # ranked by usefulness: user-type and preference-type
+                # entries are surfaced before fact-type, because a
+                # bare "hi" should remind the agent who it's talking
+                # to — not dump the operator's longest scratch note.
+                # Within each type bucket, newer entries win.
+                _PRIORITY = {"user": 0, "preference": 1, "project": 2, "fact": 3}
                 con = self._connect()
                 try:
                     rows = con.execute(
-                        "SELECT * FROM memories ORDER BY updated_at DESC LIMIT ?",
-                        (limit,),
+                        "SELECT * FROM memories ORDER BY updated_at DESC"
                     ).fetchall()
                 finally:
                     con.close()
-                entries = [_row_to_entry(r) for r in rows]
+                ranked = sorted(
+                    rows,
+                    key=lambda r: _PRIORITY.get(r["memory_type"], 4),
+                )
+                entries = [_row_to_entry(r) for r in ranked[:limit]]
             keys_in_order = [e.key for e in entries]
             self._bump_recall(keys_in_order)
             # Log the query trail so operators can introspect "why

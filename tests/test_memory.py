@@ -189,6 +189,31 @@ class TestQueryRelevantPromptBlock:
         block = store.to_prompt_block(query="completely unrelated xyzzy", limit=5)
         assert "alpha" in block or "beta" in block
 
+    def test_fallback_prioritizes_identity_over_notes(self):
+        # When no fused-search hit, the fallback should surface
+        # user/preference/project entries BEFORE fact entries — a
+        # bare "hi" should remind the agent who it's talking to
+        # not dump a long fact-type scratch note that happens to
+        # be the most-recently-updated.
+        import tempfile
+        from pathlib import Path
+        from towel.memory.store import MemoryStore
+        with tempfile.TemporaryDirectory() as tmp:
+            store = MemoryStore(store_dir=Path(tmp))
+            store.remember(
+                "longnote",
+                "this is a very long scratch note with lots of details about an unrelated project",
+                "fact",
+            )
+            store.remember("role", "data scientist", "user")
+            store.remember("style", "concise", "preference")
+            block = store.to_prompt_block(query="hello there", limit=2)
+            # With limit=2 and user+preference ranked above fact,
+            # role + style should win — the long fact stays out.
+            assert "data scientist" in block
+            assert "concise" in block
+            assert "scratch note" not in block
+
 
 class TestJsonMigration:
     """The first time the new store opens against an existing
