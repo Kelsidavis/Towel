@@ -137,6 +137,30 @@ class TestWorkerStateEndpoint:
 
         assert resp.status_code == 404
 
+    def test_worker_state_rejects_non_bool_values(self, gateway, client):
+        """Previously the handler did `bool(value)` which made any
+        non-empty string truthy: `{"draining": "yes"}` drained the
+        worker, `{"draining": "false"}` *also* drained it (the string
+        "false" is truthy in Python). This is an operator-facing
+        endpoint — wrong inputs must fail loud."""
+        gateway._workers.register(
+            "desktop-1", object(), {"backend": "mlx", "modes": ["mlx_prompt"]}
+        )
+        for bad in ("yes", "false", "1", 0, [], {"x": 1}):
+            resp = client.post(
+                "/workers/desktop-1/state", json={"draining": bad}
+            )
+            assert resp.status_code == 400, f"accepted bad draining={bad!r}"
+            assert "true or false" in resp.json()["error"]
+            # And the worker state must remain UNCHANGED.
+            assert gateway._workers.get("desktop-1").draining is False
+
+        for bad in ("yes", "false", 1, []):
+            resp = client.post(
+                "/workers/desktop-1/state", json={"enabled": bad}
+            )
+            assert resp.status_code == 400, f"accepted bad enabled={bad!r}"
+
 
 class TestWorkerPinEndpoint:
     def test_pin_worker_sets_session_pin(self, gateway, client):

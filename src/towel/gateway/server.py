@@ -3081,11 +3081,23 @@ class GatewayServer:
                     {"error": "enabled or draining required"},
                     status_code=400,
                 )
+            # Strict boolean check. The previous code passed values
+            # through `bool(...)` which made any non-empty string
+            # truthy — `{"draining": "yes"}` actually drained the
+            # worker, and `{"draining": "false"}` did too (the string
+            # "false" is truthy in Python). Dangerous for an operator-
+            # facing endpoint.
+            for field, value in (("enabled", enabled), ("draining", draining)):
+                if value is not None and not isinstance(value, bool):
+                    return JSONResponse(
+                        {"error": f"{field} must be true or false (got {type(value).__name__})"},
+                        status_code=400,
+                    )
 
             if enabled is not None:
-                self._workers.set_enabled(worker_id, bool(enabled))
+                self._workers.set_enabled(worker_id, enabled)
             if draining is not None:
-                self._workers.set_draining(worker_id, bool(draining))
+                self._workers.set_draining(worker_id, draining)
                 # Trigger handoffs when a worker starts draining
                 if draining:
                     await self._initiate_handoffs_for_worker(
