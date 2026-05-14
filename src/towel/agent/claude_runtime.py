@@ -198,12 +198,19 @@ class ClaudeCodeRuntime:
         log.info(f"Claude API client ready (model: {self.model})")
         self._loaded = True
 
-    def _build_system_prompt(self, include_tools_section: bool = True) -> str:
+    def _build_system_prompt(
+        self,
+        include_tools_section: bool = True,
+        query: str | None = None,
+    ) -> str:
         """Build system prompt with towel's identity, context, and tool instructions.
 
         When ``include_tools_section`` is False, the per-tool listing and call-format
         spec are omitted — used when the Anthropic ``tools=`` parameter is in play,
         in which case Claude already knows the tool schemas structurally.
+
+        ``query`` is the current user turn used to rank persistent
+        memories; ``None`` keeps the legacy full-dump behavior.
         """
         # Billing attribution header — injected as a system prompt block,
         # not an HTTP header. This is how Claude Code tells the API to bill
@@ -227,9 +234,10 @@ class ClaudeCodeRuntime:
             if project_block:
                 system += project_block
 
-        # Inject persistent memories
+        # Inject persistent memories — ranked when the caller supplied
+        # the current user turn, full dump otherwise.
         if self.memory:
-            memory_block = self.memory.to_prompt_block()
+            memory_block = self.memory.to_prompt_block(query=query)
             if memory_block:
                 system += memory_block
 
@@ -297,7 +305,8 @@ class ClaudeCodeRuntime:
         maybe_compact_conversation(
             conversation,
             system_content=self._build_system_prompt(
-                include_tools_section=not self._native_tools_supported
+                include_tools_section=not self._native_tools_supported,
+                query=conversation.latest_user_query(),
             ),
             context_window=self.config.model.context_window,
             max_output_tokens=output_reserve,
@@ -320,7 +329,10 @@ class ClaudeCodeRuntime:
         use_native = self._native_tools_supported
         request: dict[str, Any] = {
             "mode": "anthropic_messages",
-            "system": self._build_system_prompt(include_tools_section=not use_native),
+            "system": self._build_system_prompt(
+                include_tools_section=not use_native,
+                query=conversation.latest_user_query(),
+            ),
             "messages": self._build_messages(conversation),
         }
         if use_native:

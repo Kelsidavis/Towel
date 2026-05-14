@@ -469,13 +469,22 @@ class AgentRuntime:
             metadata={"tps": 0, "tokens": total_tokens, "max_iterations": True},
         )
 
-    def _build_system_content(self, include_tools_section: bool = True) -> str:
+    def _build_system_content(
+        self,
+        include_tools_section: bool = True,
+        query: str | None = None,
+    ) -> str:
         """Build the system prompt including project context, memory, and tool definitions.
 
         When ``include_tools_section`` is False, the per-tool listing and call-format
         spec are omitted — used when the tokenizer's chat template natively renders
         the tool list via the ``tools=`` kwarg (e.g. Qwen3, Llama 3.1+, Hermes).
         Behavioral guardrails (no inventing tools, terse calls, single retry) remain.
+
+        ``query`` is the current user turn; when set, the memory block is
+        ranked by relevance and trimmed to the top few rather than
+        dumping the entire memory corpus. ``None`` keeps the legacy
+        full-dump behavior for non-conversation callers.
         """
         system = self.config.identity + (
             "\n\nAfter using a tool, always answer the user's original question "
@@ -495,9 +504,11 @@ class AgentRuntime:
             if project_block:
                 system += project_block
 
-        # Inject persistent memories
+        # Inject persistent memories — ranked by relevance to the
+        # current user turn when one is available, dumped in full
+        # otherwise.
         if self.memory:
-            memory_block = self.memory.to_prompt_block()
+            memory_block = self.memory.to_prompt_block(query=query)
             if memory_block:
                 system += memory_block
         tools = self.skills.tool_definitions()
@@ -605,7 +616,10 @@ class AgentRuntime:
         model's token budget, dropping oldest messages first.
         """
         use_native_tools = bool(self._native_tools_supported)
-        system_content = self._build_system_content(include_tools_section=not use_native_tools)
+        system_content = self._build_system_content(
+            include_tools_section=not use_native_tools,
+            query=conversation.latest_user_query(),
+        )
         all_messages = conversation.to_chat_messages()
         output_reserve = estimate_output_reserve(
             all_messages,

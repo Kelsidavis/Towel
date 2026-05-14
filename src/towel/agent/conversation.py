@@ -77,6 +77,18 @@ class Conversation:
     def last(self) -> Message | None:
         return self.messages[-1] if self.messages else None
 
+    def latest_user_query(self) -> str:
+        """Return the most recent user message text, or "" if there is none.
+
+        Used by the system-prompt builders to fetch query-relevant
+        memories — the user's last turn is the strongest signal for
+        which memories to surface this round.
+        """
+        for msg in reversed(self.messages):
+            if msg.role == Role.USER:
+                return msg.content
+        return ""
+
     def __len__(self) -> int:
         return len(self.messages)
 

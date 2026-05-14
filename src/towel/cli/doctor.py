@@ -76,6 +76,7 @@ def run_doctor(config: TowelConfig | None = None) -> list[Check]:
     checks.append(check_gateway(config))
     checks.append(check_storage())
     checks.append(check_persisted_worker_state())
+    checks.append(check_sqlite_fts5())
     checks.append(check_memory_store())
 
     return checks
@@ -524,46 +525,71 @@ def check_persisted_worker_state() -> Check:
     return c
 
 
-def check_memory_store() -> Check:
-    """Verify the agent's persistent memory file is readable and not stale.
+def check_sqlite_fts5() -> Check:
+    """Verify the host SQLite supports FTS5.
 
-    Flags two failure modes:
-    - The on-disk file fails to parse (corruption). The load path now
-      backs the bad file aside, but if a backup exists, surface it so
-      the operator can recover.
-    - A previous corruption already produced a ``.corrupted-*`` sibling
-      that the operator probably wants to triage.
+    The memory store relies on the FTS5 virtual table for BM25-ranked
+    retrieval. Almost every modern sqlite ships it, but stripped-down
+    builds (some Alpine/musl images, custom embedded sqlite) leave it
+    out. Surface this on doctor rather than waiting for the first
+    ``remember`` call to error out.
+    """
+    import sqlite3
+
+    c = Check("SQLite FTS5")
+    c.ok(f"sqlite3 module {sqlite3.sqlite_version}")
+    try:
+        con = sqlite3.connect(":memory:")
+        con.execute("CREATE VIRTUAL TABLE _probe USING fts5(content)")
+        con.close()
+        c.ok("FTS5 virtual table available")
+    except sqlite3.OperationalError as exc:
+        c.fail(f"FTS5 not compiled into this sqlite ({exc})")
+        c.suggestions.append(
+            "Install Python with a sqlite that has FTS5 (Homebrew, "
+            "Debian 11+, official python.org installers all do). On "
+            "Alpine, install sqlite-dev and rebuild Python, or use the "
+            "glibc image."
+        )
+    return c
+
+
+def check_memory_store() -> Check:
+    """Verify the agent's persistent memory DB is readable.
+
+    Flags two notable conditions:
+    - The store fails to open (FTS5 missing, perms, disk full). The
+      FTS5 case is also surfaced by ``check_sqlite_fts5`` but is worth
+      reporting here too so the operator sees the symptom adjacent to
+      the count.
+    - A legacy ``memories.json.migrated-*`` archive is present —
+      informational, not a problem, but useful for operators wondering
+      "where did my JSON go".
     """
     from towel.memory.store import DEFAULT_MEMORY_DIR, MemoryStore
 
     c = Check("Memory store")
-    index = DEFAULT_MEMORY_DIR / "memories.json"
-    if not index.exists():
-        c.ok(f"No memories stored yet ({index})")
-        return c
+    db_path = DEFAULT_MEMORY_DIR / "memory.db"
 
-    # Check for previous corruption backups left around so operators
-    # notice them on the very next `doctor` rather than only when
-    # something else breaks.
-    backups = sorted(DEFAULT_MEMORY_DIR.glob("memories.json.corrupted-*"))
-    if backups:
-        c.warn(
-            f"Found {len(backups)} corrupted-memory backup(s) — most recent: "
-            f"{backups[-1].name}"
-        )
-        c.suggestions.append(
-            "Inspect the backup and merge anything worth keeping back into "
-            f"{index}"
+    # Surface any migration markers so operators see what happened.
+    archives = sorted(DEFAULT_MEMORY_DIR.glob("memories.json.migrated-*"))
+    if archives:
+        c.ok(
+            f"Migrated from JSON store ({len(archives)} archive(s); "
+            f"latest: {archives[-1].name})"
         )
 
     try:
         store = MemoryStore()
-        count = store.count  # property, not method
+        count = store.count
     except Exception as exc:
         c.fail(f"Memory store unreadable: {exc}")
         return c
 
-    c.ok(f"Memory store: {count} entries in {index}")
+    if count == 0 and not db_path.exists():
+        c.ok(f"No memories stored yet ({db_path})")
+        return c
+    c.ok(f"Memory store: {count} entries in {db_path}")
     return c
 
 

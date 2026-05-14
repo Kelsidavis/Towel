@@ -202,23 +202,25 @@ class TestMemoryStoreCheck:
         c = check_memory_store()
         c.finalize()
         assert c.passed
-        assert any("No memories stored yet" in d for d in c.details)
+        # Either "no memories yet" or the entry count line — both are
+        # the OK state.
+        joined = " ".join(c.details)
+        assert "No memories stored yet" in joined or "Memory store:" in joined
 
-    def test_corruption_backup_is_surfaced(self, tmp_path, monkeypatch):
+    def test_migration_archive_is_surfaced(self, tmp_path, monkeypatch):
         from towel.memory import store as memory_store
 
         mem_dir = tmp_path / "memory"
         mem_dir.mkdir()
-        (mem_dir / "memories.json").write_text("{}", encoding="utf-8")
-        (mem_dir / "memories.json.corrupted-20260101T120000").write_text(
-            "old corrupted content", encoding="utf-8"
+        # Simulate a previous open that migrated from JSON.
+        (mem_dir / "memories.json.migrated-20260101T120000").write_text(
+            "old json payload", encoding="utf-8"
         )
         monkeypatch.setattr(memory_store, "DEFAULT_MEMORY_DIR", mem_dir)
         c = check_memory_store()
         c.finalize()
-        # Backup is a warning so operators don't miss it.
-        assert any("corrupted-memory backup" in w for w in c.warnings)
-        # But the live file is still readable, so the check itself passes.
+        # Informational OK line so operators see what happened.
+        assert any("Migrated from JSON store" in d for d in c.details)
         assert c.passed
 
 
@@ -227,7 +229,7 @@ class TestRunDoctor:
         config = TowelConfig()
         config.gateway.port = 19997  # avoid conflicts
         checks = run_doctor(config)
-        assert len(checks) == 9
+        assert len(checks) == 10
         names = [c.name for c in checks]
         assert "Environment" in names
         assert "Configuration" in names
@@ -237,6 +239,7 @@ class TestRunDoctor:
         assert "Gateway" in names
         assert "Storage" in names
         assert "Persisted worker state" in names
+        assert "SQLite FTS5" in names
         assert "Memory store" in names
 
     def test_all_checks_finalized(self):

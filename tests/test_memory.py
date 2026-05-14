@@ -1,5 +1,8 @@
 """Tests for the persistent memory system."""
 
+import json
+import sqlite3
+
 import pytest
 
 from towel.memory.store import MemoryEntry, MemoryStore
@@ -49,16 +52,19 @@ class TestMemoryStore:
         users = store.recall_all(memory_type="user")
         assert len(users) == 1
 
-    def test_search(self, store):
+    def test_search_keyword_hit(self, store):
         store.remember("favorite_language", "Python is great")
         store.remember("favorite_food", "Pizza")
         store.remember("project_deadline", "March 2026")
 
         results = store.search("favorite")
-        assert len(results) == 2
+        # Substring fallback kicks in for "favorite" (FTS5 token boundary
+        # match) so both favorite_* keys come back.
+        assert {e.key for e in results} == {"favorite_language", "favorite_food"}
 
         results = store.search("python")
         assert len(results) == 1
+        assert results[0].key == "favorite_language"
 
     def test_count(self, store):
         assert store.count == 0
@@ -98,47 +104,179 @@ class TestMemoryStore:
         assert "**Fact:**" in block
 
 
-class TestCorruptionRecovery:
-    """The memory file is the agent's long-term brain — a JSON parse
-    failure shouldn't silently destroy every entry on the next save."""
+class TestBM25Ranking:
+    """FTS5 BM25 ranking is the headline upgrade — search() must rank
+    relevant content above lexical near-misses."""
 
-    def test_corrupted_file_is_backed_up_before_reset(self, tmp_path):
-        index = tmp_path / "memories.json"
-        index.write_text("{not valid json", encoding="utf-8")
-        store = MemoryStore(store_dir=tmp_path)
-        # The first read should treat the file as empty but move the bad
-        # file aside so it isn't clobbered by the next save.
-        assert store.count == 0
-        backups = list(tmp_path.glob("memories.json.corrupted-*"))
-        assert len(backups) == 1
-        assert backups[0].read_text(encoding="utf-8") == "{not valid json"
-        # And the canonical path is now absent (so the next save creates
-        # a fresh, valid file from scratch).
-        assert not index.exists()
+    def test_bm25_ranks_content_match(self, store):
+        store.remember("jwt", "fixed JWT auth bug in login endpoint")
+        store.remember("rate", "added rate limiting to API gateway")
+        store.remember("query", "optimized N+1 queries in orders pipeline")
+        store.remember("role", "user is a data scientist")
 
-    def test_save_after_corruption_writes_fresh_file(self, tmp_path):
-        (tmp_path / "memories.json").write_text("definitely not json", encoding="utf-8")
-        store = MemoryStore(store_dir=tmp_path)
-        store.remember("survivor", "I made it", memory_type="fact")
-        # The new save produced a valid file...
-        assert (tmp_path / "memories.json").exists()
-        # ...and the corrupted backup is still there for the operator.
-        backups = list(tmp_path.glob("memories.json.corrupted-*"))
-        assert len(backups) == 1
+        # Single-token search returns only the matching row.
+        results = store.search("queries", limit=5)
+        assert [e.key for e in results] == ["query"]
 
-    def test_save_is_atomic(self, tmp_path):
-        """Writing to a tmp sibling and renaming means a kill mid-write
-        leaves the original file intact rather than truncated. Verify
-        the tmp file doesn't linger after a clean save."""
-        store = MemoryStore(store_dir=tmp_path)
+        # Multi-token AND-ish ranking: "rate limiting" should pick the
+        # rate-limiter memory above unrelated entries.
+        results = store.search("rate limiting", limit=5)
+        assert results[0].key == "rate"
+
+    def test_search_falls_back_to_substring(self, store):
+        # FTS5 tokenizes on word boundaries — apostrophes and short
+        # punctuation can cause MATCH to miss. The substring fallback
+        # exists for that case.
+        store.remember("k_apos", "user's preference is dark mode")
+        results = store.search("preference")
+        assert any(e.key == "k_apos" for e in results)
+
+    def test_search_empty_query_returns_empty(self, store):
         store.remember("k", "v")
-        # No tmp file left lying around.
-        assert not (tmp_path / "memories.json.tmp").exists()
-        # The real file is parseable JSON.
-        import json
+        assert store.search("") == []
+        assert store.search("   ") == []
 
-        data = json.loads((tmp_path / "memories.json").read_text())
-        assert "k" in data
+    def test_search_respects_limit(self, store):
+        for i in range(10):
+            store.remember(f"k{i}", f"sample text number {i}")
+        results = store.search("sample", limit=3)
+        assert len(results) == 3
+
+
+class TestQueryRelevantPromptBlock:
+    """to_prompt_block(query=…) must surface the right memories AND
+    bump recall stats for downstream decay/forget passes."""
+
+    def test_query_filters_by_relevance(self, store):
+        store.remember("role", "user is a data scientist", "user")
+        store.remember("project_jwt", "fixed JWT auth bug", "project")
+        store.remember("project_db", "optimized N+1 database queries", "project")
+
+        block = store.to_prompt_block(query="data scientist", limit=2)
+        # "role" wins; the unrelated project entries should not all
+        # appear (limit=2 caps the dump).
+        assert "data scientist" in block
+        assert block.count("project_") <= 1
+
+    def test_query_bumps_recall_stats(self, store):
+        store.remember("hit", "this content has the magic token")
+        store.remember("miss", "unrelated text")
+        assert store.recall("hit").recall_count == 0
+
+        store.to_prompt_block(query="magic token", limit=5)
+        after = store.recall("hit")
+        assert after.recall_count == 1
+        assert after.last_recalled_at is not None
+        # Untouched entries stay at zero so we don't poison the decay
+        # signal with mass-bumps.
+        assert store.recall("miss").recall_count == 0
+
+    def test_no_query_dumps_everything(self, store):
+        # Legacy callers (TUI, `towel memory list`) get the full corpus.
+        for i in range(15):
+            store.remember(f"k{i}", f"text {i}")
+        block = store.to_prompt_block()
+        for i in range(15):
+            assert f"k{i}" in block
+
+    def test_empty_query_returns_recent_slice(self, store):
+        # When FTS5 + substring both miss, the prompt block falls back
+        # to the most recent N memories so the agent still has SOMETHING
+        # personal. Better than an empty block.
+        store.remember("a", "alpha", "user")
+        store.remember("b", "beta", "user")
+        block = store.to_prompt_block(query="completely unrelated xyzzy", limit=5)
+        assert "alpha" in block or "beta" in block
+
+
+class TestJsonMigration:
+    """The first time the new store opens against an existing
+    ~/.towel/memory/memories.json, we import it once into SQLite and
+    rename the old file so we never re-import."""
+
+    def _seed_json(self, dirpath, payload):
+        (dirpath / "memories.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_migrates_entries_then_renames_marker(self, tmp_path):
+        self._seed_json(tmp_path, {
+            "role": {
+                "key": "role", "content": "data scientist", "type": "user",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+            },
+            "goal": {
+                "key": "goal", "content": "fix N+1 queries", "type": "project",
+                "created_at": "2026-01-02T00:00:00+00:00",
+                "updated_at": "2026-01-02T00:00:00+00:00",
+            },
+        })
+        store = MemoryStore(store_dir=tmp_path)
+        assert store.count == 2
+        assert store.recall("role").content == "data scientist"
+
+        # Marker rename — the original file is gone; an archived copy
+        # remains so the operator can recover if needed.
+        assert not (tmp_path / "memories.json").exists()
+        archives = list(tmp_path.glob("memories.json.migrated-*"))
+        assert len(archives) == 1
+
+    def test_migration_is_idempotent(self, tmp_path):
+        # First pass imports.
+        self._seed_json(tmp_path, {
+            "k": {
+                "key": "k", "content": "v", "type": "fact",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+            },
+        })
+        MemoryStore(store_dir=tmp_path)
+        # Subsequent opens find no JSON file and don't double-import.
+        store2 = MemoryStore(store_dir=tmp_path)
+        assert store2.count == 1
+
+    def test_migration_skips_malformed_entries(self, tmp_path):
+        # Single bad row shouldn't poison the whole import.
+        self._seed_json(tmp_path, {
+            "ok": {
+                "key": "ok", "content": "good", "type": "fact",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+            },
+            "bad": {"this": "is missing required fields"},
+        })
+        store = MemoryStore(store_dir=tmp_path)
+        assert store.recall("ok") is not None
+        assert store.recall("bad") is None
+
+    def test_corrupt_json_does_not_crash(self, tmp_path):
+        (tmp_path / "memories.json").write_text("{not valid json", encoding="utf-8")
+        # Store opens fine and is empty; corrupted file is left as-is
+        # for the operator to inspect.
+        store = MemoryStore(store_dir=tmp_path)
+        assert store.count == 0
+
+
+class TestSqliteBacking:
+    def test_uses_sqlite_not_json(self, store):
+        store.remember("k", "v")
+        # The new on-disk format is memory.db, not memories.json. This
+        # is what callers like `towel doctor` and ops scripts will key
+        # off when checking for migration.
+        assert (store.store_dir / "memory.db").exists()
+        assert not (store.store_dir / "memories.json").exists()
+
+    def test_fts_index_kept_in_sync_by_triggers(self, store):
+        store.remember("alpha", "the quick brown fox")
+        # Update content — the FTS index should reflect the new text,
+        # not the old, after the trigger fires.
+        store.remember("alpha", "lazy dogs sleep all afternoon")
+        # FTS query for original content must miss; new content must hit.
+        assert store.search("quick brown") == []
+        assert any(e.key == "alpha" for e in store.search("lazy dogs"))
+
+        # Deletes also propagate.
+        store.forget("alpha")
+        assert store.search("lazy dogs") == []
 
 
 class TestMemoryEntry:

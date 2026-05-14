@@ -143,12 +143,19 @@ class OllamaRuntime:
             log.debug("Tool capability probe failed: %s", exc)
             return False
 
-    def _build_system_prompt(self, include_tools_section: bool = True) -> str:
+    def _build_system_prompt(
+        self,
+        include_tools_section: bool = True,
+        query: str | None = None,
+    ) -> str:
         """Build system prompt with identity, context, and tool instructions.
 
         When ``include_tools_section`` is False the per-tool listing and call-format
         spec are dropped — used when Ollama's native ``tools`` field is in play and
         the chat template (Qwen3, Llama 3.1+, etc.) renders the tools itself.
+
+        ``query`` is the current user turn used to rank persistent
+        memories; ``None`` keeps the legacy full-dump behavior.
         """
         system = self.config.identity + (
             "\n\nAfter using a tool, always answer the user's original question "
@@ -166,7 +173,7 @@ class OllamaRuntime:
                 system += project_block
 
         if self.memory:
-            memory_block = self.memory.to_prompt_block()
+            memory_block = self.memory.to_prompt_block(query=query)
             if memory_block:
                 system += memory_block
 
@@ -215,7 +222,8 @@ class OllamaRuntime:
     def _build_messages(self, conversation: Conversation) -> list[dict[str, str]]:
         """Convert conversation to Ollama chat messages format."""
         system_content = self._build_system_prompt(
-            include_tools_section=not bool(self._native_tools_supported)
+            include_tools_section=not bool(self._native_tools_supported),
+            query=conversation.latest_user_query(),
         )
         existing_messages = [
             {"role": msg.role.value, "content": msg.content} for msg in conversation.messages
@@ -247,7 +255,10 @@ class OllamaRuntime:
         use_native = bool(self._native_tools_supported)
         request: dict[str, Any] = {
             "mode": "ollama_chat",
-            "system": self._build_system_prompt(include_tools_section=not use_native),
+            "system": self._build_system_prompt(
+                include_tools_section=not use_native,
+                query=conversation.latest_user_query(),
+            ),
             "messages": self._build_messages(conversation),
             "model": self.config.model.name,
         }
