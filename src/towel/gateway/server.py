@@ -3285,10 +3285,28 @@ class GatewayServer:
             return JSONResponse({"deleted": deleted})
 
         async def conversations_delete_all(request: Request) -> JSONResponse:
-            """Delete all conversations."""
+            """Delete all conversations.
+
+            Requires ``?confirm=yes`` to actually perform the delete.
+            Without it, returns a 400 with the live count + the URL the
+            caller would need to hit. This is a footgun guard: a stale
+            curl in shell history or a misclicked button shouldn't
+            silently wipe an operator's entire conversation archive.
+            """
             store = self.sessions.store
             if not store:
                 return JSONResponse({"error": "No store"}, status_code=500)
+            if request.query_params.get("confirm") != "yes":
+                return JSONResponse(
+                    {
+                        "error": (
+                            "this would delete ALL conversations; "
+                            "re-issue with ?confirm=yes to proceed"
+                        ),
+                        "would_delete": store.count,
+                    },
+                    status_code=400,
+                )
             count = store.delete_all()
             self.sessions.clear()
             self._session_workers.clear()

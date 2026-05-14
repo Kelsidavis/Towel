@@ -317,6 +317,37 @@ class TestConversationsAPI:
         assert resp.status_code == 200
         assert resp.json()["deleted"] is False
 
+    def test_delete_all_requires_confirmation(self, store, client):
+        """DELETE /conversations is a "wipe everything" footgun. Without
+        ?confirm=yes a stale curl in shell history or a misclicked UI
+        button would silently destroy the entire archive. Require the
+        explicit confirmation."""
+        # Seed with a few entries so we can verify they SURVIVE the bad
+        # call (an accidental wipe would leave us with zero).
+        for i in range(3):
+            conv = Conversation(id=f"survives-{i}")
+            conv.add(Role.USER, "keep me")
+            store.save(conv)
+
+        resp = client.request("DELETE", "/conversations")
+        assert resp.status_code == 400
+        body = resp.json()
+        assert "confirm=yes" in body["error"]
+        assert body["would_delete"] == 3
+        # Crucially: the conversations are still on disk.
+        assert store.count == 3
+
+    def test_delete_all_with_confirmation_wipes(self, store, client):
+        for i in range(3):
+            conv = Conversation(id=f"wipe-{i}")
+            conv.add(Role.USER, "ok bye")
+            store.save(conv)
+
+        resp = client.request("DELETE", "/conversations?confirm=yes")
+        assert resp.status_code == 200
+        assert resp.json()["deleted"] == 3
+        assert store.count == 0
+
     def test_export_markdown(self, store, client):
         conv = Conversation(id="exp-1", channel="cli")
         conv.add(Role.USER, "hello")

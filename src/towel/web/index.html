@@ -1218,7 +1218,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
 
   async function clearAllConversations() {
     if (!confirm('Delete ALL conversations? This cannot be undone.')) return;
-    await apiDelete('/conversations');
+    await apiDelete('/conversations?confirm=yes');
     startNewChat();
   }
 
