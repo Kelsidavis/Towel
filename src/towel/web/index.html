@@ -364,6 +364,10 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
           <div class="fleet-list" id="fleet-dispatch-list"></div>
         </div>
         <div class="fleet-section">
+          <h3>Recent session handoffs</h3>
+          <div class="fleet-list" id="fleet-handoffs-list"></div>
+        </div>
+        <div class="fleet-section">
           <h3>Persisted state for offline workers</h3>
           <div class="fleet-list" id="fleet-offline-list"></div>
         </div>
@@ -461,6 +465,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   const fleetInventoryListEl = document.getElementById('fleet-inventory-list');
   const fleetInventoryFilterEl = document.getElementById('fleet-inventory-filter');
   const fleetOfflineListEl = document.getElementById('fleet-offline-list');
+  const fleetHandoffsListEl = document.getElementById('fleet-handoffs-list');
 
   let ws = null, isStreaming = false;
   let currentAssistantEl = null, currentContentEl = null;
@@ -623,7 +628,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
 
   async function loadFleetState() {
     try {
-      const [health, workers, sessions, dispatch, inventory] = await Promise.all([
+      const [health, workers, sessions, dispatch, inventory, handoffs] = await Promise.all([
         apiGet('/health'),
         apiGet('/workers'),
         apiGet('/sessions'),
@@ -631,7 +636,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         // tolerate older coordinators by falling through to empty data
         // rather than tripping Promise.all.
         apiGet('/dispatch/recent?limit=10' + dispatchFilterQuery()).catch(() => ({ decisions: [] })),
-        apiGet('/fleet/inventory').catch(() => ({ models: [] }))
+        apiGet('/fleet/inventory').catch(() => ({ models: [] })),
+        apiGet('/cluster/handoffs').catch(() => ({ recent: [], stats: {} }))
       ]);
       fleetState = {
         workers: workers.workers || [],
@@ -643,7 +649,9 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         workerStats: health.workers || {},
         coordinator: health.coordinator || null,
         dispatch: dispatch.decisions || [],
-        inventory: inventory.models || []
+        inventory: inventory.models || [],
+        handoffs: handoffs.recent || [],
+        handoffStats: handoffs.stats || {}
       };
       renderFleet();
     } catch (e) {
@@ -657,6 +665,47 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         fleetInventoryListEl.innerHTML = '<div class="fleet-empty">Inventory unavailable.</div>';
       }
     }
+  }
+
+  function renderHandoffs() {
+    if (!fleetHandoffsListEl) return;
+    const recent = fleetState.handoffs || [];
+    const stats = fleetState.handoffStats || {};
+    if (!recent.length) {
+      const pending = stats.pending || 0;
+      fleetHandoffsListEl.innerHTML = pending
+        ? '<div class="fleet-empty">No recent handoffs. ' + escHtml(String(pending)) + ' pending right now.</div>'
+        : '<div class="fleet-empty">No handoffs recorded yet.</div>';
+      return;
+    }
+    // Newest first.
+    const ordered = recent.slice().reverse();
+    fleetHandoffsListEl.innerHTML = ordered.map(function(h) {
+      const reason = h.reason || 'unknown';
+      const reasonCls = h.success ? 'ok' : 'err';
+      const duration = (typeof h.duration_ms === 'number')
+        ? (h.duration_ms >= 1000
+            ? (h.duration_ms / 1000).toFixed(1) + 's'
+            : Math.round(h.duration_ms) + 'ms')
+        : 'pending';
+      const errorRow = h.error
+        ? '<div class="fleet-route-meta" style="color:var(--err)">error: ' + escHtml(h.error) + '</div>'
+        : '';
+      return `
+        <div class="fleet-card">
+          <div class="fleet-card-head">
+            <div class="fleet-card-title">${escHtml(h.session_id)}: ${escHtml(h.from_worker_id)} → ${escHtml(h.to_worker_id)}</div>
+            <div class="fleet-badge ${reasonCls}">${escHtml(reason)}</div>
+          </div>
+          ${errorRow}
+          <div class="fleet-meta">
+            <span>duration: ${escHtml(duration)}</span>
+            <span>messages: ${escHtml(String(h.message_count || 0))}</span>
+            ${h.tokens_transferred ? '<span>tokens: ' + escHtml(String(h.tokens_transferred)) + '</span>' : ''}
+            ${h.completed_at ? '<span>at: ' + escHtml(String(h.completed_at).slice(11, 19)) + '</span>' : ''}
+          </div>
+        </div>`;
+    }).join('');
   }
 
   function renderOfflinePersisted() {
@@ -776,13 +825,19 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     const degraded = (fleetState.dispatch || []).filter(function(d) {
       return d && d.quality_degraded;
     }).length;
+    // Surface handoff health alongside worker counts. A nonzero
+    // "Handoffs failed" tile means at least one session migration didn't
+    // complete cleanly — usually a sign that a replacement worker
+    // couldn't be selected or context sync timed out.
+    const handoffStats = fleetState.handoffStats || {};
     const statItems = [
       ['Workers', stats.total || 0],
       ['Idle', stats.idle || 0],
       ['Busy', stats.busy || 0],
       ['Stuck', stats.stuck || 0],
       ['Hot', hot],
-      ['Degraded', degraded]
+      ['Degraded', degraded],
+      ['Handoffs failed', handoffStats.failed || 0]
     ];
     fleetSummaryEl.innerHTML = statItems.map(function(item) {
       return '<div class="fleet-stat"><span class="k">' + escHtml(item[0]) + '</span><span class="v">' + escHtml(String(item[1])) + '</span></div>';
@@ -868,6 +923,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     renderDispatchDecisions();
     renderFleetInventory();
     renderOfflinePersisted();
+    renderHandoffs();
 
     if (!fleetState.sessions.length) {
       fleetRoutesListEl.innerHTML = '<div class="fleet-empty">No active routes.</div>';

@@ -57,6 +57,7 @@ class TestProbeFleetEndpoints:
             "/dispatch/recent?limit=1": {
                 "decisions": [{"reason": "task_type_match", "worker_id": "w-cool"}],
             },
+            "/cluster/handoffs": {"stats": {"total": 0, "failed": 0, "pending": 0}, "recent": []},
         }
 
         def fake_get(url, timeout=None):
@@ -115,6 +116,7 @@ class TestProbeFleetEndpoints:
                 "fleet_max_param_b": 32.0,
             },
             "/dispatch/recent?limit=1": {"decisions": []},
+            "/cluster/handoffs": {"stats": {"total": 0, "failed": 0, "pending": 0}, "recent": []},
         }
 
         def fake_get(url, timeout=None):
@@ -143,6 +145,7 @@ class TestProbeFleetEndpoints:
                 "fleet_max_param_b": 0.0,
             },
             "/dispatch/recent?limit=1": {"decisions": []},
+            "/cluster/handoffs": {"stats": {"total": 0, "failed": 0, "pending": 0}, "recent": []},
         }
 
         def fake_get(url, timeout=None):
@@ -167,8 +170,8 @@ class TestProbeFleetEndpoints:
         c = Check("test")
         with patch("httpx.get", side_effect=Exception("boom")):
             _probe_fleet_endpoints(c, "localhost", 18743)
-        # One warning per probe (workers, skills, inventory, dispatch).
-        assert len(c.warnings) == 4
+        # One warning per probe (workers, skills, inventory, dispatch, handoffs).
+        assert len(c.warnings) == 5
         assert all("probe failed" in w for w in c.warnings)
 
     def test_garbage_cpu_pressure_does_not_count_as_hot(self):
@@ -189,6 +192,7 @@ class TestProbeFleetEndpoints:
                 "fleet_max_param_b": 0.0,
             },
             "/dispatch/recent?limit=1": {"decisions": []},
+            "/cluster/handoffs": {"stats": {"total": 0, "failed": 0, "pending": 0}, "recent": []},
         }
 
         def fake_get(url, timeout=None):
@@ -205,3 +209,44 @@ class TestProbeFleetEndpoints:
         assert "Workers: 1" in joined
         # No "hot" count when the only worker's pressure value is unusable.
         assert "hot" not in joined
+
+    def test_handoff_failures_become_a_warning(self):
+        """A nonzero failed-handoff count is exactly the kind of thing
+        operators don't notice until something breaks. Doctor surfaces it
+        as a warn so the line shows up next to a yellow WARN icon."""
+        responses = {
+            "/workers": {"workers": []},
+            "/skills": {"skills": [], "total_tools": 0},
+            "/fleet/inventory": {
+                "models": [], "total_unique": 0, "total_workers": 0,
+                "fleet_max_param_b": 0.0,
+            },
+            "/dispatch/recent?limit=1": {"decisions": []},
+            "/cluster/handoffs": {
+                "stats": {
+                    "total": 7,
+                    "successful": 5,
+                    "failed": 2,
+                    "pending": 0,
+                    "avg_duration_ms": 120.5,
+                },
+                "recent": [],
+            },
+        }
+
+        def fake_get(url, timeout=None):
+            for suffix, payload in responses.items():
+                if url.endswith(suffix):
+                    return _mock_response(payload)
+            raise AssertionError(f"unexpected url: {url}")
+
+        c = Check("test")
+        with patch("httpx.get", side_effect=fake_get):
+            _probe_fleet_endpoints(c, "localhost", 18743)
+
+        joined_details = " | ".join(c.details)
+        joined_warnings = " | ".join(c.warnings)
+        assert "Handoffs: 7 total" in joined_details
+        assert "120.5ms" in joined_details
+        # The 2 failed migrations earn a yellow warn, not silent success.
+        assert "2 handoff(s) failed" in joined_warnings

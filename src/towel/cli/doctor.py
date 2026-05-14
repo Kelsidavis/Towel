@@ -397,6 +397,33 @@ def _probe_fleet_endpoints(c: Check, host: str, http_port: int) -> None:
     except Exception as exc:
         c.warn(f"/dispatch/recent probe failed: {exc.__class__.__name__}")
 
+    # /cluster/handoffs — flag failed migrations. A nonzero failed count is
+    # the kind of thing operators want to know about without having to
+    # crack open the fleet panel; doctor surfaces it at CLI level.
+    try:
+        data = httpx.get(f"{base}/cluster/handoffs", timeout=2).json()
+        stats = data.get("stats", {}) or {}
+        total = int(stats.get("total", 0) or 0)
+        failed = int(stats.get("failed", 0) or 0)
+        pending = int(stats.get("pending", 0) or 0)
+        if total == 0 and pending == 0:
+            c.ok("Handoffs: none recorded (no worker drains / disconnects yet)")
+        else:
+            avg_ms = stats.get("avg_duration_ms")
+            summary = f"Handoffs: {total} total"
+            if avg_ms is not None and total:
+                summary += f", avg {avg_ms}ms"
+            if pending:
+                summary += f", {pending} pending"
+            c.ok(summary)
+            if failed:
+                c.warn(
+                    f"{failed} handoff(s) failed — see /cluster/handoffs in "
+                    "the fleet panel for the error details"
+                )
+    except Exception as exc:
+        c.warn(f"/cluster/handoffs probe failed: {exc.__class__.__name__}")
+
 
 def check_gateway(config: TowelConfig) -> Check:
     """Check gateway port availability and running status."""
