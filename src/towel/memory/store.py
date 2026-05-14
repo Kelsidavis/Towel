@@ -188,6 +188,27 @@ CREATE TABLE IF NOT EXISTS memory_links (
 CREATE INDEX IF NOT EXISTS memory_links_target ON memory_links(target_key);
 CREATE INDEX IF NOT EXISTS memory_links_weight ON memory_links(weight DESC);
 
+-- Per-query recall trail. Every time to_prompt_block(query=...) runs
+-- we record what was asked and which entries surfaced, so an
+-- operator can answer "why did the agent remember X when I asked Y?"
+-- without re-running retrieval. Capped via auto-prune in
+-- record_recall(); the index on ts speeds the time-window queries
+-- the CLI / endpoint use.
+CREATE TABLE IF NOT EXISTS recall_log (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts      TEXT NOT NULL,
+    query   TEXT NOT NULL,
+    -- JSON array of the keys returned, in rank order. Storing keys
+    -- rather than rowids means a forget()'d memory still leaves the
+    -- log entry interpretable ("returned X, which has since been
+    -- forgotten") — useful for debugging churn.
+    keys    TEXT NOT NULL,
+    -- Optional scope the query ran under. Empty = no scope filter
+    -- (or the store had default_scope="").
+    scope   TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS recall_log_ts ON recall_log(ts);
+
 -- Keep the FTS index in sync without manual reindexing. Triggers fire
 -- inside the same transaction as the row mutation, so a crash mid-write
 -- cannot leave the FTS shadow out of step with the source table.
@@ -1056,6 +1077,97 @@ class MemoryStore:
                     pairs,
                 )
 
+    def record_recall(
+        self,
+        query: str,
+        keys: list[str],
+        *,
+        scope: str | None = None,
+        cap: int = 5000,
+    ) -> None:
+        """Append a row to recall_log and trim to ``cap`` newest entries.
+
+        Called from to_prompt_block whenever a query-relevant retrieval
+        produces a non-empty result. We trim instead of TTL because
+        the operator's actual concern is "the last few hours of
+        activity" — a fixed-row cap keeps the table tiny without
+        wall-clock logic. cap=5000 at ~150 bytes/row is well under
+        a megabyte.
+        """
+        if not query or not keys:
+            return
+        now_iso = datetime.now(UTC).isoformat()
+        scope_str = scope if scope is not None else self.default_scope
+        try:
+            with self._txn() as con:
+                con.execute(
+                    "INSERT INTO recall_log (ts, query, keys, scope) VALUES (?, ?, ?, ?)",
+                    (now_iso, query, json.dumps(keys), scope_str or ""),
+                )
+                # Trim: keep the most recent `cap` rows. Cheaper than
+                # COUNT-then-DELETE; sqlite optimizes this pattern.
+                con.execute(
+                    "DELETE FROM recall_log WHERE id NOT IN ("
+                    "  SELECT id FROM recall_log ORDER BY id DESC LIMIT ?"
+                    ")",
+                    (cap,),
+                )
+        except sqlite3.Error as exc:
+            # Recall logging is best-effort — must never break retrieval.
+            log.debug("record_recall failed: %s", exc)
+
+    def recent_recalls(
+        self,
+        limit: int = 50,
+        since_hours: float | None = None,
+        key_filter: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Read recall events back out. Newest first.
+
+        ``key_filter`` is a substring match against the JSON-encoded
+        keys list and the query, re-checked in Python after a LIKE
+        prefilter — gives the operator "show me every recall that
+        mentioned <X>" in one call.
+        """
+        con = self._connect()
+        try:
+            clauses: list[str] = []
+            params: list[Any] = []
+            if since_hours is not None:
+                cutoff = (datetime.now(UTC).timestamp() - since_hours * 3600)
+                clauses.append("ts >= ?")
+                params.append(datetime.fromtimestamp(cutoff, UTC).isoformat())
+            if key_filter:
+                clauses.append("(keys LIKE ? OR query LIKE ?)")
+                params.append(f'%"{key_filter}"%')
+                params.append(f"%{key_filter}%")
+            where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+            rows = con.execute(
+                f"SELECT ts, query, keys, scope FROM recall_log "
+                f"{where} ORDER BY id DESC LIMIT ?",
+                (*params, limit),
+            ).fetchall()
+        finally:
+            con.close()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            try:
+                keys = json.loads(r["keys"])
+            except json.JSONDecodeError:
+                keys = []
+            if key_filter:
+                # Re-check after LIKE pre-filter so "vim" doesn't
+                # match a query containing "vimal".
+                if key_filter not in keys and key_filter not in (r["query"] or ""):
+                    continue
+            out.append({
+                "ts": r["ts"],
+                "query": r["query"],
+                "keys": keys,
+                "scope": r["scope"] or "",
+            })
+        return out
+
     def to_prompt_block(
         self,
         query: str | None = None,
@@ -1097,7 +1209,13 @@ class MemoryStore:
                 finally:
                     con.close()
                 entries = [_row_to_entry(r) for r in rows]
-            self._bump_recall([e.key for e in entries])
+            keys_in_order = [e.key for e in entries]
+            self._bump_recall(keys_in_order)
+            # Log the query trail so operators can introspect "why
+            # did the agent remember X when I asked Y?" later. Stays
+            # off the hot path on a no-result query (handled by the
+            # fallback above which doesn't get here with `entries`).
+            self.record_recall(query, keys_in_order)
 
         if not entries:
             return ""

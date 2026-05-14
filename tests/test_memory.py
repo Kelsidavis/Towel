@@ -532,6 +532,55 @@ class TestTags:
         assert counts == {"work": 2, "urgent": 1}
 
 
+class TestRecallLog:
+    def test_to_prompt_block_records_recall(self, store):
+        store.remember("a", "alpha beta", "fact")
+        store.remember("b", "alpha gamma", "fact")
+        store.to_prompt_block(query="alpha")
+        rows = store.recent_recalls()
+        assert len(rows) == 1
+        assert rows[0]["query"] == "alpha"
+        assert "a" in rows[0]["keys"]
+
+    def test_no_result_query_skips_logging(self, store):
+        # Empty recall (no matches AND empty corpus) shouldn't pollute
+        # the log; otherwise we'd record every quiet turn.
+        store.to_prompt_block(query="never matches anything here")
+        assert store.recent_recalls() == []
+
+    def test_recent_recalls_filters_by_window(self, store):
+        store.remember("k", "v", "fact")
+        store.to_prompt_block(query="v")
+        # Asking for the last 0 hours should return nothing.
+        rows = store.recent_recalls(since_hours=0)
+        assert rows == []
+        # Asking for a wide window catches it.
+        rows = store.recent_recalls(since_hours=48)
+        assert len(rows) == 1
+
+    def test_key_filter_substring_safety(self, store):
+        store.remember("vimal", "x", "fact")
+        store.remember("vim", "y", "fact")
+        store.to_prompt_block(query="x")  # returns "vimal"
+        # Filtering for "vim" via key_filter should NOT match
+        # "vimal" since we re-check membership in the keys list.
+        # But the query "x" doesn't contain "vim" either, so the
+        # result is the substring miss case: nothing returned.
+        rows = store.recent_recalls(key_filter="vim")
+        assert rows == []
+
+    def test_log_is_capped(self, tmp_path):
+        store = MemoryStore(store_dir=tmp_path)
+        store.remember("k", "v", "fact")
+        # Force a tiny cap so we can prove the trim path runs.
+        for i in range(5):
+            store.record_recall(f"q{i}", ["k"], cap=3)
+        rows = store.recent_recalls(limit=10)
+        assert len(rows) == 3
+        # Newest queries survive.
+        assert rows[0]["query"] == "q4"
+
+
 class TestActivity:
     def test_dense_buckets_zero_when_empty(self, store):
         buckets = store.activity(hours=3, bucket_hours=1)

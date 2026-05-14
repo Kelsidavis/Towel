@@ -1829,6 +1829,39 @@ class GatewayServer:
                 }
             )
 
+        async def memory_recalls(request: Request) -> JSONResponse:
+            """List recent recall events (what was queried, what came back).
+
+            Query params:
+              ``limit``   default 50, capped at 500
+              ``hours``   restrict to recalls within this window
+              ``key``     substring filter on returned keys + query text
+            """
+            memory = getattr(self.agent, "memory", None)
+            if memory is None:
+                return JSONResponse({"recalls": []})
+            try:
+                limit = int(request.query_params.get("limit", "50"))
+                limit = max(1, min(limit, 500))
+            except ValueError:
+                return JSONResponse({"error": "limit must be int"}, status_code=400)
+            hours_raw = request.query_params.get("hours")
+            since_hours: float | None = None
+            if hours_raw is not None:
+                try:
+                    since_hours = float(hours_raw)
+                except ValueError:
+                    return JSONResponse({"error": "hours must be numeric"}, status_code=400)
+            key_filter = request.query_params.get("key") or None
+            try:
+                rows = memory.recent_recalls(
+                    limit=limit, since_hours=since_hours, key_filter=key_filter,
+                )
+            except Exception as exc:
+                log.exception("memory.recent_recalls failed: %s", exc)
+                return JSONResponse({"error": str(exc)}, status_code=500)
+            return JSONResponse({"recalls": rows, "count": len(rows)})
+
         async def memory_activity(request: Request) -> JSONResponse:
             """Time-bucketed counts of memory writes for the recent window.
 
@@ -3105,6 +3138,7 @@ class GatewayServer:
             Route("/memory", memory_create, methods=["POST"]),
             Route("/memory/stats", memory_stats),
             Route("/memory/activity", memory_activity),
+            Route("/memory/recalls", memory_recalls),
             # Order matters: more-specific routes first so /memory/stats
             # and /memory/{key}/inspect don't get shadowed by /memory/{key}.
             Route("/memory/{key}/inspect", memory_inspect),

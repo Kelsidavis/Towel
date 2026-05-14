@@ -2420,6 +2420,47 @@ def memory_clear() -> None:
     console.print(f"[green]Cleared {count} memories.[/green]")
 
 
+@memory.command(name="recalls")
+@click.option(
+    "--last",
+    type=float,
+    default=24.0,
+    show_default=True,
+    help="Window size in hours.",
+)
+@click.option("--limit", type=int, default=50, show_default=True)
+@click.option(
+    "--key",
+    "key_filter",
+    default=None,
+    help='Only show recalls that returned this key (or whose query contained it).',
+)
+def memory_recalls(last: float, limit: int, key_filter: str | None) -> None:
+    """Show the recall trail — what was queried, what came back.
+
+    Each row is one to_prompt_block(query=...) call. Useful for
+    answering "why did the agent remember X when I asked Y?" without
+    re-running retrieval.
+    """
+    from towel.memory.store import MemoryStore
+
+    rows = MemoryStore().recent_recalls(
+        limit=limit, since_hours=last, key_filter=key_filter,
+    )
+    if not rows:
+        console.print(f"[dim]No recalls in the last {last}h.[/dim]")
+        return
+    console.print(f"[bold]Recent recalls[/bold] ({len(rows)}):")
+    for row in rows:
+        ts = row["ts"][:19].replace("T", " ")
+        scope_str = f" @{row['scope']}" if row["scope"] else ""
+        keys_str = ", ".join(row["keys"][:5])
+        if len(row["keys"]) > 5:
+            keys_str += f", … ({len(row['keys']) - 5} more)"
+        console.print(f"  [dim]{ts}{scope_str}[/dim]  {row['query'][:60]}")
+        console.print(f"    [green]→[/green] {keys_str}")
+
+
 @memory.command(name="activity")
 @click.option(
     "--hours",
