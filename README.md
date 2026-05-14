@@ -275,6 +275,16 @@ towel bench         # benchmark model speed
 
 Config lives in `~/.towel/config.toml`. Three built-in agent profiles: **coder**, **researcher**, **writer**.
 
+**Tuning knobs** (all optional, defaults in parentheses):
+
+| Field | Default | What it does |
+|---|---|---|
+| `auto_capture` | `true` | Regex auto-capture on every user turn |
+| `auto_llm_extract` | `false` | Background LLM extraction when regex misses (one inference call per quiet turn) |
+| `memory_recall_log_cap` | `5000` | Max rows in the per-query recall log (oldest pruned) |
+| `dispatch_history_size` | `500` | Dispatch decision ring buffer — hours of audit at typical traffic |
+| `worker_inference_timeout` | `300.0` | Seconds the coordinator waits for the next chunk from a remote worker before tearing down the WS. Bump for cold-loaded large models |
+
 ## Contributing
 
 ```bash

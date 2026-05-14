@@ -313,6 +313,54 @@ class TestGatewayScheduling:
         assert decision.reason == "pinned"
 
 
+class TestInferenceTimeoutConfig:
+    @pytest.mark.asyncio
+    async def test_config_value_is_passed_to_wait_for(
+        self, gateway, monkeypatch
+    ):
+        """The worker_inference_timeout config knob has to actually
+        reach asyncio.wait_for, otherwise the runtime ignores it. We
+        record every timeout passed during a successful inference and
+        assert it matches the configured value."""
+        # Bump the timeout so it's distinguishable from defaults.
+        gateway.config.worker_inference_timeout = 777.0
+
+        session = gateway.sessions.get_or_create("timeout-cfg")
+        session.conversation.add(Role.USER, "hi")
+        worker_ws = DummyWS()
+        worker = gateway._workers.register("w", worker_ws, {"tools": False})
+        gateway.agent.build_inference_request = lambda conversation: {  # type: ignore[attr-defined]
+            "mode": "mlx_prompt", "prompt": "x",
+        }
+
+        recorded_timeouts: list[float] = []
+        orig_wait_for = asyncio.wait_for
+
+        async def spying_wait_for(awaitable, timeout):
+            recorded_timeouts.append(timeout)
+            return await orig_wait_for(awaitable, timeout)
+
+        monkeypatch.setattr(asyncio, "wait_for", spying_wait_for)
+
+        task = asyncio.create_task(
+            gateway._step_remote_inference("timeout-cfg", session, worker)
+        )
+        await asyncio.sleep(0)
+        # Find the job queue and inject a completion.
+        job_id = worker_ws.sent[0]["job_id"]
+        await gateway._job_queues[job_id].put({
+            "type": "job_done",
+            "job_id": job_id,
+            "result": {"text": "ok", "metadata": {}},
+        })
+        await task
+        # 777.0 must show up among the captured timeouts (the
+        # _remote_generate path is the only caller that uses the
+        # configured value; other wait_for calls use shorter
+        # heartbeat / ack timeouts).
+        assert 777.0 in recorded_timeouts
+
+
 class TestRemoteExecution:
     @pytest.mark.asyncio
     async def test_step_remote_inference_updates_session_from_worker_result(self, gateway):
