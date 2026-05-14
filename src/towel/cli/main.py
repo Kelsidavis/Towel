@@ -2935,7 +2935,8 @@ def review(staged: bool, commit: str | None, focus: str | None, raw: bool) -> No
     async def _run() -> None:
         if not raw:
             console.print("[dim]Loading model...[/dim]")
-        await agent_rt.load_model()
+        if not await _load_model_with_friendly_error(agent_rt):
+            return
 
         if raw:
             response = await agent_rt.step(conv)
@@ -3017,7 +3018,8 @@ def commit_cmd(stage_all: bool, edit: bool, dry_run: bool) -> None:
     conv.add(Role.USER, prompt)
 
     async def _gen() -> str:
-        await agent_rt.load_model()
+        if not await _load_model_with_friendly_error(agent_rt):
+            return ""
         resp = await agent_rt.step(conv)
         return resp.content.strip()
 
@@ -3193,7 +3195,8 @@ def summarize(target: str | None, bullets: bool, length: str, raw: bool) -> None
     async def _run() -> None:
         if not raw:
             console.print(f"[dim]Summarizing {source} ({len(content):,} chars)...[/dim]\n")
-        await agent_rt.load_model()
+        if not await _load_model_with_friendly_error(agent_rt):
+            return
 
         if raw:
             resp = await agent_rt.step(conv)
@@ -3226,7 +3229,8 @@ def _oneshot(config, prompt: str, raw: bool = False) -> None:
     conv.add(Role.USER, prompt)
 
     async def _run():
-        await agent_rt.load_model()
+        if not await _load_model_with_friendly_error(agent_rt):
+            return
         if raw:
             resp = await agent_rt.step(conv)
             print(resp.content)
@@ -3638,7 +3642,8 @@ def test_gen(file: str, framework: str | None, output: str | None, raw: bool) ->
         conv.add(Role.USER, prompt)
 
         async def _gen():
-            await agent_rt.load_model()
+            if not await _load_model_with_friendly_error(agent_rt):
+                return ""
             resp = await agent_rt.step(conv)
             return resp.content
 
@@ -3733,7 +3738,8 @@ def doc(file: str, style: str, output: str | None, raw: bool) -> None:
         conv.add(Role.USER, prompt)
 
         async def _gen():
-            await agent_rt.load_model()
+            if not await _load_model_with_friendly_error(agent_rt):
+                return ""
             return (await agent_rt.step(conv)).content
 
         console.print(f"[dim]Documenting {Path(file).name}...[/dim]")
