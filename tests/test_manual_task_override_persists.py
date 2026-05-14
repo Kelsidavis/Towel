@@ -119,3 +119,101 @@ class TestManualTaskOverride:
             TaskType.CODE_REVIEW,
             TaskType.RESEARCH,
         ]
+
+
+class TestManualTaskOverridePersistsAcrossRestart:
+    """Setting tasks via the HTTP handler should also write to disk so a
+    coordinator restart picks them up — not just a worker reconnect during
+    the same coordinator session.
+    """
+
+    def test_handler_write_hits_disk(self, tmp_path, store):
+        # First coordinator instance — write an override via the HTTP handler.
+        sessions = SessionManager(store=store)
+        pin_store = SessionPinStore(path=tmp_path / "pins.json")
+        state_path = tmp_path / "worker_state.json"
+        gateway = GatewayServer(
+            config=TowelConfig(),
+            agent=_FakeAgent(),
+            sessions=sessions,
+            pin_store=pin_store,
+            worker_state_store=WorkerStateStore(path=state_path),
+        )
+        worker_id = "persistent-host"
+        gateway._workers.register(worker_id, ws=MagicMock(), capabilities={})
+        from starlette.testclient import TestClient
+
+        client = TestClient(gateway._build_http_app())
+        resp = client.post(
+            f"/workers/{worker_id}/tasks",
+            json={"tasks": ["code_review"]},
+        )
+        assert resp.status_code == 200
+        assert state_path.exists(), "handler should have flushed state to disk"
+
+        # Second coordinator instance — same on-disk state file. The manual
+        # override should be hydrated even before the worker connects.
+        gateway2 = GatewayServer(
+            config=TowelConfig(),
+            agent=_FakeAgent(),
+            sessions=SessionManager(store=store),
+            pin_store=SessionPinStore(path=tmp_path / "pins.json"),
+            worker_state_store=WorkerStateStore(path=state_path),
+        )
+        assert worker_id in gateway2._manual_tasks
+        assert gateway2._manual_tasks[worker_id] == [TaskType.CODE_REVIEW]
+
+    def test_clearing_override_removes_disk_entry(self, tmp_path, store):
+        state_path = tmp_path / "worker_state.json"
+        gateway = GatewayServer(
+            config=TowelConfig(),
+            agent=_FakeAgent(),
+            sessions=SessionManager(store=store),
+            pin_store=SessionPinStore(path=tmp_path / "pins.json"),
+            worker_state_store=WorkerStateStore(path=state_path),
+        )
+        worker_id = "clearable-host"
+        gateway._workers.register(worker_id, ws=MagicMock(), capabilities={})
+        from starlette.testclient import TestClient
+
+        client = TestClient(gateway._build_http_app())
+        client.post(f"/workers/{worker_id}/tasks", json={"tasks": ["chat"]})
+        client.post(f"/workers/{worker_id}/tasks", json={"tasks": []})
+
+        # New coordinator picking up the same file — override should be gone.
+        gateway2 = GatewayServer(
+            config=TowelConfig(),
+            agent=_FakeAgent(),
+            sessions=SessionManager(store=store),
+            pin_store=SessionPinStore(path=tmp_path / "pins.json"),
+            worker_state_store=WorkerStateStore(path=state_path),
+        )
+        assert worker_id not in gateway2._manual_tasks
+
+    def test_unknown_task_value_on_disk_is_skipped(self, tmp_path, store):
+        """If the schema evolves and an unknown task name is on disk,
+        the coordinator should drop it rather than crash on startup."""
+        import json
+
+        state_path = tmp_path / "worker_state.json"
+        state_path.write_text(
+            json.dumps(
+                {
+                    "future-host": {
+                        "enabled": True,
+                        "draining": False,
+                        "tasks": ["chat", "task_invented_in_2027"],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        gateway = GatewayServer(
+            config=TowelConfig(),
+            agent=_FakeAgent(),
+            sessions=SessionManager(store=store),
+            pin_store=SessionPinStore(path=tmp_path / "pins.json"),
+            worker_state_store=WorkerStateStore(path=state_path),
+        )
+        # The unknown value got dropped; the known one survived.
+        assert gateway._manual_tasks["future-host"] == [TaskType.CHAT]

@@ -125,6 +125,21 @@ class GatewayServer:
     def __post_init__(self) -> None:
         self._session_pins = self.pin_store.load()
         self._worker_states = self.worker_state_store.load()
+        # Hydrate manual task overrides from disk so they survive a
+        # coordinator restart, not just a worker reconnect. Unknown task
+        # values are silently skipped — schema may have evolved.
+        for worker_id, state in self._worker_states.items():
+            raw_tasks = state.get("tasks") if isinstance(state, dict) else None
+            if not isinstance(raw_tasks, list):
+                continue
+            restored: list[TaskType] = []
+            for name in raw_tasks:
+                try:
+                    restored.append(TaskType(name))
+                except ValueError:
+                    continue
+            if restored:
+                self._manual_tasks[worker_id] = restored
         # Build the dispatcher last so it can capture references to the
         # already-initialised registries and dicts.
         self._dispatcher = Dispatcher(
@@ -802,9 +817,29 @@ class GatewayServer:
         self.pin_store.save(self._session_pins)
 
     def _save_worker_states(self) -> None:
-        """Persist current worker operational state."""
+        """Persist current worker operational state and manual task overrides.
+
+        Three things are merged into the on-disk file:
+        - live enabled/draining flags for currently-connected workers,
+        - the prior on-disk entries for workers that aren't connected right
+          now (so we don't lose state for a worker that's temporarily down),
+        - operator-set manual task overrides keyed by worker_id, which may
+          reference disconnected workers too.
+        """
         current = self.worker_state_store.load()
         current.update(self._workers.state_snapshot())
+        # Layer manual task overrides on top. An entry may exist for a
+        # worker that has never connected during this coordinator run, so
+        # ensure the dict exists before assigning tasks.
+        for worker_id, tasks in self._manual_tasks.items():
+            entry = current.setdefault(
+                worker_id, {"enabled": True, "draining": False}
+            )
+            entry["tasks"] = [t.value for t in tasks]
+        # Clear tasks for any worker that no longer has an override.
+        for worker_id, entry in current.items():
+            if worker_id not in self._manual_tasks and "tasks" in entry:
+                entry.pop("tasks", None)
         self._worker_states = current
         self.worker_state_store.save(current)
 
@@ -1546,6 +1581,9 @@ class GatewayServer:
                 self._manual_tasks[worker_id] = tasks
             else:
                 self._manual_tasks.pop(worker_id, None)
+            # Persist so the override survives a coordinator restart, not
+            # just a worker reconnect.
+            self._save_worker_states()
             log.info(
                 "Worker %s tasks manually set: %s",
                 worker_id,
