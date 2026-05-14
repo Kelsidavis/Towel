@@ -2617,6 +2617,30 @@ def memory_stats() -> None:
         for src in sorted(by_source, key=lambda s: -by_source[s]):
             console.print(f"  {src:30s} {by_source[src]:4d}")
 
+    # Per-pattern usefulness: for each auto_capture pattern, how many
+    # of its captures have actually been recalled. Patterns with
+    # capture > 0 but recalled = 0 across many entries are likely
+    # firing on text the agent isn't using — a hint that the regex
+    # is too eager or that the pattern's domain isn't relevant.
+    auto = [e for e in entries if (e.source or "").startswith("auto_capture:")]
+    if auto:
+        per_pattern: dict[str, list[int]] = {}
+        for e in auto:
+            label = e.source.split(":", 1)[1] if ":" in e.source else e.source
+            stats_for_pattern = per_pattern.setdefault(label, [0, 0])
+            stats_for_pattern[0] += 1
+            if e.recall_count > 0:
+                stats_for_pattern[1] += 1
+        console.print("\n[bold]Auto-capture pattern health:[/bold]")
+        console.print(f"  [dim]{'pattern':18s}  {'captures':>8s}  {'recalled':>8s}  {'usefulness':>10s}[/dim]")
+        ranked = sorted(per_pattern.items(), key=lambda kv: -kv[1][0])
+        for label, (cap, recalled) in ranked:
+            pct = (recalled * 100 // cap) if cap else 0
+            warn = " [yellow]← never recalled[/yellow]" if recalled == 0 and cap >= 3 else ""
+            console.print(
+                f"  {label:18s}  {cap:8d}  {recalled:8d}  {pct:9d}%{warn}"
+            )
+
     # Surface the most recent auto-captures that haven't been validated
     # by a real query yet. These are the most likely false positives.
     pending = sorted(

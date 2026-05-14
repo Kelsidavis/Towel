@@ -1919,6 +1919,23 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       const recallPct = s.total ? Math.round((s.recalled / s.total) * 100) : 0;
       const byType = Object.entries(s.by_type || {}).sort((a,b)=>b[1]-a[1]);
       const bySource = Object.entries(s.by_source || {}).sort((a,b)=>b[1]-a[1]);
+      const patterns = s.auto_capture_patterns || {};
+      const patternRows = Object.keys(patterns).sort(function(a, b) {
+        return patterns[b].captures - patterns[a].captures;
+      });
+      const patternsHtml = patternRows.length
+        ? '<div style="margin-top:4px">patterns: '
+          + patternRows.map(function(p) {
+              const r = patterns[p];
+              const pct = r.captures ? Math.round((r.recalled / r.captures) * 100) : 0;
+              const cold = (r.recalled === 0 && r.captures >= 3);
+              const color = cold ? 'var(--yellow)' : 'inherit';
+              return `<span style="margin-right:10px;color:${color}" title="${r.captures} captures, ${r.recalled} recalled">`
+                + escHtml(p) + `=${r.captures}/${r.recalled} (${pct}%)`
+                + '</span>';
+            }).join('')
+          + '</div>'
+        : '';
       memoryStatsEl.innerHTML =
         `<div><strong>${s.total}</strong> entries · `
         + `<strong>${s.recalled}</strong> recalled (${recallPct}%) · `
@@ -1928,7 +1945,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         + `</div>`
         + `<div style="margin-top:2px">sources: `
         + bySource.map(([k,v])=>`<span style="margin-right:8px">${escHtml(k)}=${v}</span>`).join('')
-        + `</div>`;
+        + `</div>`
+        + patternsHtml;
     } catch (err) {
       memoryStatsEl.textContent = 'stats fetch failed: ' + err.message;
     }

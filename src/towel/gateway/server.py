@@ -1869,10 +1869,22 @@ class GatewayServer:
             recalled = sum(1 for e in entries if e.recall_count > 0)
             by_type: dict[str, int] = {}
             by_source: dict[str, int] = {}
+            # Per-pattern health: captures + recalled for each named
+            # auto_capture pattern. Lets the web panel show which
+            # heuristics are pulling weight vs. generating noise.
+            per_pattern: dict[str, dict[str, int]] = {}
             for e in entries:
                 by_type[e.memory_type] = by_type.get(e.memory_type, 0) + 1
                 src = (getattr(e, "source", "") or "") or "operator"
                 by_source[src] = by_source.get(src, 0) + 1
+                if src.startswith("auto_capture:"):
+                    label = src.split(":", 1)[1]
+                    bucket = per_pattern.setdefault(
+                        label, {"captures": 0, "recalled": 0}
+                    )
+                    bucket["captures"] += 1
+                    if e.recall_count > 0:
+                        bucket["recalled"] += 1
             # Recent unvalidated captures: surfaces likely heuristic
             # false-positives so operators can spot-check.
             pending = sorted(
@@ -1887,6 +1899,7 @@ class GatewayServer:
                     "total_recall_events": sum(e.recall_count for e in entries),
                     "by_type": by_type,
                     "by_source": by_source,
+                    "auto_capture_patterns": per_pattern,
                     "recent_unvalidated": [e.to_dict() for e in pending],
                 }
             )

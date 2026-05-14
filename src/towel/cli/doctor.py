@@ -635,6 +635,27 @@ def check_memory_store() -> Check:
                 "Run `towel memory stats` to inspect, then `towel memory "
                 "tidy --auto-only` to prune the heuristic captures."
             )
+        # Pattern-level cold callout: a single pattern with ≥5 captures
+        # and zero recalls is more diagnostic than the aggregate above
+        # because it points at the specific regex that needs review.
+        per_pattern: dict[str, list[int]] = {}
+        for e in auto:
+            label = e.source.split(":", 1)[1] if ":" in e.source else e.source
+            stats = per_pattern.setdefault(label, [0, 0])
+            stats[0] += 1
+            if e.recall_count > 0:
+                stats[1] += 1
+        cold = [p for p, (cap, rec) in per_pattern.items() if cap >= 5 and rec == 0]
+        if cold:
+            c.warn(
+                f"Cold auto-capture pattern(s) (captures ≥5, recalls=0): "
+                f"{', '.join(sorted(cold))}"
+            )
+            c.suggestions.append(
+                "Review the regex in src/towel/memory/auto_capture.py; "
+                "if the matches look right, leave it — the relevant "
+                "conversations may not have happened yet."
+            )
     return c
 
 
