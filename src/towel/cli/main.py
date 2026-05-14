@@ -1610,6 +1610,14 @@ def doctor() -> None:
 
 @cli.command(name="install-worker")
 @click.option(
+    "--master",
+    default=None,
+    help=(
+        "Controller URL to bake into the worker unit (e.g. ws://192.168.1.50:18742). "
+        "Omit to let the worker auto-discover via mDNS each start."
+    ),
+)
+@click.option(
     "--llama-model",
     default=None,
     type=click.Path(exists=True, dir_okay=False),
@@ -1636,6 +1644,7 @@ def doctor() -> None:
     ),
 )
 def install_worker(
+    master: str | None,
     llama_model: str | None,
     llama_port: int,
     llama_ngl: int,
@@ -1715,7 +1724,7 @@ Wants={worker_deps}
 
 [Service]
 Type=simple
-ExecStart={towel_bin} worker
+ExecStart={towel_bin} worker{f" --master {master}" if master else ""}
 Restart=always
 RestartSec=10
 Environment=PATH={user_path}
