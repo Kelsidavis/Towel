@@ -450,6 +450,18 @@ def worker(
 
 
 async def _start_worker(agent: Any, client: Any) -> None:
+    # Same logging-visibility fix as ``towel serve`` / ``towel setup`` /
+    # ``towel launcher`` — the worker client's INFO-level events
+    # (registration confirmed, controller disconnected, reconnect attempt,
+    # shutdown requested) need to surface in the terminal so the operator
+    # can tell at a glance whether the worker is healthy and connected.
+    import logging as _logging
+
+    _logging.basicConfig(
+        level=_logging.INFO,
+        format="[%(asctime)s] %(levelname)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
     await agent.load_model()
     console.print("[green]Worker ready. Waiting for controller jobs...[/green]")
     await client.run_forever()
