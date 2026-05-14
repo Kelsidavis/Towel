@@ -1948,12 +1948,22 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         const src = e.source ? escHtml(e.source) : 'operator';
         const recall = e.recall_count || 0;
         const updated = (e.updated_at || '').slice(0, 19).replace('T', ' ');
+        const tags = Array.isArray(e.tags) ? e.tags : [];
+        const tagsHtml = tags.length
+          ? '<div style="margin-top:4px">'
+            + tags.map(function(t){
+                return '<span style="display:inline-block;background:rgba(80,160,255,0.18);color:var(--text);padding:1px 6px;border-radius:8px;margin-right:4px;font-size:0.75em">'
+                  + escHtml(t) + '</span>';
+              }).join('')
+            + '</div>'
+          : '';
         return `<div style="padding:8px 10px;border:1px solid var(--border);border-radius:4px;margin-bottom:6px;cursor:pointer" data-inspect-key="${escHtml(e.key)}">`
           + `<div style="display:flex;justify-content:space-between;align-items:baseline">`
           +   `<strong>${escHtml(e.key)}</strong>`
           +   `<span style="font-size:0.8em;color:var(--text-dim)">[${escHtml(e.type || 'fact')}] · ${src} · recalls=${recall}</span>`
           + `</div>`
           + `<div style="margin-top:4px;white-space:pre-wrap;font-family:inherit">${escHtml((e.content || '').slice(0, 400))}${(e.content || '').length > 400 ? '…' : ''}</div>`
+          + tagsHtml
           + `<div style="font-size:0.75em;color:var(--text-dim);margin-top:4px">updated ${escHtml(updated)}`
           +   ` <button data-mem-key="${escHtml(e.key)}" class="tb-btn" style="margin-left:6px;padding:2px 6px;font-size:0.85em">forget</button>`
           + `</div>`
@@ -2050,12 +2060,22 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
             }).join('')
           + '</ul></div>'
         : '<div style="margin-top:14px;color:var(--text-dim);font-size:0.9em">No co-recall links yet.</div>';
+      const tags = Array.isArray(e.tags) ? e.tags : [];
+      const tagsRow = tags.length
+        ? '<div style="margin-top:6px">'
+          + tags.map(function(t){
+              return '<span style="display:inline-block;background:rgba(80,160,255,0.18);padding:2px 8px;border-radius:8px;margin-right:4px;font-size:0.8em">'
+                + escHtml(t) + '</span>';
+            }).join('')
+          + '</div>'
+        : '';
       memoryInspectBody.innerHTML =
         '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">'
         +   '<strong style="font-size:1.1em">' + escHtml(e.key) + '</strong>'
         +   '<span style="color:var(--text-dim);font-size:0.85em">[' + escHtml(e.type || 'fact') + '] · ' + src + '</span>'
         + '</div>'
-        + '<div style="white-space:pre-wrap;font-family:inherit;padding:8px;background:rgba(0,0,0,0.2);border-radius:4px">'
+        + tagsRow
+        + '<div style="white-space:pre-wrap;font-family:inherit;padding:8px;background:rgba(0,0,0,0.2);border-radius:4px;margin-top:8px">'
         +   escHtml(e.content || '')
         + '</div>'
         + '<div style="margin-top:10px;font-size:0.85em;color:var(--text-dim)">'

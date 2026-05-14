@@ -448,6 +448,60 @@ class TestSourceTracking:
         assert store.recall("op_fact") is not None
 
 
+class TestTags:
+    def test_remember_accepts_tags(self, store):
+        store.remember("k", "v", tags=["work", "urgent"])
+        e = store.recall("k")
+        assert e.tags == ["work", "urgent"]
+
+    def test_remember_normalizes_tags(self, store):
+        store.remember("k", "v", tags=[" work ", "work", "", "  "])
+        e = store.recall("k")
+        assert e.tags == ["work"]
+
+    def test_remember_merges_tags_on_update(self, store):
+        store.remember("k", "v", tags=["a", "b"])
+        store.remember("k", "v2", tags=["b", "c"])
+        e = store.recall("k")
+        assert e.tags == ["a", "b", "c"]
+
+    def test_remember_tags_none_leaves_existing(self, store):
+        store.remember("k", "v", tags=["a"])
+        store.remember("k", "v2")
+        assert store.recall("k").tags == ["a"]
+
+    def test_add_tag_returns_true_on_change(self, store):
+        store.remember("k", "v")
+        assert store.add_tag("k", "new") is True
+        assert "new" in store.recall("k").tags
+        assert store.add_tag("k", "new") is False  # already present
+
+    def test_remove_tag(self, store):
+        store.remember("k", "v", tags=["a", "b"])
+        assert store.remove_tag("k", "a") is True
+        assert store.recall("k").tags == ["b"]
+        assert store.remove_tag("k", "a") is False  # not present
+
+    def test_recall_all_filters_by_tag(self, store):
+        store.remember("a", "x", tags=["work"])
+        store.remember("b", "y", tags=["home"])
+        store.remember("c", "z", tags=["work", "urgent"])
+        keys = {e.key for e in store.recall_all(tag="work")}
+        assert keys == {"a", "c"}
+
+    def test_recall_all_tag_substring_safety(self, store):
+        # "work" shouldn't match "homework" — substring on LIKE could
+        # false-positive, so Python re-check is what guards it.
+        store.remember("a", "x", tags=["homework"])
+        assert store.recall_all(tag="work") == []
+
+    def test_all_tags_counts_usage(self, store):
+        store.remember("a", "x", tags=["work", "urgent"])
+        store.remember("b", "y", tags=["work"])
+        counts = store.all_tags()
+        assert counts == {"work": 2, "urgent": 1}
+
+
 class TestMemoryGraph:
     def test_co_retrieval_creates_links(self, store):
         store.remember("a", "alpha", "fact")

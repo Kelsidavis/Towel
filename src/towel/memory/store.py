@@ -81,6 +81,10 @@ class MemoryEntry:
     # Lets stats show heuristic vs deliberate, and lets tidy be picky
     # about which sources it prunes.
     source: str = ""
+    # Free-form labels beyond memory_type, for operator-defined
+    # grouping (e.g. project name, sensitivity). De-duplicated and
+    # order-preserving — first-add wins.
+    tags: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -95,11 +99,16 @@ class MemoryEntry:
             out["last_recalled_at"] = self.last_recalled_at.isoformat()
         if self.source:
             out["source"] = self.source
+        if self.tags:
+            out["tags"] = list(self.tags)
         return out
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> MemoryEntry:
         last = data.get("last_recalled_at")
+        raw_tags = data.get("tags") or []
+        if not isinstance(raw_tags, list):
+            raw_tags = []
         return cls(
             key=data["key"],
             content=data["content"],
@@ -109,6 +118,7 @@ class MemoryEntry:
             last_recalled_at=datetime.fromisoformat(last) if last else None,
             recall_count=int(data.get("recall_count", 0)),
             source=data.get("source", ""),
+            tags=[str(t) for t in raw_tags if isinstance(t, str)],
         )
 
     def __str__(self) -> str:
@@ -133,7 +143,13 @@ CREATE TABLE IF NOT EXISTS memories (
     embedding        BLOB,
     -- Capture source: "" / NULL = operator-set (remember tool, CLI,
     -- legacy JSON import); non-empty = auto_capture pattern label.
-    source           TEXT NOT NULL DEFAULT ''
+    source           TEXT NOT NULL DEFAULT '',
+    -- Free-form tags as a JSON array of strings. Lets the operator
+    -- group memories along axes the four fixed memory_types can't
+    -- express (e.g. project-name, topic, sensitivity). Searched via
+    -- LIKE on the JSON text — fine for small corpora; if this grows
+    -- past tens of thousands of memories, swap for a tags table.
+    tags             TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
@@ -175,13 +191,21 @@ END;
 
 def _row_to_entry(row: sqlite3.Row) -> MemoryEntry:
     last = row["last_recalled_at"]
-    # Older rows may predate the `source` column — sqlite.Row treats
-    # missing columns as a KeyError when accessed by name, so use a
-    # cautious lookup. Newly-created DBs have it from _SCHEMA above.
+    # Older rows may predate the `source` or `tags` columns —
+    # sqlite.Row treats missing columns as KeyError on name access,
+    # so use cautious lookups. Newly-created DBs always have them.
     try:
         source = row["source"] or ""
     except (IndexError, KeyError):
         source = ""
+    try:
+        raw_tags = row["tags"] or "[]"
+        tags_list = json.loads(raw_tags) if raw_tags else []
+        if not isinstance(tags_list, list):
+            tags_list = []
+        tags = [str(t) for t in tags_list if isinstance(t, str)]
+    except (IndexError, KeyError, json.JSONDecodeError):
+        tags = []
     return MemoryEntry(
         key=row["key"],
         content=row["content"],
@@ -191,6 +215,7 @@ def _row_to_entry(row: sqlite3.Row) -> MemoryEntry:
         last_recalled_at=datetime.fromisoformat(last) if last else None,
         recall_count=int(row["recall_count"]),
         source=source,
+        tags=tags,
     )
 
 
@@ -262,6 +287,7 @@ class MemoryStore:
             # already there (older sqlite raises rather than no-op).
             for ddl in (
                 "ALTER TABLE memories ADD COLUMN source TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE memories ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'",
             ):
                 try:
                     con.execute(ddl)
@@ -360,6 +386,7 @@ class MemoryStore:
         memory_type: str = "fact",
         *,
         source: str = "",
+        tags: list[str] | None = None,
     ) -> MemoryEntry:
         """Store or update a memory.
 
@@ -378,30 +405,68 @@ class MemoryStore:
         # aren't installed; the column just stays NULL.
         from towel.memory import embeddings as _emb
         embedding_blob = _emb.encode(content)
+        # Normalize tags: drop dupes, strip whitespace, drop empties.
+        # Order-preserving dedupe so the operator's first add wins.
+        if tags:
+            seen: set[str] = set()
+            tags_norm: list[str] = []
+            for t in tags:
+                t = str(t).strip()
+                if t and t not in seen:
+                    seen.add(t)
+                    tags_norm.append(t)
+        else:
+            tags_norm = []
         with self._txn() as con:
             row = con.execute(
-                "SELECT created_at, source FROM memories WHERE key = ?", (key,)
+                "SELECT created_at, source, tags FROM memories WHERE key = ?", (key,)
             ).fetchone()
             if row is None:
                 con.execute(
                     "INSERT INTO memories "
-                    "(key, content, memory_type, created_at, updated_at, source, embedding) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (key, content, memory_type, now_iso, now_iso, source, embedding_blob),
+                    "(key, content, memory_type, created_at, updated_at, source, embedding, tags) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        key, content, memory_type, now_iso, now_iso, source,
+                        embedding_blob, json.dumps(tags_norm),
+                    ),
                 )
                 created_at = now
                 stored_source = source
+                stored_tags = tags_norm
             else:
+                # Existing-row update: merge incoming tags with the
+                # stored set so callers don't have to read-modify-
+                # write to add a tag, but a tags=None call leaves the
+                # existing list untouched. Pass tags=[] to clear.
+                try:
+                    existing_tags_json = row["tags"] or "[]"
+                except (IndexError, KeyError):
+                    existing_tags_json = "[]"
+                try:
+                    existing_tags = json.loads(existing_tags_json)
+                except json.JSONDecodeError:
+                    existing_tags = []
+                if tags is None:
+                    merged = existing_tags
+                else:
+                    seen2: set[str] = set()
+                    merged = []
+                    for t in [*existing_tags, *tags_norm]:
+                        if t not in seen2:
+                            seen2.add(t)
+                            merged.append(t)
                 con.execute(
                     "UPDATE memories SET content = ?, memory_type = ?, "
-                    "updated_at = ?, embedding = ? WHERE key = ?",
-                    (content, memory_type, now_iso, embedding_blob, key),
+                    "updated_at = ?, embedding = ?, tags = ? WHERE key = ?",
+                    (content, memory_type, now_iso, embedding_blob, json.dumps(merged), key),
                 )
                 created_at = datetime.fromisoformat(row["created_at"])
                 try:
                     stored_source = row["source"] or ""
                 except (IndexError, KeyError):
                     stored_source = ""
+                stored_tags = merged
         log.info("Remembered: %s", key)
         return MemoryEntry(
             key=key,
@@ -410,6 +475,7 @@ class MemoryStore:
             created_at=created_at,
             updated_at=now,
             source=stored_source,
+            tags=stored_tags,
         )
 
     def forget(self, key: str) -> bool:
@@ -432,23 +498,45 @@ class MemoryStore:
             con.close()
         return _row_to_entry(row) if row is not None else None
 
-    def recall_all(self, memory_type: str | None = None) -> list[MemoryEntry]:
-        """Get all memories, optionally filtered by type."""
+    def recall_all(
+        self,
+        memory_type: str | None = None,
+        tag: str | None = None,
+    ) -> list[MemoryEntry]:
+        """Get all memories, optionally filtered by type and/or tag.
+
+        Tag filtering is a substring match against the JSON-encoded
+        tags column then re-checked in Python — cheap for small
+        corpora and avoids needing a real array-contains operator on
+        sqlite. Larger stores can swap for a separate tags table
+        without changing the public signature.
+        """
         con = self._connect()
         try:
+            clauses = []
+            params: list[Any] = []
             if memory_type:
-                rows = con.execute(
-                    "SELECT * FROM memories WHERE memory_type = ? "
-                    "ORDER BY updated_at DESC",
-                    (memory_type,),
-                ).fetchall()
-            else:
-                rows = con.execute(
-                    "SELECT * FROM memories ORDER BY updated_at DESC"
-                ).fetchall()
+                clauses.append("memory_type = ?")
+                params.append(memory_type)
+            if tag:
+                # LIKE pre-filter to reduce Python-side scanning.
+                clauses.append("tags LIKE ?")
+                params.append(f'%"{tag}"%')
+            where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+            rows = con.execute(
+                f"SELECT * FROM memories {where} ORDER BY updated_at DESC",
+                params,
+            ).fetchall()
         finally:
             con.close()
-        return [_row_to_entry(r) for r in rows]
+        entries = [_row_to_entry(r) for r in rows]
+        if tag:
+            # Re-confirm in Python in case the LIKE matched on a tag
+            # substring (e.g. "work" matches "homework"). Tags are
+            # short strings; this scan is fine for any realistic
+            # corpus size.
+            entries = [e for e in entries if tag in e.tags]
+        return entries
 
     # ── retrieval ─────────────────────────────────────────────────────
 
@@ -496,6 +584,64 @@ class MemoryStore:
         finally:
             con.close()
         return [_row_to_entry(r) for r in rows]
+
+    def add_tag(self, key: str, tag: str) -> bool:
+        """Append a tag to an existing memory. Returns True on a real change.
+
+        No-op when the tag is already present (returns False) or when
+        the key doesn't exist (returns False). Doesn't bump
+        updated_at — adding a label isn't a content change.
+        """
+        tag = tag.strip()
+        if not tag:
+            return False
+        with self._txn() as con:
+            row = con.execute(
+                "SELECT tags FROM memories WHERE key = ?", (key,)
+            ).fetchone()
+            if row is None:
+                return False
+            try:
+                tags = json.loads(row["tags"] or "[]")
+            except (json.JSONDecodeError, KeyError):
+                tags = []
+            if tag in tags:
+                return False
+            tags.append(tag)
+            con.execute(
+                "UPDATE memories SET tags = ? WHERE key = ?",
+                (json.dumps(tags), key),
+            )
+        return True
+
+    def remove_tag(self, key: str, tag: str) -> bool:
+        """Drop a tag from an existing memory. Returns True on a real change."""
+        with self._txn() as con:
+            row = con.execute(
+                "SELECT tags FROM memories WHERE key = ?", (key,)
+            ).fetchone()
+            if row is None:
+                return False
+            try:
+                tags = json.loads(row["tags"] or "[]")
+            except (json.JSONDecodeError, KeyError):
+                tags = []
+            if tag not in tags:
+                return False
+            tags = [t for t in tags if t != tag]
+            con.execute(
+                "UPDATE memories SET tags = ? WHERE key = ?",
+                (json.dumps(tags), key),
+            )
+        return True
+
+    def all_tags(self) -> dict[str, int]:
+        """Return {tag: usage_count} across the corpus. Useful for filters."""
+        counts: dict[str, int] = {}
+        for entry in self.recall_all():
+            for t in entry.tags:
+                counts[t] = counts.get(t, 0) + 1
+        return counts
 
     def reembed_all(self, *, only_missing: bool = True) -> int:
         """Recompute embeddings across the corpus. Returns rows touched.

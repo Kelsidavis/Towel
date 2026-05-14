@@ -2194,12 +2194,13 @@ def memory() -> None:
 @click.option(
     "--type", "-t", "mtype", default=None, help="Filter by type (user, project, fact, preference)"
 )
-def memory_list(mtype: str | None) -> None:
-    """List all memories."""
+@click.option("--tag", default=None, help="Filter to memories carrying this tag.")
+def memory_list(mtype: str | None, tag: str | None) -> None:
+    """List all memories, optionally filtered by type and/or tag."""
     from towel.memory.store import MemoryStore
 
     store = MemoryStore()
-    entries = store.recall_all(memory_type=mtype)
+    entries = store.recall_all(memory_type=mtype, tag=tag)
 
     if not entries:
         console.print("[dim]No memories stored.[/dim]")
@@ -2208,7 +2209,8 @@ def memory_list(mtype: str | None) -> None:
 
     console.print(f"[bold]Memories[/bold] ({len(entries)}):\n")
     for e in entries:
-        console.print(f"  [green]{e.key}[/green] [dim][{e.memory_type}][/dim]")
+        tag_str = f" [{', '.join(e.tags)}]" if e.tags else ""
+        console.print(f"  [green]{e.key}[/green] [dim][{e.memory_type}]{tag_str}[/dim]")
         console.print(f"    {e.content}")
         console.print(f"    [dim]updated: {e.updated_at.strftime('%Y-%m-%d %H:%M')}[/dim]")
 
@@ -2270,6 +2272,54 @@ def memory_clear() -> None:
     for entry in store.recall_all():
         store.forget(entry.key)
     console.print(f"[green]Cleared {count} memories.[/green]")
+
+
+@memory.command(name="tag")
+@click.argument("key")
+@click.argument("action", type=click.Choice(["add", "remove", "list"]))
+@click.argument("tag", required=False)
+def memory_tag(key: str, action: str, tag: str | None) -> None:
+    """Manage tags on an existing memory: add, remove, or list."""
+    from towel.memory.store import MemoryStore
+
+    store = MemoryStore()
+    entry = store.recall(key)
+    if entry is None:
+        console.print(f"[red]No memory with key {key!r}.[/red]")
+        raise SystemExit(1)
+    if action == "list":
+        if not entry.tags:
+            console.print("[dim](no tags)[/dim]")
+        else:
+            for t in entry.tags:
+                console.print(t)
+        return
+    if not tag:
+        console.print("[red]TAG argument required for add/remove.[/red]")
+        raise SystemExit(1)
+    if action == "add":
+        if store.add_tag(key, tag):
+            console.print(f"[green]Tagged {key} with {tag!r}.[/green]")
+        else:
+            console.print(f"[dim]No change ({tag!r} already present).[/dim]")
+    else:  # remove
+        if store.remove_tag(key, tag):
+            console.print(f"[green]Removed {tag!r} from {key}.[/green]")
+        else:
+            console.print(f"[dim]No change ({tag!r} not present).[/dim]")
+
+
+@memory.command(name="tags")
+def memory_tags() -> None:
+    """List every tag in use with its memory count."""
+    from towel.memory.store import MemoryStore
+
+    counts = MemoryStore().all_tags()
+    if not counts:
+        console.print("[dim]No tags in use.[/dim]")
+        return
+    for tag in sorted(counts, key=lambda t: -counts[t]):
+        console.print(f"  {counts[tag]:4d}  {tag}")
 
 
 @memory.command(name="reembed")
@@ -2337,6 +2387,7 @@ def memory_inspect(key: str) -> None:
         + (f", last {last}d ago" if last is not None else " — never")
     )
     console.print(f"  source:        {e.source or '(operator-set)'}")
+    console.print(f"  tags:          {', '.join(e.tags) if e.tags else '(none)'}")
     console.print(f"  salience:      {score:.2f}")
 
     related = store.recall_related(key, limit=5)

@@ -109,7 +109,8 @@ def _tool_definitions() -> list[dict[str, Any]]:
             "description": (
                 "Store or update a memory. Use for user preferences, "
                 "project context, or anything worth keeping across "
-                "sessions. Existing keys are updated in place."
+                "sessions. Existing keys are updated in place; tags "
+                "merge with any already present."
             ),
             "inputSchema": {
                 "type": "object",
@@ -126,6 +127,11 @@ def _tool_definitions() -> list[dict[str, Any]]:
                         "type": "string",
                         "enum": list(MEMORY_TYPES),
                         "default": "fact",
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Free-form labels for grouping.",
                     },
                 },
                 "required": ["key", "content"],
@@ -254,8 +260,12 @@ class MemoryMCPServer:
         mtype = args.get("type", "fact")
         if mtype not in MEMORY_TYPES:
             mtype = "fact"
+        raw_tags = args.get("tags")
+        tags = [str(t) for t in raw_tags] if isinstance(raw_tags, list) else None
         # Tag with mcp so memory stats can see what landed via this path.
-        e = self.store.remember(key, content, memory_type=mtype, source="mcp")
+        e = self.store.remember(
+            key, content, memory_type=mtype, source="mcp", tags=tags,
+        )
         return f"Remembered [{e.memory_type}] {e.key}: {e.content}"
 
     def _t_forget(self, args: dict[str, Any]) -> str:

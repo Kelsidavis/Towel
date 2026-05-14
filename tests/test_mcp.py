@@ -119,6 +119,16 @@ class TestRemember:
         assert server.store.recall("k").memory_type == "fact"
 
 
+class TestRememberTags:
+    def test_remember_with_tags(self, server):
+        _call(
+            server,
+            "memory_remember",
+            {"key": "k", "content": "v", "tags": ["work", "urgent"]},
+        )
+        assert server.store.recall("k").tags == ["work", "urgent"]
+
+
 class TestSearch:
     def test_search_returns_bm25_hit(self, server):
         server.store.remember("vim", "user edits with neovim", "preference")
