@@ -491,6 +491,44 @@ class TestRemoteExecution:
         await task
 
     @pytest.mark.asyncio
+    async def test_iter_remote_tokens_also_injects_memory(self, gateway):
+        """The SSE streaming path used by /v1/chat/completions has the
+        same memory-blindness gap — make sure the injection covers it
+        too. We don't run the full generator to completion; we only
+        peek at the first thing the worker sees."""
+        from unittest.mock import MagicMock
+
+        stub_memory = MagicMock()
+        stub_memory.to_prompt_block.return_value = "FAV=42"
+        gateway.agent.memory = stub_memory
+
+        session = gateway.sessions.get_or_create("stream-mem")
+        session.conversation.add(Role.USER, "what is my favorite number?")
+        worker_ws = DummyWS()
+        worker = gateway._workers.register("worker-stream", worker_ws, {"tools": False})
+
+        gen = gateway.iter_remote_tokens("stream-mem", session, worker)
+        # Pull one tick of the generator so the WS send fires.
+        gen_task = asyncio.create_task(gen.__anext__())
+        await asyncio.sleep(0)
+
+        assert worker_ws.sent  # WS send fired
+        run_msg = worker_ws.sent[0]
+        assert run_msg["stream"] is True
+        msgs = run_msg["conversation"]["messages"]
+        assert msgs[0]["role"] == "system"
+        assert "FAV=42" in msgs[0]["content"]
+
+        # Drain: feed a job_done so the generator can complete cleanly.
+        job_id = run_msg["job_id"]
+        await gateway._job_queues[job_id].put({"type": "job_done", "job_id": job_id})
+        # Discard the StopAsyncIteration the next yield will raise.
+        try:
+            await gen_task
+        except StopAsyncIteration:
+            pass
+
+    @pytest.mark.asyncio
     async def test_stream_remote_inference_forwards_events_and_updates_session(self, gateway):
         session = gateway.sessions.get_or_create("remote-stream")
         session.conversation.add(Role.USER, "stream please")

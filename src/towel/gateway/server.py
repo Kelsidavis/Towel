@@ -695,6 +695,50 @@ class GatewayServer:
     }
     # Everything else defaults to "task" (quality inference)
 
+    def _conv_dict_with_memory(self, conversation: Any) -> dict[str, Any]:
+        """Build a conversation dict for a remote-worker payload with
+        the coordinator's memory injected as a leading system message.
+
+        Memory lives on the COORDINATOR's store; worker runtimes have
+        empty local memory. Without this injection any /api/ask or
+        /v1/chat/completions question that needs stored context (the
+        user's name, a saved preference, prior project notes) loses
+        the data on its way to the worker. The recall query is the
+        most recent user turn so the fused-search RRF ranks relevant
+        entries first.
+
+        Returns the original dict unchanged when the corpus is empty
+        — we don't ship a stray empty system message because some
+        worker runtimes treat that as an identity override signal.
+        """
+        conv_dict = conversation.to_dict()
+        memory = getattr(self.agent, "memory", None)
+        if memory is None:
+            return conv_dict
+        last_user_msg = next(
+            (m.content for m in reversed(conversation.messages)
+             if m.role == Role.USER),
+            "",
+        )
+        try:
+            memory_block = memory.to_prompt_block(query=last_user_msg)
+        except Exception as exc:
+            log.warning("memory.to_prompt_block failed: %s", exc)
+            return conv_dict
+        if not memory_block:
+            return conv_dict
+        return {
+            **conv_dict,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": memory_block,
+                    "metadata": {"source": "coord_memory_injection"},
+                },
+                *conv_dict["messages"],
+            ],
+        }
+
     def _pick_alternate_chat_worker(
         self, exclude: set[str]
     ) -> WorkerInfo | None:
@@ -818,14 +862,14 @@ class GatewayServer:
             getattr(self.config, "identity", "")
             or "You are a helpful assistant. Answer concisely."
         )
-        # Inject memory context. Memory lives on the COORDINATOR, but
-        # /api/ask routes chat to a worker whose own runtime memory is
-        # empty. Without this injection, asking "what is my favorite
-        # number?" returned generic placeholder responses despite the
-        # value being recorded as a memory on this host. Use the most
-        # recent user message as the recall query so per-turn retrieval
-        # ranks relevant entries; an empty corpus yields "" and adds
-        # zero tokens.
+        # Inject coordinator memory into the worker's system prompt
+        # (see _conv_dict_with_memory for the rationale — workers have
+        # empty local memory stores so any /api/ask question that
+        # needs stored context loses it on the way to the worker).
+        # The "infer" payload uses a top-level `system` field rather
+        # than embedding the memory in the conversation, so we
+        # concatenate onto `identity` here rather than going through
+        # the dict helper.
         memory = getattr(self.agent, "memory", None)
         if memory is not None:
             last_user_msg = next(
@@ -1294,44 +1338,10 @@ class GatewayServer:
 
         project_ctx = load_project_context()
 
-        # Inject coordinator memory into the payload. The worker's
-        # local memory is empty; without this, /api/ask agent-loop
-        # paths produce the same memory-blind responses the chat path
-        # had before commit 0202a4d. Use the most recent user turn
-        # as the recall query.
-        memory_block = ""
-        memory = getattr(self.agent, "memory", None)
-        if memory is not None:
-            last_user_msg = next(
-                (m.content for m in reversed(conversation.messages)
-                 if m.role == Role.USER),
-                "",
-            )
-            try:
-                memory_block = memory.to_prompt_block(query=last_user_msg)
-            except Exception as exc:
-                log.warning("memory.to_prompt_block failed: %s", exc)
-                memory_block = ""
-
         # Delta sync: only send new messages if worker has seen this session
         delta = self._context_sync.compute_delta(worker.id, session_id, conversation)
-        conv_dict = conversation.to_dict()
-        if memory_block:
-            # Prepend a synthetic system message so the worker's runtime
-            # (which builds its prompt from the conversation messages)
-            # sees the memory context. We don't mutate the source
-            # conversation — only the dict we're about to ship.
-            conv_dict = {
-                **conv_dict,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": memory_block,
-                        "metadata": {"source": "coord_memory_injection"},
-                    },
-                    *conv_dict["messages"],
-                ],
-            }
+        # Inject coordinator memory into the payload (see _conv_dict_with_memory).
+        conv_dict = self._conv_dict_with_memory(conversation)
         if delta.is_full_sync:
             # First time or structural change — send full conversation
             payload: dict[str, Any] = {
@@ -1593,7 +1603,7 @@ class GatewayServer:
                     "job_id": job_id,
                     "session": session_id,
                     "stream": True,
-                    "conversation": session.conversation.to_dict(),
+                    "conversation": self._conv_dict_with_memory(session.conversation),
                 }
             )
         )
@@ -1653,7 +1663,7 @@ class GatewayServer:
                         "job_id": job_id,
                         "session": session_id,
                         "stream": True,
-                        "conversation": session.conversation.to_dict(),
+                        "conversation": self._conv_dict_with_memory(session.conversation),
                     }
                 )
             )
