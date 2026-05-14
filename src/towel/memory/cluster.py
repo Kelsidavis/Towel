@@ -37,6 +37,12 @@ class MemoryMutation:
     memory_type: str = "fact"
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     origin_worker_id: str = ""
+    # Source label from the originating store — preserved across the
+    # wire so a worker's auto-captures don't lose their provenance when
+    # the controller replays them to other workers. Older peers that
+    # don't know the field will just see "" via from_dict's default,
+    # which is the same as an operator-set entry on a fresh store.
+    source: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -46,6 +52,7 @@ class MemoryMutation:
             "memory_type": self.memory_type,
             "timestamp": self.timestamp.isoformat(),
             "origin_worker_id": self.origin_worker_id,
+            "source": self.source,
         }
 
     @classmethod
@@ -61,6 +68,7 @@ class MemoryMutation:
                 else datetime.now(UTC)
             ),
             origin_worker_id=data.get("origin_worker_id", ""),
+            source=data.get("source", ""),
         )
 
 
@@ -92,15 +100,18 @@ class ClusterMemorySync:
         content: str,
         memory_type: str = "fact",
         origin_worker_id: str = "",
+        *,
+        source: str = "",
     ) -> MemoryEntry:
         """Store a memory and record the mutation for cluster sync."""
-        entry = self.store.remember(key, content, memory_type)
+        entry = self.store.remember(key, content, memory_type, source=source)
         mutation = MemoryMutation(
             action="remember",
             key=key,
             content=content,
             memory_type=memory_type,
             origin_worker_id=origin_worker_id,
+            source=source,
         )
         self._pending_mutations.append(mutation)
         self._version += 1
@@ -126,7 +137,12 @@ class ClusterMemorySync:
         on a worker when the controller broadcasts an update.
         """
         if mutation.action == "remember":
-            self.store.remember(mutation.key, mutation.content, mutation.memory_type)
+            self.store.remember(
+                mutation.key,
+                mutation.content,
+                mutation.memory_type,
+                source=mutation.source,
+            )
             self._version += 1
             log.debug(
                 "Applied remote remember: %s from %s", mutation.key, mutation.origin_worker_id
@@ -173,7 +189,12 @@ class ClusterMemorySync:
         count = 0
         for key, entry_data in memories.items():
             entry = MemoryEntry.from_dict(entry_data)
-            self.store.remember(entry.key, entry.content, entry.memory_type)
+            self.store.remember(
+                entry.key,
+                entry.content,
+                entry.memory_type,
+                source=entry.source,
+            )
             count += 1
         self._version = snapshot.get("version", 0)
         log.info("Applied memory snapshot: %d memories, version %d", count, self._version)

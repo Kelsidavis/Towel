@@ -590,6 +590,26 @@ def check_memory_store() -> Check:
         c.ok(f"No memories stored yet ({db_path})")
         return c
     c.ok(f"Memory store: {count} entries in {db_path}")
+
+    # Noisy auto-capture: flag when most of the corpus is heuristic
+    # captures that the agent has never actually used. Either the
+    # patterns are firing too aggressively, or the operator hasn't
+    # had a conversation that exercised those memories yet — either
+    # way it's worth a heads-up so they know to run `memory tidy`
+    # (or `memory stats` to inspect).
+    entries = store.recall_all()
+    auto = [e for e in entries if (e.source or "").startswith("auto_capture:")]
+    if entries:
+        unused_auto = [e for e in auto if e.recall_count == 0]
+        if len(unused_auto) >= 10 and len(unused_auto) >= len(entries) // 2:
+            c.warn(
+                f"{len(unused_auto)} auto-captured memor(ies) have never "
+                f"been recalled (>50% of corpus)"
+            )
+            c.suggestions.append(
+                "Run `towel memory stats` to inspect, then `towel memory "
+                "tidy --auto-only` to prune the heuristic captures."
+            )
     return c
 
 
