@@ -2195,12 +2195,29 @@ def memory() -> None:
     "--type", "-t", "mtype", default=None, help="Filter by type (user, project, fact, preference)"
 )
 @click.option("--tag", default=None, help="Filter to memories carrying this tag.")
-def memory_list(mtype: str | None, tag: str | None) -> None:
-    """List all memories, optionally filtered by type and/or tag."""
+@click.option(
+    "--scope",
+    default=None,
+    help=(
+        "Filter by scope. Default: auto-derived project scope + global. "
+        'Pass "" for global only, or "all" to see every scope.'
+    ),
+)
+def memory_list(mtype: str | None, tag: str | None, scope: str | None) -> None:
+    """List all memories, optionally filtered by type / tag / scope."""
+    from towel.memory.scope import derive_scope
     from towel.memory.store import MemoryStore
 
-    store = MemoryStore()
-    entries = store.recall_all(memory_type=mtype, tag=tag)
+    # "all" maps to "no scope filter" so the operator can audit
+    # every project from one terminal. Empty string still means
+    # "global only" per the store contract.
+    if scope == "all":
+        store = MemoryStore()
+        entries = store.recall_all(memory_type=mtype, tag=tag)
+    else:
+        ds = scope if scope is not None else derive_scope()
+        store = MemoryStore(default_scope=ds)
+        entries = store.recall_all(memory_type=mtype, tag=tag)
 
     if not entries:
         console.print("[dim]No memories stored.[/dim]")
@@ -2210,7 +2227,8 @@ def memory_list(mtype: str | None, tag: str | None) -> None:
     console.print(f"[bold]Memories[/bold] ({len(entries)}):\n")
     for e in entries:
         tag_str = f" [{', '.join(e.tags)}]" if e.tags else ""
-        console.print(f"  [green]{e.key}[/green] [dim][{e.memory_type}]{tag_str}[/dim]")
+        scope_str = f" @{e.scope}" if e.scope else ""
+        console.print(f"  [green]{e.key}[/green] [dim][{e.memory_type}]{tag_str}{scope_str}[/dim]")
         console.print(f"    {e.content}")
         console.print(f"    [dim]updated: {e.updated_at.strftime('%Y-%m-%d %H:%M')}[/dim]")
 
@@ -2221,13 +2239,37 @@ def memory_list(mtype: str | None, tag: str | None) -> None:
 @click.option(
     "--type", "-t", "mtype", default="fact", help="Memory type (user, project, fact, preference)"
 )
-def memory_add(key: str, content: str, mtype: str) -> None:
+@click.option(
+    "--scope",
+    default=None,
+    help=(
+        "Scope to write to. Default: auto-derived project scope from "
+        'CWD (empty when no project is detected). Pass "" for global, '
+        '"all" is rejected (writes need a single scope).'
+    ),
+)
+@click.option("--tag", "tags", multiple=True, help="Add a tag (can be repeated).")
+def memory_add(
+    key: str, content: str, mtype: str, scope: str | None, tags: tuple[str, ...]
+) -> None:
     """Add or update a memory."""
+    from towel.memory.scope import derive_scope
     from towel.memory.store import MemoryStore
 
+    if scope == "all":
+        console.print("[red]'all' is for queries; writes need a specific scope.[/red]")
+        raise SystemExit(1)
+    effective = scope if scope is not None else derive_scope()
     store = MemoryStore()
-    entry = store.remember(key, content, memory_type=mtype)
-    console.print(f"[green]Remembered:[/green] [{entry.memory_type}] {entry.key}: {entry.content}")
+    entry = store.remember(
+        key, content, memory_type=mtype,
+        scope=effective, tags=list(tags) if tags else None,
+    )
+    scope_str = f" @{entry.scope}" if entry.scope else " @global"
+    console.print(
+        f"[green]Remembered:[/green] [{entry.memory_type}]{scope_str} "
+        f"{entry.key}: {entry.content}"
+    )
 
 
 @memory.command(name="remove")
@@ -2247,19 +2289,34 @@ def memory_remove(key: str) -> None:
 @click.argument("query")
 @click.option("--tag", default=None, help="Restrict results to entries carrying this tag.")
 @click.option(
+    "--scope",
+    default=None,
+    help=(
+        "Scope filter. Default: auto-derived project scope + global. "
+        'Pass "" for global only, or "all" to search across every scope.'
+    ),
+)
+@click.option(
     "--fused/--bm25-only",
     default=True,
     help="Default fused: BM25 + vector + graph RRF. --bm25-only uses lexical match only.",
 )
-def memory_search(query: str, tag: str | None, fused: bool) -> None:
+def memory_search(query: str, tag: str | None, scope: str | None, fused: bool) -> None:
     """Search memories by relevance to QUERY (BM25 + vector + graph)."""
+    from towel.memory.scope import derive_scope
     from towel.memory.store import MemoryStore
 
-    store = MemoryStore()
-    if fused:
-        results = store.fused_search(query, limit=10, tag=tag)
+    if scope == "all":
+        store = MemoryStore()
+        kwargs: dict[str, object] = {"tag": tag}
     else:
-        results = store.search(query, limit=10, tag=tag)
+        ds = scope if scope is not None else derive_scope()
+        store = MemoryStore(default_scope=ds)
+        kwargs = {"tag": tag}
+    if fused:
+        results = store.fused_search(query, limit=10, **kwargs)
+    else:
+        results = store.search(query, limit=10, **kwargs)
 
     if not results:
         console.print(f"[dim]No memories matching:[/dim] {query}"

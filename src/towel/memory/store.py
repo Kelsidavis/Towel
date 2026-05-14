@@ -85,6 +85,11 @@ class MemoryEntry:
     # grouping (e.g. project name, sensitivity). De-duplicated and
     # order-preserving — first-add wins.
     tags: list[str] = field(default_factory=list)
+    # Project scope this memory belongs to. "" = global (visible to
+    # every project), non-empty = restricted to callers that pass
+    # the same scope value. Derived conventionally from project root
+    # via towel.memory.scope.derive_scope(cwd).
+    scope: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -101,6 +106,8 @@ class MemoryEntry:
             out["source"] = self.source
         if self.tags:
             out["tags"] = list(self.tags)
+        if self.scope:
+            out["scope"] = self.scope
         return out
 
     @classmethod
@@ -119,6 +126,7 @@ class MemoryEntry:
             recall_count=int(data.get("recall_count", 0)),
             source=data.get("source", ""),
             tags=[str(t) for t in raw_tags if isinstance(t, str)],
+            scope=str(data.get("scope") or ""),
         )
 
     def __str__(self) -> str:
@@ -149,7 +157,14 @@ CREATE TABLE IF NOT EXISTS memories (
     -- express (e.g. project-name, topic, sensitivity). Searched via
     -- LIKE on the JSON text — fine for small corpora; if this grows
     -- past tens of thousands of memories, swap for a tags table.
-    tags             TEXT NOT NULL DEFAULT '[]'
+    tags             TEXT NOT NULL DEFAULT '[]',
+    -- Scope for project-specific memories. "" / NULL means global —
+    -- visible regardless of which project the agent is operating
+    -- in. A non-empty value (conventionally derived from the project
+    -- root path) restricts visibility to callers that explicitly
+    -- ask for that scope, or to retrieval calls that pass it as the
+    -- current scope alongside global.
+    scope            TEXT NOT NULL DEFAULT ''
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
@@ -206,6 +221,10 @@ def _row_to_entry(row: sqlite3.Row) -> MemoryEntry:
         tags = [str(t) for t in tags_list if isinstance(t, str)]
     except (IndexError, KeyError, json.JSONDecodeError):
         tags = []
+    try:
+        scope = row["scope"] or ""
+    except (IndexError, KeyError):
+        scope = ""
     return MemoryEntry(
         key=row["key"],
         content=row["content"],
@@ -216,17 +235,30 @@ def _row_to_entry(row: sqlite3.Row) -> MemoryEntry:
         recall_count=int(row["recall_count"]),
         source=source,
         tags=tags,
+        scope=scope,
     )
 
 
 class MemoryStore:
-    """SQLite-backed persistent memory store with FTS5 BM25 ranking."""
+    """SQLite-backed persistent memory store with FTS5 BM25 ranking.
 
-    def __init__(self, store_dir: Path | None = None) -> None:
+    ``default_scope`` is the scope a remember() call lands in when no
+    explicit scope is passed, AND the project-side scope retrieval
+    methods OR with global. Set it once per process (e.g. at runtime
+    init) so the operator doesn't have to specify scope on every
+    write; pass scope="" explicitly to opt out for a particular call.
+    """
+
+    def __init__(
+        self,
+        store_dir: Path | None = None,
+        default_scope: str = "",
+    ) -> None:
         self.store_dir = store_dir or DEFAULT_MEMORY_DIR
         self.store_dir.mkdir(parents=True, exist_ok=True)
         self._db_path = self.store_dir / "memory.db"
         self._json_path = self.store_dir / "memories.json"
+        self.default_scope = default_scope
         self._init_db()
         self._migrate_from_json()
 
@@ -288,6 +320,7 @@ class MemoryStore:
             for ddl in (
                 "ALTER TABLE memories ADD COLUMN source TEXT NOT NULL DEFAULT ''",
                 "ALTER TABLE memories ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'",
+                "ALTER TABLE memories ADD COLUMN scope TEXT NOT NULL DEFAULT ''",
             ):
                 try:
                     con.execute(ddl)
@@ -387,6 +420,7 @@ class MemoryStore:
         *,
         source: str = "",
         tags: list[str] | None = None,
+        scope: str | None = None,
     ) -> MemoryEntry:
         """Store or update a memory.
 
@@ -417,23 +451,26 @@ class MemoryStore:
                     tags_norm.append(t)
         else:
             tags_norm = []
+        # Resolve scope: explicit param > store default > empty.
+        effective_scope = scope if scope is not None else self.default_scope
         with self._txn() as con:
             row = con.execute(
-                "SELECT created_at, source, tags FROM memories WHERE key = ?", (key,)
+                "SELECT created_at, source, tags, scope FROM memories WHERE key = ?", (key,)
             ).fetchone()
             if row is None:
                 con.execute(
                     "INSERT INTO memories "
-                    "(key, content, memory_type, created_at, updated_at, source, embedding, tags) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "(key, content, memory_type, created_at, updated_at, source, embedding, tags, scope) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         key, content, memory_type, now_iso, now_iso, source,
-                        embedding_blob, json.dumps(tags_norm),
+                        embedding_blob, json.dumps(tags_norm), effective_scope,
                     ),
                 )
                 created_at = now
                 stored_source = source
                 stored_tags = tags_norm
+                stored_scope = effective_scope
             else:
                 # Existing-row update: merge incoming tags with the
                 # stored set so callers don't have to read-modify-
@@ -456,10 +493,19 @@ class MemoryStore:
                         if t not in seen2:
                             seen2.add(t)
                             merged.append(t)
+                # Keep the existing scope on update — operators picking
+                # up an entry that was project-scoped shouldn't have
+                # it silently flipped to global by a default-scope
+                # remember(). Explicit scope= still overrides.
+                try:
+                    existing_scope = row["scope"] or ""
+                except (IndexError, KeyError):
+                    existing_scope = ""
+                stored_scope = scope if scope is not None else existing_scope
                 con.execute(
                     "UPDATE memories SET content = ?, memory_type = ?, "
-                    "updated_at = ?, embedding = ?, tags = ? WHERE key = ?",
-                    (content, memory_type, now_iso, embedding_blob, json.dumps(merged), key),
+                    "updated_at = ?, embedding = ?, tags = ?, scope = ? WHERE key = ?",
+                    (content, memory_type, now_iso, embedding_blob, json.dumps(merged), stored_scope, key),
                 )
                 created_at = datetime.fromisoformat(row["created_at"])
                 try:
@@ -476,6 +522,7 @@ class MemoryStore:
             updated_at=now,
             source=stored_source,
             tags=stored_tags,
+            scope=stored_scope,
         )
 
     def forget(self, key: str) -> bool:
@@ -498,18 +545,50 @@ class MemoryStore:
             con.close()
         return _row_to_entry(row) if row is not None else None
 
+    def _scope_filter(
+        self, scope: str | None
+    ) -> tuple[str, list[Any]]:
+        """Build a SQL WHERE-fragment + params for the requested scope.
+
+        Three behaviors:
+
+        * ``scope is None``     — include the store's default_scope
+                                  PLUS global ("") so callers in a
+                                  project see their project memories
+                                  alongside universal facts.
+        * ``scope=""``          — only global memories.
+        * ``scope="X"`` (non-empty) — only memories tagged with that scope.
+
+        Returns ("", []) when no filter should be applied (i.e. when
+        default_scope is empty AND scope is None — equivalent to
+        "show everything", which matches the pre-scoping default).
+        """
+        if scope is None:
+            ds = self.default_scope
+            if not ds:
+                return "", []
+            return "scope IN (?, '')", [ds]
+        if scope == "":
+            return "scope = ''", []
+        return "scope = ?", [scope]
+
     def recall_all(
         self,
         memory_type: str | None = None,
         tag: str | None = None,
+        scope: str | None = None,
     ) -> list[MemoryEntry]:
-        """Get all memories, optionally filtered by type and/or tag.
+        """Get all memories, optionally filtered by type, tag, and scope.
 
         Tag filtering is a substring match against the JSON-encoded
         tags column then re-checked in Python — cheap for small
         corpora and avoids needing a real array-contains operator on
         sqlite. Larger stores can swap for a separate tags table
         without changing the public signature.
+
+        ``scope=None`` (default): apply the store's default_scope OR
+        global. Pass ``scope="x"`` to filter exactly, ``scope=""`` for
+        global only.
         """
         con = self._connect()
         try:
@@ -522,6 +601,10 @@ class MemoryStore:
                 # LIKE pre-filter to reduce Python-side scanning.
                 clauses.append("tags LIKE ?")
                 params.append(f'%"{tag}"%')
+            scope_sql, scope_params = self._scope_filter(scope)
+            if scope_sql:
+                clauses.append(scope_sql)
+                params.extend(scope_params)
             where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
             rows = con.execute(
                 f"SELECT * FROM memories {where} ORDER BY updated_at DESC",
@@ -545,6 +628,7 @@ class MemoryStore:
         query: str,
         limit: int = 5,
         tag: str | None = None,
+        scope: str | None = None,
     ) -> list[MemoryEntry]:
         """BM25-ranked search over memory content.
 
@@ -595,6 +679,16 @@ class MemoryStore:
         entries = [_row_to_entry(r) for r in rows]
         if tag:
             entries = [e for e in entries if tag in e.tags]
+        # Scope filter applied in Python so we keep BM25 ranking intact.
+        # Cheap on the size of `limit` (≤ tens).
+        if scope is None:
+            ds = self.default_scope
+            if ds:
+                entries = [e for e in entries if e.scope in (ds, "")]
+        elif scope == "":
+            entries = [e for e in entries if e.scope == ""]
+        else:
+            entries = [e for e in entries if e.scope == scope]
         return entries
 
     def add_tag(self, key: str, tag: str) -> bool:
@@ -743,6 +837,7 @@ class MemoryStore:
         query: str,
         limit: int = 5,
         tag: str | None = None,
+        scope: str | None = None,
     ) -> list[MemoryEntry]:
         """3-way Reciprocal Rank Fusion: BM25 + vector + graph.
 
@@ -768,11 +863,26 @@ class MemoryStore:
         rather than over-weighting the surviving signals.
         """
         rrf_k = 60
+
+        # Local closure: would this entry pass the scope filter?
+        def _scope_ok(e: MemoryEntry) -> bool:
+            if scope is None:
+                ds = self.default_scope
+                return (not ds) or e.scope in (ds, "")
+            if scope == "":
+                return e.scope == ""
+            return e.scope == scope
+
         # Tag filter is applied to each ranker so neither BM25 nor the
         # vector path can dominate by surfacing untagged matches.
-        bm25 = self.search(query, limit=limit * 2, tag=tag)
+        # Scope is passed into search() so it short-circuits there;
+        # vector and graph paths apply it via _scope_ok below.
+        bm25 = self.search(query, limit=limit * 2, tag=tag, scope=scope)
         vec_all = self.vector_search(query, limit=limit * 2)
-        vec = [e for e in vec_all if not tag or tag in e.tags]
+        vec = [
+            e for e in vec_all
+            if (not tag or tag in e.tags) and _scope_ok(e)
+        ]
         # Graph ranker: seed from the top BM25 hit (most-confident
         # lexical anchor), pull weighted neighbors. If BM25 missed
         # too, try the top vector hit so paraphrase queries still
@@ -781,7 +891,7 @@ class MemoryStore:
         anchor = (bm25 or vec or [None])[0]
         if anchor is not None:
             for rel, _w in self.recall_related(anchor.key, limit=limit * 2):
-                if not tag or tag in rel.tags:
+                if (not tag or tag in rel.tags) and _scope_ok(rel):
                     graph_entries.append(rel)
 
         scores: dict[str, float] = {}
