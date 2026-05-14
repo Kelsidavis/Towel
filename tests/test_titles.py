@@ -152,3 +152,56 @@ class TestGatewayRename:
             json={"title": ""},
         )
         assert resp.status_code == 400
+
+    def test_rename_rejects_overlong_title(self, tmp_path):
+        """Titles surface in the UI sidebar and dispatch logs;
+        a 10k-char title destroys layouts and bloats every list
+        response. Cap at 200."""
+        from starlette.testclient import TestClient
+
+        from towel.agent.runtime import AgentRuntime
+        from towel.config import TowelConfig
+        from towel.gateway.server import GatewayServer
+        from towel.gateway.sessions import SessionManager
+
+        store = ConversationStore(store_dir=tmp_path)
+        conv = Conversation(id="long-title")
+        conv.add(Role.USER, "test")
+        store.save(conv)
+        config = TowelConfig()
+        agent = AgentRuntime(config)
+        gw = GatewayServer(config=config, agent=agent, sessions=SessionManager(store=store))
+        client = TestClient(gw._build_http_app())
+
+        resp = client.post(
+            "/conversations/long-title/rename",
+            json={"title": "z" * 10000},
+        )
+        assert resp.status_code == 400
+        assert "200" in resp.json()["error"]
+
+    def test_rename_rejects_control_chars(self, tmp_path):
+        """Multi-line titles break list-view rendering and log readability."""
+        from starlette.testclient import TestClient
+
+        from towel.agent.runtime import AgentRuntime
+        from towel.config import TowelConfig
+        from towel.gateway.server import GatewayServer
+        from towel.gateway.sessions import SessionManager
+
+        store = ConversationStore(store_dir=tmp_path)
+        conv = Conversation(id="multiline-title")
+        conv.add(Role.USER, "test")
+        store.save(conv)
+        config = TowelConfig()
+        agent = AgentRuntime(config)
+        gw = GatewayServer(config=config, agent=agent, sessions=SessionManager(store=store))
+        client = TestClient(gw._build_http_app())
+
+        for bad in ("line1\nline2", "tab\there", "null\x00"):
+            resp = client.post(
+                "/conversations/multiline-title/rename",
+                json={"title": bad},
+            )
+            assert resp.status_code == 400, f"accepted bad title {bad!r}"
+            assert "control" in resp.json()["error"].lower()

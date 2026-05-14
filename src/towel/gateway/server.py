@@ -3213,6 +3213,22 @@ class GatewayServer:
                 return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
             if not title:
                 return JSONResponse({"error": "Title required"}, status_code=400)
+            # Titles surface in the web UI sidebar, /api/sessions output,
+            # and dispatch logs. A 10k-char title destroys layouts and
+            # bloats every list response. 200 chars is generous; the
+            # auto-generated title via `display_title` is ~50.
+            if len(title) > 200:
+                return JSONResponse(
+                    {"error": "title must be 200 chars or fewer"},
+                    status_code=400,
+                )
+            # Strip control characters (newlines, NULs, tabs). Multi-line
+            # titles break list-view rendering and log readability.
+            if any(ord(c) < 0x20 or ord(c) == 0x7F for c in title):
+                return JSONResponse(
+                    {"error": "title must not contain control characters"},
+                    status_code=400,
+                )
             if store.rename(conv_id, title):
                 return JSONResponse({"id": conv_id, "title": title})
             return JSONResponse({"error": "Not found"}, status_code=404)
