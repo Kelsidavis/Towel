@@ -33,6 +33,33 @@ class TestModelInventory:
 
         assert _detect_available_models("nope", "") == []
 
+    def test_current_model_appended_when_probe_returns_empty(self):
+        """An active worker must report SOMETHING in available_models —
+        the model it's actually serving. Probe failures (llama-server
+        builds w/o /v1/models, network glitches) shouldn't drop it."""
+        from towel.gateway.worker_client import _detect_available_models
+
+        # Unknown backend → probe contributes nothing. With
+        # current_model set, that name is still in the result.
+        result = _detect_available_models(
+            "nope", "", current_model="My-Active-Model.gguf",
+        )
+        assert result == ["My-Active-Model.gguf"]
+
+    def test_current_model_deduped_when_probe_also_returns_it(self):
+        """If the backend's probe DID find the active model, we
+        shouldn't list it twice."""
+        from towel.gateway.worker_client import _detect_available_models
+
+        # Claude's probe returns the three fixed aliases. Passing
+        # one as current_model shouldn't duplicate it.
+        result = _detect_available_models(
+            "claude", "", current_model="sonnet",
+        )
+        assert result.count("sonnet") == 1
+        assert "opus" in result
+        assert "haiku" in result
+
     def test_dedupes_while_preserving_order(self):
         from unittest.mock import patch
 

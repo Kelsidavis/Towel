@@ -623,7 +623,9 @@ def default_worker_capabilities(
     # Model inventory — what this worker could actually run without a fresh
     # download. Lets the coordinator pick a model the worker already has,
     # and avoid sending a 70B request to a Pi.
-    caps["available_models"] = _detect_available_models(backend, llama_url)
+    caps["available_models"] = _detect_available_models(
+        backend, llama_url, current_model=model_name,
+    )
     # Advertise a co-located launcher so the coordinator's replace/upgrade
     # UI doesn't need the operator to retype the URL for every worker. The
     # worker reports the externally-routable form (hostname + port) since
@@ -683,13 +685,26 @@ def _detect_local_launcher() -> str | None:
     return f"http://{socket.gethostname()}:{DEFAULT_PORT}"
 
 
-def _detect_available_models(backend: str, llama_url: str) -> list[str]:
+def _detect_available_models(
+    backend: str,
+    llama_url: str,
+    *,
+    current_model: str = "",
+) -> list[str]:
     """Enumerate models the worker can run *without* a fresh download.
 
     Lets the coordinator pick a target the worker has already cached and
     skip launching ``towel worker --model X`` against a host that would
     need to pull tens of gigabytes first. Returned list is best-effort —
     empty doesn't mean "nothing supported", just "couldn't enumerate".
+
+    ``current_model`` is the model name the worker is actively serving.
+    It's always cached (it's loaded in RAM, must be on disk) so we
+    guarantee it appears in the result even when the backend's
+    enumeration call returns empty. Without this, coordinators that
+    consume available_models for routing / inventory miss the worker's
+    actual model when /v1/models probes come back blank — observed
+    against llama-server builds that don't expose the endpoint.
     """
     found: list[str] = []
     try:
@@ -737,6 +752,13 @@ def _detect_available_models(backend: str, llama_url: str) -> list[str]:
     except Exception:
         pass
 
+    # Always include the worker's currently-running model as a
+    # guaranteed-cached entry, in case the backend enumeration
+    # missed it (llama-server build w/o /v1/models, Ollama mid-
+    # rolling-restart, etc.). Appended last so backend-reported
+    # ordering wins for sort-relevant consumers.
+    if current_model:
+        found.append(current_model)
     # Dedupe while preserving order.
     seen: set[str] = set()
     unique: list[str] = []
