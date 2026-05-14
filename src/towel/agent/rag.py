@@ -132,17 +132,25 @@ class RAGIndex:
         self._chunk_tokens.clear()
 
     def _split(self, text: str) -> list[str]:
-        """Split text into overlapping chunks."""
+        """Split text into overlapping chunks.
+
+        ``chunk_size - chunk_overlap`` is the forward step per iteration.
+        When the caller picks a chunk_overlap ≥ chunk_size, that step is
+        non-positive and the original loop would never terminate. Clamp
+        to at least one word so a misconfigured index degrades to
+        non-overlapping chunks instead of hanging.
+        """
         words = text.split()
         if len(words) <= self.chunk_size:
             return [text]
 
+        step = max(self.chunk_size - self.chunk_overlap, 1)
         chunks = []
         start = 0
         while start < len(words):
             end = start + self.chunk_size
             chunk = " ".join(words[start:end])
             chunks.append(chunk)
-            start += self.chunk_size - self.chunk_overlap
+            start += step
 
         return chunks
