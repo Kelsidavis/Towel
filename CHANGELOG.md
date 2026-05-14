@@ -115,11 +115,26 @@ and onboarding. ~52 commits.
   loops surface as clean failures.
 - Lint baseline cleared across `src/towel/` and `tests/`.
 
+### Daemon logging + error visibility (later in the day)
+
+- Every long-running Towel process — `towel serve`, `towel worker`,
+  `towel setup`, `towel launcher` — now configures
+  `logging.basicConfig(level=INFO, …)` so operators see timestamped
+  operational events in the daemon's terminal. Worker registrations,
+  dispatch decisions, idle-result sweeps, upgrade requests, and
+  shutdown notifications no longer vanish into the void.
+- Logging setup deduplicated into `towel.logging_setup` with an
+  idempotency test.
+- `_load_model_with_friendly_error` helper: every user-facing CLI
+  command (chat, ask, commit, summarize, etc.) now degrades to a red
+  Rich Panel pointing at `towel setup` / `towel doctor` when model
+  load fails, instead of dumping a stack trace.
+
 ### Stats
 
-- 1207 tests passing in 27 seconds.
+- 1214 tests passing in ~28 seconds.
 - Zero lint complaints (`ruff check src/towel/ tests/`).
-- ~370 new tests today, mostly covering the new endpoints + dispatcher
-  paths.
+- ~400 new tests today, mostly covering the new endpoints, dispatcher
+  paths, and the load-failure / logging helpers.
 
 — Towel: Tool Oriented Worker Execution Link. Don't Panic.
