@@ -205,6 +205,20 @@ towel bench         # benchmark model speed
 
 Config lives in `~/.towel/config.toml`. Three built-in agent profiles: **coder**, **researcher**, **writer**.
 
+## Contributing
+
+```bash
+pip install -e ".[dev]"      # install dev deps (pytest, ruff, etc.)
+make test                    # run the full suite (~30s, 1200+ tests)
+make lint                    # ruff check src/ tests/
+make fmt                     # ruff format
+make help                    # see all targets
+```
+
+Tests have a 60-second per-test ceiling configured in `pyproject.toml` —
+runaway loops surface as `Failed: Timeout` rather than hanging the
+suite.
+
 ## License
 
 MIT
