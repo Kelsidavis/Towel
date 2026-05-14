@@ -532,6 +532,63 @@ class TestTags:
         assert counts == {"work": 2, "urgent": 1}
 
 
+class TestConsolidate:
+    def test_finds_identical_content_as_duplicate(self, store):
+        store.remember("a", "the quick brown fox", "fact")
+        store.remember("b", "the quick brown fox", "fact")
+        pairs = store.find_near_duplicates(threshold=0.5)
+        assert len(pairs) == 1
+        a, b, score = pairs[0]
+        assert {a.key, b.key} == {"a", "b"}
+        assert score == 1.0
+
+    def test_high_jaccard_is_duplicate(self, store):
+        store.remember("a", "ship the prod deploy on Friday", "fact")
+        store.remember("b", "ship the prod deploy this Friday", "fact")
+        pairs = store.find_near_duplicates(threshold=0.6)
+        keys = {(p[0].key, p[1].key) for p in pairs}
+        assert ("a", "b") in keys or ("b", "a") in keys
+
+    def test_below_threshold_not_returned(self, store):
+        store.remember("a", "we use python and postgres", "fact")
+        store.remember("b", "the user lives in Berlin", "user")
+        pairs = store.find_near_duplicates(threshold=0.8)
+        assert pairs == []
+
+    def test_same_scope_only_blocks_cross_scope(self, store):
+        store.remember("a", "shared content", "fact", scope="proj:alpha")
+        store.remember("b", "shared content", "fact", scope="proj:beta")
+        # Default same_scope_only=True excludes cross-scope.
+        assert store.find_near_duplicates(threshold=0.5) == []
+        # Opt-in finds them.
+        pairs = store.find_near_duplicates(threshold=0.5, same_scope_only=False)
+        assert len(pairs) == 1
+
+    def test_consolidate_keeps_higher_recall_survivor(self, store):
+        store.remember("a", "shared content", "fact", tags=["x"])
+        store.remember("b", "shared content", "fact", tags=["y"])
+        # Make 'a' the more-recalled entry.
+        store._bump_recall(["a"])
+        store._bump_recall(["a"])
+        pairs = store.find_near_duplicates(threshold=0.5)
+        survivor = store.consolidate(pairs[0][:2])
+        # 'a' survives (more recalls), and 'b' is gone.
+        assert survivor.key == "a"
+        assert store.recall("b") is None
+        # Tags union.
+        assert set(survivor.tags) == {"x", "y"}
+
+    def test_consolidate_refuses_cross_scope(self, store):
+        store.remember("a", "x", scope="proj:alpha")
+        store.remember("b", "x", scope="proj:beta")
+        # find_near_duplicates with cross-scope returns the pair
+        # but consolidate should refuse the merge.
+        pairs = store.find_near_duplicates(threshold=0.5, same_scope_only=False)
+        assert pairs
+        with pytest.raises(ValueError):
+            store.consolidate(pairs[0][:2])
+
+
 class TestRecallLog:
     def test_to_prompt_block_records_recall(self, store):
         store.remember("a", "alpha beta", "fact")

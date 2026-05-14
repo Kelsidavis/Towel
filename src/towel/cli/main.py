@@ -2547,6 +2547,64 @@ def memory_nudge(key: str) -> None:
     )
 
 
+@memory.command(name="consolidate")
+@click.option(
+    "--threshold",
+    type=float,
+    default=0.85,
+    show_default=True,
+    help="Similarity (0..1) at or above which two entries count as duplicates.",
+)
+@click.option(
+    "--dry-run/--apply",
+    default=True,
+    show_default=True,
+    help="Default dry-run: print candidate merges. --apply commits.",
+)
+@click.option(
+    "--cross-scope/--same-scope",
+    default=False,
+    help="Allow merging across project scopes. Default same-scope only.",
+)
+def memory_consolidate(threshold: float, dry_run: bool, cross_scope: bool) -> None:
+    """Find and merge near-duplicate memories.
+
+    Uses vector cosine when the [embeddings] extra is installed,
+    otherwise falls back to Jaccard over content tokens. Survivor
+    of each merge is the entry with more recalls (ties break to
+    the older created_at); tags are unioned, source prefers a
+    non-empty operator-set value over an empty heuristic one.
+    """
+    from towel.memory.store import MemoryStore
+
+    store = MemoryStore()
+    pairs = store.find_near_duplicates(
+        threshold=threshold, same_scope_only=not cross_scope,
+    )
+    if not pairs:
+        console.print(
+            f"[green]No pairs above threshold={threshold}.[/green]"
+        )
+        return
+    label = "would merge" if dry_run else "merged"
+    console.print(f"[yellow]{label} {len(pairs)} pair(s):[/yellow]")
+    for a, b, score in pairs:
+        console.print(
+            f"  [{score:.2f}] {a.key} ⇄ {b.key} "
+            f"(scope=@{a.scope or 'global'})"
+        )
+        console.print(f"     a: {a.content[:80]}")
+        console.print(f"     b: {b.content[:80]}")
+        if not dry_run:
+            try:
+                surviving = store.consolidate((a, b))
+                console.print(f"     [green]→[/green] kept {surviving.key}")
+            except ValueError as exc:
+                console.print(f"     [red]skipped:[/red] {exc}")
+    if dry_run:
+        console.print("\n[dim]Re-run with --apply to commit.[/dim]")
+
+
 @memory.command(name="promote")
 @click.argument("key")
 @click.option(

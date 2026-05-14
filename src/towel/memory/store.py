@@ -797,6 +797,102 @@ class MemoryStore:
             )
         return True
 
+    def find_near_duplicates(
+        self,
+        threshold: float = 0.85,
+        *,
+        same_scope_only: bool = True,
+    ) -> list[tuple[MemoryEntry, MemoryEntry, float]]:
+        """Surface candidate-duplicate pairs.
+
+        Uses vector cosine similarity when the embeddings extra is
+        installed and both entries carry a vector, otherwise falls
+        back to Jaccard over content tokens. Pairs are returned only
+        once (key_a < key_b) and only when similarity ≥ threshold.
+
+        ``same_scope_only`` skips cross-scope pairs by default —
+        the same content under two scopes is usually intentional
+        ("preferences I have everywhere" vs. "preferences I have
+        on this project"), not a duplicate.
+        """
+        entries = self.recall_all()
+        if len(entries) < 2:
+            return []
+        # Group by scope when requested so the O(n^2) loop only
+        # considers entries that could realistically be merged.
+        if same_scope_only:
+            buckets: dict[str, list[MemoryEntry]] = {}
+            for e in entries:
+                buckets.setdefault(e.scope or "", []).append(e)
+            groups = list(buckets.values())
+        else:
+            groups = [entries]
+
+        from towel.memory import embeddings as _emb
+
+        use_vec = _emb.is_available()
+        pairs: list[tuple[MemoryEntry, MemoryEntry, float]] = []
+        for group in groups:
+            for i in range(len(group)):
+                for j in range(i + 1, len(group)):
+                    a, b = group[i], group[j]
+                    score = _similarity(a, b, use_vec)
+                    if score >= threshold:
+                        pairs.append((a, b, score))
+        # Highest similarity first so the most confident dupes are
+        # surfaced before borderline cases.
+        pairs.sort(key=lambda t: -t[2])
+        return pairs
+
+    def consolidate(
+        self,
+        pair: tuple[MemoryEntry, MemoryEntry],
+    ) -> MemoryEntry:
+        """Merge two memories into a single survivor.
+
+        Survivor selection: the entry with more recalls wins; ties
+        break to the older created_at (the longer-established record).
+        Tags are unioned; source prefers non-empty (operator-set
+        beats heuristic). Scope must match — caller responsibility,
+        enforced here so a careless merge can't silently broaden
+        visibility.
+
+        Returns the surviving entry as it sits in the store after
+        the merge. The losing entry is forgotten (which cascades
+        any graph edges).
+        """
+        a, b = pair
+        if (a.scope or "") != (b.scope or ""):
+            raise ValueError(
+                "consolidate() refuses cross-scope merges — "
+                "scopes differ for these entries"
+            )
+        # Survivor: higher recall_count, then older created_at.
+        if a.recall_count != b.recall_count:
+            survivor, loser = (a, b) if a.recall_count > b.recall_count else (b, a)
+        else:
+            survivor, loser = (a, b) if a.created_at <= b.created_at else (b, a)
+        # Union tags, preserving survivor's order then loser's
+        # unique adds at the end.
+        seen: set[str] = set()
+        merged_tags: list[str] = []
+        for t in (*survivor.tags, *loser.tags):
+            if t not in seen:
+                seen.add(t)
+                merged_tags.append(t)
+        # Source: prefer non-empty (operator-set or named source over "").
+        merged_source = survivor.source or loser.source
+        # Drop the loser first so a primary-key rewrite is unnecessary.
+        self.forget(loser.key)
+        return self.remember(
+            survivor.key,
+            survivor.content,
+            memory_type=survivor.memory_type,
+            source=merged_source,
+            tags=merged_tags,
+            scope=survivor.scope,
+        )
+
     def activity(
         self,
         hours: float = 24.0,
@@ -1383,6 +1479,54 @@ def salience(entry: MemoryEntry, now: datetime | None = None) -> float:
     # untouched entry, and an entry recalled many times survives even
     # if its updated_at is old.
     return 2.0 * recall + 1.0 * recency + 1.0 * access_recency
+
+
+# ── duplicate-detection helpers ───────────────────────────────────────
+
+
+import re  # noqa: E402  used by the duplicate-detection helpers below
+
+
+def _content_tokens(text: str) -> set[str]:
+    """Lowercase word-token set, used for the Jaccard fallback path."""
+    return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) >= 3}
+
+
+def _similarity(
+    a: MemoryEntry, b: MemoryEntry, use_vec: bool
+) -> float:
+    """Score 0..1 of how likely two entries are duplicates.
+
+    Vector path: cosine on stored embeddings when both have them.
+    Falls back to Jaccard on content tokens — surprisingly robust
+    for the "near-duplicate detection" use case where exact paraphrase
+    quality doesn't matter, only "are these basically the same fact?"
+    """
+    # Trivial: identical content is always a candidate.
+    if a.content == b.content:
+        return 1.0
+    if use_vec:
+        from towel.memory import embeddings as _emb
+        a_blob = _emb.encode(a.content)
+        b_blob = _emb.encode(b.content)
+        if a_blob and b_blob:
+            try:
+                import numpy as np
+
+                va = np.frombuffer(a_blob, dtype=np.float32)
+                vb = np.frombuffer(b_blob, dtype=np.float32)
+                if va.shape == vb.shape:
+                    # Vectors come back unit-normalized → dot = cosine.
+                    return float(va @ vb)
+            except Exception:
+                pass
+    # Jaccard fallback.
+    ta, tb = _content_tokens(a.content), _content_tokens(b.content)
+    if not ta or not tb:
+        return 0.0
+    inter = len(ta & tb)
+    union = len(ta | tb)
+    return inter / union if union else 0.0
 
 
 # FTS5's MATCH grammar treats bare strings as one of: column filters,
