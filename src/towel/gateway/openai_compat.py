@@ -161,13 +161,28 @@ def build_openai_routes(
                         )
                 if response is None:
                     response = await agent.step(conv)
+                meta = response.metadata or {}
+                completion_tokens = meta.get("tokens", meta.get("output_tokens", 0))
+                # Prefer the worker's reported prompt_tokens; fall back
+                # to estimating from the conversation we sent. Previous
+                # code derived prompt_tokens from completion_tokens // 4
+                # which gave nonsense (e.g. prompt=1 for a long input
+                # that produced 0 tokens).
+                prompt_tokens = meta.get("prompt_tokens")
+                if prompt_tokens is None:
+                    from towel.agent.context import count_tokens_fallback
+                    prompt_tokens = sum(
+                        count_tokens_fallback(msg.get("content", ""))
+                        for msg in messages
+                    )
                 return JSONResponse(
                     _format_completion(
                         request_id,
                         created,
                         model_name,
                         response.content,
-                        response.metadata.get("tokens", 0),
+                        completion_tokens,
+                        prompt_tokens=prompt_tokens,
                     )
                 )
         except Exception as e:
@@ -321,10 +336,16 @@ def _format_completion(
     created: int,
     model: str,
     content: str,
-    total_tokens: int,
+    completion_tokens: int,
+    *,
+    prompt_tokens: int | None = None,
 ) -> dict[str, Any]:
     """Format a non-streaming ChatCompletion response."""
-    prompt_tokens = max(1, total_tokens // 4)  # rough estimate
+    if prompt_tokens is None:
+        # No prompt information supplied — fall back to a 1-token
+        # placeholder rather than a number derived from completion
+        # length, which is meaningless.
+        prompt_tokens = 1
     return {
         "id": request_id,
         "object": "chat.completion",
@@ -339,7 +360,7 @@ def _format_completion(
         ],
         "usage": {
             "prompt_tokens": prompt_tokens,
-            "completion_tokens": total_tokens,
-            "total_tokens": prompt_tokens + total_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
         },
     }

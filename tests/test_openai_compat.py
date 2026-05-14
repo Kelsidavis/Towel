@@ -126,6 +126,31 @@ class TestResponseFormat:
         assert "message" in choice
         assert "finish_reason" in choice
 
+    def test_prompt_tokens_uses_supplied_value(self):
+        """When the caller provides prompt_tokens (e.g. from the worker's
+        usage data, or an estimate over the input messages), the formatter
+        must report it rather than fabricating one from completion_tokens.
+
+        The previous implementation did `prompt_tokens = completion // 4`,
+        which gave 0 for empty responses no matter how long the input was —
+        meaningless usage data for any OpenAI client tracking spend."""
+        from towel.gateway.openai_compat import _format_completion
+
+        result = _format_completion(
+            "id", 0, "m", "content", 5, prompt_tokens=42,
+        )
+        assert result["usage"]["prompt_tokens"] == 42
+        assert result["usage"]["completion_tokens"] == 5
+        assert result["usage"]["total_tokens"] == 47
+
+    def test_prompt_tokens_default_is_independent_of_completion(self):
+        """Without an explicit prompt_tokens the formatter falls back to 1,
+        not to a value derived from completion length."""
+        from towel.gateway.openai_compat import _format_completion
+
+        result = _format_completion("id", 0, "m", "content", 9999)
+        assert result["usage"]["prompt_tokens"] == 1
+
 
 class TestSSEFormat:
     @pytest.mark.asyncio
