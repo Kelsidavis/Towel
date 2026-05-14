@@ -2283,6 +2283,73 @@ def memory_add(
     )
 
 
+@memory.command(name="forget")
+@click.option("--tag", default=None, help="Forget every memory carrying this tag.")
+@click.option(
+    "--source-prefix",
+    default=None,
+    help='Forget every memory whose source starts with this string (e.g. "auto_capture:role").',
+)
+@click.option(
+    "--scope",
+    default=None,
+    help='Limit the selection to one scope. Default: every scope. Pass "" for global only.',
+)
+@click.option(
+    "--dry-run/--apply",
+    default=True,
+    show_default=True,
+    help="Default dry-run lists the candidates. --apply commits.",
+)
+def memory_forget_bulk(
+    tag: str | None,
+    source_prefix: str | None,
+    scope: str | None,
+    dry_run: bool,
+) -> None:
+    """Bulk-forget memories by tag, source prefix, and/or scope.
+
+    Useful for undoing a noisy auto-capture pattern, retiring a
+    project that's been wrapped up, or clearing a label that's
+    become misleading. Conservative by default — dry-run first.
+    """
+    from towel.memory.store import MemoryStore
+
+    if not tag and not source_prefix:
+        console.print(
+            "[red]Need at least one of --tag or --source-prefix.[/red]"
+        )
+        raise SystemExit(1)
+    store = MemoryStore()
+    # When scope is omitted on a bulk operation, the operator usually
+    # means "everywhere" — match the `--scope all` behavior of the
+    # other commands. Explicit "" or "proj:..." narrows.
+    if scope is None:
+        candidates = store.recall_all()
+    else:
+        candidates = store.recall_all(scope=scope)
+    if tag:
+        candidates = [e for e in candidates if tag in e.tags]
+    if source_prefix:
+        candidates = [e for e in candidates if (e.source or "").startswith(source_prefix)]
+
+    if not candidates:
+        console.print("[green]Nothing matches.[/green]")
+        return
+    label = "would forget" if dry_run else "forgot"
+    console.print(f"[yellow]{label} {len(candidates)} memor(ies):[/yellow]")
+    for e in candidates:
+        console.print(
+            f"  - [{e.memory_type}] {e.key}"
+            f"{(' @' + e.scope) if e.scope else ''}: {e.content[:60]}"
+        )
+    if not dry_run:
+        for e in candidates:
+            store.forget(e.key)
+    if dry_run:
+        console.print("\n[dim]Re-run with --apply to commit.[/dim]")
+
+
 @memory.command(name="remove")
 @click.argument("key")
 def memory_remove(key: str) -> None:
@@ -2796,6 +2863,60 @@ def memory_inspect(key: str) -> None:
             console.print(
                 f"  [dim]{weight:3d}×[/dim] [{rel.memory_type}] {rel.key}"
             )
+
+
+@memory.command(name="backup")
+@click.option(
+    "--keep",
+    type=int,
+    default=7,
+    show_default=True,
+    help="Number of recent backups to retain. Older files are pruned.",
+)
+@click.option(
+    "--dir",
+    "backup_dir",
+    type=click.Path(file_okay=False, writable=True),
+    default=None,
+    help="Where to write. Default: ~/.towel/memory/backups.",
+)
+def memory_backup(keep: int, backup_dir: str | None) -> None:
+    """Snapshot the memory store to a timestamped JSON file.
+
+    Pairs with `memory diff` and `memory import` to make the corpus
+    survivable: schedule this command in cron / systemd-timer to get
+    point-in-time recovery without a database. --keep prunes older
+    backups so the directory doesn't grow forever.
+    """
+    import json as _json
+    from datetime import datetime, UTC
+    from pathlib import Path
+
+    from towel.config import TOWEL_HOME
+    from towel.memory.store import MemoryStore
+
+    target_dir = Path(backup_dir) if backup_dir else (TOWEL_HOME / "memory" / "backups")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    store = MemoryStore()
+    payload = {e.key: e.to_dict() for e in store.recall_all()}
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    out_path = target_dir / f"memory-{ts}.json"
+    out_path.write_text(_json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    console.print(
+        f"[green]Wrote {len(payload)} memor(ies) to {out_path}.[/green]"
+    )
+    # Rotation: keep only the N most recent files matching memory-*.json.
+    existing = sorted(target_dir.glob("memory-*.json"))
+    if len(existing) > keep:
+        to_prune = existing[: len(existing) - keep]
+        for old in to_prune:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+        console.print(
+            f"[dim]Pruned {len(to_prune)} older backup(s).[/dim]"
+        )
 
 
 @memory.command(name="export")
