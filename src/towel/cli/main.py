@@ -307,9 +307,13 @@ def serve(
     console.print()
 
     from towel.gateway.server import GatewayServer
+    from towel.memory.scope import derive_scope
     from towel.memory.store import MemoryStore
 
-    memory = MemoryStore()
+    # Derive a project scope from the cwd the coordinator was started
+    # in. New captures land in that scope, retrieval ORs current-scope
+    # with global so universal facts (role, preferences) still surface.
+    memory = MemoryStore(default_scope=derive_scope())
     skills = _build_skill_registry(config, memory_store=memory)
     agent_rt = _build_runtime(
         config, skills, memory, backend, claude_model, ollama_url, llama_url, llama_model
@@ -489,10 +493,11 @@ def worker(
     console.print()
 
     from towel.gateway.worker_client import RemoteWorkerClient, default_worker_capabilities
+    from towel.memory.scope import derive_scope
     from towel.memory.store import MemoryStore
     from towel.skills.registry import SkillRegistry
 
-    memory = MemoryStore()
+    memory = MemoryStore(default_scope=derive_scope())
     skills = _build_skill_registry(config, memory_store=memory) if allow_tools else SkillRegistry()
     agent_rt = _build_runtime(
         config, skills, memory, backend, claude_model, ollama_url, llama_url, llama_model
@@ -624,10 +629,11 @@ def chat(
     from towel.agent.conversation import Conversation, Role
     from towel.agent.events import EventType
     from towel.cli.slash import SlashContext, handle_slash
+    from towel.memory.scope import derive_scope
     from towel.memory.store import MemoryStore
     from towel.persistence.store import ConversationStore
 
-    memory = MemoryStore()
+    memory = MemoryStore(default_scope=derive_scope())
     skills = _build_skill_registry(config, memory_store=memory)
     agent_rt = _build_runtime(
         config, skills, memory, backend, claude_model, ollama_url, llama_url, llama_model
@@ -1193,11 +1199,15 @@ def mcp_serve() -> None:
     memory_forget, memory_related, memory_stats.
     """
     from towel.mcp import serve_stdio
+    from towel.memory.scope import derive_scope
+    from towel.memory.store import MemoryStore
 
-    # Stay silent on stdout — the protocol owns it. Don't print the
-    # banner here either; setup logs go to stderr inside serve_stdio.
+    # Tie the store to the project the MCP server was started in
+    # so MCP-driven writes land in the right scope by default.
+    # Clients can still override via the per-call `scope` argument.
+    store = MemoryStore(default_scope=derive_scope())
     try:
-        serve_stdio()
+        serve_stdio(store=store)
     except KeyboardInterrupt:
         pass
 
@@ -1983,9 +1993,10 @@ def ask(
     if system:
         config.identity = system
 
+    from towel.memory.scope import derive_scope
     from towel.memory.store import MemoryStore
 
-    memory = MemoryStore()
+    memory = MemoryStore(default_scope=derive_scope())
     skills = _build_skill_registry(config, memory_store=memory)
     backend = config.backend or _auto_detect_backend()
     agent_rt = _build_runtime(

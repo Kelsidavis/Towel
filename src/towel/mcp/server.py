@@ -51,7 +51,8 @@ def _tool_definitions() -> list[dict[str, Any]]:
                 "Search persistent memory by BM25 + vector + graph "
                 "fusion. Returns up to `limit` entries ranked by "
                 "combined relevance. Pass `tag` to restrict the "
-                "result set to memories carrying that label."
+                "result set to memories carrying that label, or "
+                "`scope` to restrict to a specific project."
             ),
             "inputSchema": {
                 "type": "object",
@@ -69,6 +70,14 @@ def _tool_definitions() -> list[dict[str, Any]]:
                     "tag": {
                         "type": "string",
                         "description": "Restrict to memories carrying this exact tag.",
+                    },
+                    "scope": {
+                        "type": "string",
+                        "description": (
+                            "Restrict to a specific project scope. "
+                            'Pass "" for global only; omit to use '
+                            "the store's default (project + global)."
+                        ),
                     },
                 },
                 "required": ["query"],
@@ -137,6 +146,13 @@ def _tool_definitions() -> list[dict[str, Any]]:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "Free-form labels for grouping.",
+                    },
+                    "scope": {
+                        "type": "string",
+                        "description": (
+                            "Project scope. Default: store's default. "
+                            'Pass "" for global (visible everywhere).'
+                        ),
                     },
                 },
                 "required": ["key", "content"],
@@ -215,10 +231,15 @@ class MemoryMCPServer:
         query = args.get("query", "")
         limit = int(args.get("limit", 5))
         tag = args.get("tag") or None
+        # scope=None means "use the store's default" (project + global)
+        # which is usually what the caller wants. Explicit "" or
+        # "proj:..." overrides; the empty string sentinel preserves
+        # the store's contract for "global only".
+        scope = args.get("scope")
         # fused_search runs the same BM25 + vector + graph RRF the
         # in-process runtime uses, so MCP clients get parity with the
         # local agent without duplicating retrieval logic.
-        entries = self.store.fused_search(query, limit=limit, tag=tag)
+        entries = self.store.fused_search(query, limit=limit, tag=tag, scope=scope)
         if not entries:
             return "No matching memories."
         lines = [f"Found {len(entries)} memor(ies):"]
@@ -261,9 +282,11 @@ class MemoryMCPServer:
             mtype = "fact"
         raw_tags = args.get("tags")
         tags = [str(t) for t in raw_tags] if isinstance(raw_tags, list) else None
+        scope = args.get("scope")
         # Tag with mcp so memory stats can see what landed via this path.
         e = self.store.remember(
-            key, content, memory_type=mtype, source="mcp", tags=tags,
+            key, content, memory_type=mtype, source="mcp",
+            tags=tags, scope=scope,
         )
         return f"Remembered [{e.memory_type}] {e.key}: {e.content}"
 

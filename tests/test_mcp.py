@@ -119,6 +119,28 @@ class TestRemember:
         assert server.store.recall("k").memory_type == "fact"
 
 
+class TestScope:
+    def test_remember_writes_to_explicit_scope(self, server):
+        _call(
+            server,
+            "memory_remember",
+            {"key": "k", "content": "v", "scope": "proj:demo"},
+        )
+        assert server.store.recall("k").scope == "proj:demo"
+
+    def test_search_filters_by_scope(self, server):
+        server.store.remember("a", "shared word", "fact", scope="proj:alpha")
+        server.store.remember("b", "shared word", "fact", scope="proj:beta")
+        reply = _call(
+            server,
+            "memory_search",
+            {"query": "shared", "scope": "proj:alpha"},
+        )
+        text = _text(reply)
+        assert "a:" in text
+        assert "b:" not in text
+
+
 class TestSearchTagFilter:
     def test_search_with_tag_param(self, server):
         server.store.remember("a", "alpha beta", "fact", tags=["work"])

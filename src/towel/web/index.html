@@ -1919,6 +1919,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       const recallPct = s.total ? Math.round((s.recalled / s.total) * 100) : 0;
       const byType = Object.entries(s.by_type || {}).sort((a,b)=>b[1]-a[1]);
       const bySource = Object.entries(s.by_source || {}).sort((a,b)=>b[1]-a[1]);
+      const byScope = Object.entries(s.by_scope || {}).sort((a,b)=>b[1]-a[1]);
       const patterns = s.auto_capture_patterns || {};
       const patternRows = Object.keys(patterns).sort(function(a, b) {
         return patterns[b].captures - patterns[a].captures;
@@ -1946,6 +1947,11 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         + `<div style="margin-top:2px">sources: `
         + bySource.map(([k,v])=>`<span style="margin-right:8px">${escHtml(k)}=${v}</span>`).join('')
         + `</div>`
+        + (byScope.length > 1
+            ? `<div style="margin-top:2px">scopes: `
+              + byScope.map(([k,v])=>`<span style="margin-right:8px">${escHtml(k)}=${v}</span>`).join('')
+              + `</div>`
+            : '')
         + patternsHtml;
     } catch (err) {
       memoryStatsEl.textContent = 'stats fetch failed: ' + err.message;
@@ -2020,6 +2026,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         const src = e.source ? escHtml(e.source) : 'operator';
         const recall = e.recall_count || 0;
         const updated = (e.updated_at || '').slice(0, 19).replace('T', ' ');
+        const scope = e.scope ? escHtml(e.scope) : 'global';
         const tags = Array.isArray(e.tags) ? e.tags : [];
         const tagsHtml = tags.length
           ? '<div style="margin-top:4px">'
@@ -2032,7 +2039,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         return `<div style="padding:8px 10px;border:1px solid var(--border);border-radius:4px;margin-bottom:6px;cursor:pointer" data-inspect-key="${escHtml(e.key)}">`
           + `<div style="display:flex;justify-content:space-between;align-items:baseline">`
           +   `<strong>${escHtml(e.key)}</strong>`
-          +   `<span style="font-size:0.8em;color:var(--text-dim)">[${escHtml(e.type || 'fact')}] · ${src} · recalls=${recall}</span>`
+          +   `<span style="font-size:0.8em;color:var(--text-dim)">[${escHtml(e.type || 'fact')}] · ${src} · @${scope} · recalls=${recall}</span>`
           + `</div>`
           + `<div style="margin-top:4px;white-space:pre-wrap;font-family:inherit">${escHtml((e.content || '').slice(0, 400))}${(e.content || '').length > 400 ? '…' : ''}</div>`
           + tagsHtml
@@ -2144,10 +2151,11 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
             }).join('')
           + '</div>'
         : '';
+      const scope = e.scope ? escHtml(e.scope) : 'global';
       memoryInspectBody.innerHTML =
         '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">'
         +   '<strong style="font-size:1.1em">' + escHtml(e.key) + '</strong>'
-        +   '<span style="color:var(--text-dim);font-size:0.85em">[' + escHtml(e.type || 'fact') + '] · ' + src + '</span>'
+        +   '<span style="color:var(--text-dim);font-size:0.85em">[' + escHtml(e.type || 'fact') + '] · ' + src + ' · @' + scope + '</span>'
         + '</div>'
         + tagsRow
         + '<div style="white-space:pre-wrap;font-family:inherit;padding:8px;background:rgba(0,0,0,0.2);border-radius:4px;margin-top:8px">'
