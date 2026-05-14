@@ -417,3 +417,65 @@ class TestApiSessions:
         resp = client.get("/api/sessions?limit=99999")
         assert resp.status_code == 200
         assert len(resp.json()["sessions"]) == 3
+
+
+class TestAlternateChatWorker:
+    """When the routed worker returns empty text on /api/ask, the
+    coordinator picks the next-best worker to retry on. Picking
+    must prefer the LARGEST idle worker (higher chance of producing
+    real text), and must exclude busy / draining / disabled workers
+    and the one we already tried."""
+
+    def test_picks_largest_idle_non_excluded(self, gateway):
+        gateway._workers.register(
+            "small", object(),
+            {"backend": "llama", "modes": ["llama_chat"], "total_vram_mb": 4096},
+        )
+        gateway._workers.register(
+            "big", object(),
+            {"backend": "llama", "modes": ["llama_chat"], "total_vram_mb": 16000},
+        )
+        gateway._workers.register(
+            "medium", object(),
+            {"backend": "llama", "modes": ["llama_chat"], "total_vram_mb": 8192},
+        )
+        # Exclude the one we just tried — pick must NOT return it,
+        # but should prefer "big" over "medium".
+        alt = gateway._pick_alternate_chat_worker(exclude={"small"})
+        assert alt is not None
+        assert alt.id == "big"
+
+    def test_returns_none_when_no_alternates(self, gateway):
+        gateway._workers.register(
+            "only", object(),
+            {"backend": "llama", "modes": ["llama_chat"], "total_vram_mb": 4096},
+        )
+        alt = gateway._pick_alternate_chat_worker(exclude={"only"})
+        assert alt is None
+
+    def test_skips_busy_workers(self, gateway):
+        gateway._workers.register(
+            "small", object(),
+            {"backend": "llama", "modes": ["llama_chat"], "total_vram_mb": 4096},
+        )
+        gateway._workers.register(
+            "busy-big", object(),
+            {"backend": "llama", "modes": ["llama_chat"], "total_vram_mb": 16000},
+        )
+        # busy-big is much bigger, but it's working a job — skip it.
+        gateway._workers.assign("busy-big", "job-x", "session-x")
+        alt = gateway._pick_alternate_chat_worker(exclude={"small"})
+        assert alt is None
+
+    def test_skips_draining_workers(self, gateway):
+        gateway._workers.register(
+            "small", object(),
+            {"backend": "llama", "modes": ["llama_chat"], "total_vram_mb": 4096},
+        )
+        gateway._workers.register(
+            "draining", object(),
+            {"backend": "llama", "modes": ["llama_chat"], "total_vram_mb": 16000},
+        )
+        gateway._workers.set_draining("draining", True)
+        alt = gateway._pick_alternate_chat_worker(exclude={"small"})
+        assert alt is None

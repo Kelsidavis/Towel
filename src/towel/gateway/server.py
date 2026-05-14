@@ -695,6 +695,32 @@ class GatewayServer:
     }
     # Everything else defaults to "task" (quality inference)
 
+    def _pick_alternate_chat_worker(
+        self, exclude: set[str]
+    ) -> WorkerInfo | None:
+        """Pick a different idle worker capable of answering a chat.
+
+        Used by /api/ask when the routed worker returns empty text.
+        Picks the largest non-excluded idle worker by total_vram_mb
+        so the retry has the best shot at a real response. Returns
+        None if no qualified alternate exists.
+        """
+        candidates: list[WorkerInfo] = []
+        for w in self._workers.list():
+            if w.id in exclude:
+                continue
+            if not w.enabled or w.draining or w.busy:
+                continue
+            candidates.append(w)
+        if not candidates:
+            return None
+        # Bigger workers tend to produce real responses; tie-break
+        # arbitrarily.
+        candidates.sort(
+            key=lambda w: w.capabilities.get("total_vram_mb", 0), reverse=True,
+        )
+        return candidates[0]
+
     async def _route_by_role(
         self, message: str, session_id: str
     ) -> tuple[WorkerInfo | None, str]:
@@ -807,8 +833,12 @@ class GatewayServer:
                 # broken. Workers running pre-fix code may emit
                 # empty text when the model produces tool calls.
                 # Replace with a diagnostic string so the caller
-                # sees SOMETHING and operators can spot it.
+                # sees SOMETHING and operators can spot it. Mark
+                # the metadata so the caller (simple_ask) can decide
+                # whether to retry on a different worker.
+                empty_text_fallback = False
                 if not text:
+                    empty_text_fallback = True
                     text = (
                         "(The worker returned no text — "
                         "likely emitted tool calls instead. "
@@ -819,6 +849,8 @@ class GatewayServer:
                 # numbers — previously this path discarded everything
                 # but the text, leaving tokens=0 tps=0 in responses.
                 remote_meta = result.get("metadata", {}) or {}
+                if empty_text_fallback:
+                    remote_meta = {**remote_meta, "empty_text_fallback": True}
                 # Stamp timing onto the dispatch decision so the
                 # operator can see both routing + latency in one view.
                 # Fall back to coordinator-measured total when the
@@ -3266,6 +3298,49 @@ class GatewayServer:
                     response = await self._quick_remote_infer(
                         session_id, session, worker, max_tokens=256
                     )
+                    # When the chosen worker emitted no real text (small
+                    # models like gemma-4-E2B routinely produce tool
+                    # calls or empty content for a "hi"), try a SECOND
+                    # qualified worker before falling back to the
+                    # diagnostic placeholder. The retry walks the
+                    # candidate list once, skipping the worker we just
+                    # tried, so a fleet with one good worker and one
+                    # flaky one still returns useful text. We don't
+                    # retry on the local coordinator's own agent
+                    # because in practice that path is slow enough
+                    # (~85s for MLX on this fleet) to make the diagnostic
+                    # placeholder a better UX than a hang.
+                    if (response.metadata or {}).get("empty_text_fallback"):
+                        alt = self._pick_alternate_chat_worker(exclude={worker.id})
+                        if alt is not None:
+                            log.info(
+                                "worker %s returned empty text; retrying on %s",
+                                worker.id, alt.id,
+                            )
+                            # Drop the diagnostic placeholder so the
+                            # alt worker doesn't see it as its own
+                            # prior assistant turn.
+                            if session.conversation.messages and (
+                                session.conversation.messages[-1].role == Role.ASSISTANT
+                            ):
+                                session.conversation.messages.pop()
+                            retry_response = await self._quick_remote_infer(
+                                session_id, session, alt, max_tokens=256
+                            )
+                            # Only adopt the retry if it actually
+                            # produced text. If the alt worker ALSO
+                            # returned empty, keep the original
+                            # diagnostic (no point flapping).
+                            if not (retry_response.metadata or {}).get(
+                                "empty_text_fallback"
+                            ):
+                                retry_response.metadata = (
+                                    retry_response.metadata or {}
+                                ) | {
+                                    "fallback_from_worker": worker.id,
+                                    "fallback_reason": "empty_text",
+                                }
+                                response = retry_response
                 elif worker:
                     response = await self._step_remote_inference(
                         session_id, session, worker
@@ -3303,6 +3378,9 @@ class GatewayServer:
                     body["total_ms"] = round(meta["total_ms"], 1)
                 if meta.get("empty_text_tool_call_fallback"):
                     body["fallback"] = "empty_text_tool_call"
+                if meta.get("fallback_from_worker"):
+                    body["fallback_from_worker"] = meta["fallback_from_worker"]
+                    body["fallback_reason"] = meta.get("fallback_reason", "")
                 return JSONResponse(body)
             except Exception as e:
                 return JSONResponse({"error": str(e)}, status_code=500)
