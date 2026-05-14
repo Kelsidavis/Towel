@@ -579,7 +579,24 @@ def chat(
 
     async def _chat_loop() -> None:
         console.print("[dim]Connecting...[/dim]")
-        await agent_rt.load_model()
+        try:
+            await agent_rt.load_model()
+        except Exception as exc:
+            console.print(
+                Panel(
+                    f"[bold red]Failed to load model.[/bold red]\n\n{exc}\n\n"
+                    "[dim]Common causes:[/dim]\n"
+                    "  • Wrong model name in [cyan]~/.towel/config.toml[/cyan] — "
+                    "run [cyan]towel setup[/cyan] to pick one\n"
+                    "  • Backend not running (e.g. Ollama daemon stopped) — "
+                    "check [cyan]towel doctor[/cyan]\n"
+                    "  • No network for first-time download — "
+                    "verify the model identifier exists",
+                    border_style="red",
+                    title="Don't Panic.",
+                )
+            )
+            return
         console.print("[green]Ready.[/green]\n")
 
         while True:
