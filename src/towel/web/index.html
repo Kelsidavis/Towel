@@ -913,7 +913,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
               <button class="fleet-btn warn" data-worker-id="${escHtml(worker.id)}" data-worker-op="${worker.draining ? 'undrain' : 'drain'}">${worker.draining ? 'undrain' : 'drain'}</button>
               <button class="fleet-btn err" data-worker-id="${escHtml(worker.id)}" data-worker-op="${worker.enabled === false ? 'enable' : 'disable'}">${worker.enabled === false ? 'enable' : 'disable'}</button>
               <button class="fleet-btn" data-worker-id="${escHtml(worker.id)}" data-worker-op="replace" title="Drain and respawn this worker via its launcher (optionally with a new model)">replace</button>
-              <button class="fleet-btn" data-worker-id="${escHtml(worker.id)}" data-worker-op="upgrade" title="One-click software upgrade via the worker's advertised launcher (defaults: launcher_url from capabilities, strategy=pip, token remembered after first prompt). Shift-click to override URL / token / strategy.">upgrade</button>
+              <button class="fleet-btn" data-worker-id="${escHtml(worker.id)}" data-worker-op="upgrade" title="One-click self-upgrade: sends 'self_upgrade' to the worker over its existing WebSocket; it runs pip install --upgrade towel and re-execs. Shift-click to use the launcher-daemon path with URL/token/strategy prompts (for crashed workers).">upgrade</button>
             </div>
           </div>
         `;
@@ -1504,47 +1504,65 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   }
 
   async function upgradeWorker(workerId, opts) {
-    // True one-click: URL comes from the worker's own capability
-    // advertisement, strategy defaults to "pip" (overridable per-worker
-    // via localStorage), and we only prompt for the bearer token the
-    // first time (then it lives in sessionStorage). Shift-click the
-    // upgrade button (opts.forcePrompt) to override URL/token/strategy
-    // — e.g. to switch a host from pip to git-pull.
+    // Default path: send a self_upgrade message down the worker's
+    // existing WebSocket connection. No launcher daemon, no URL, no
+    // token, no prompts — the worker self-upgrades and re-execs, then
+    // reconnects on the new code. Strategy defaults to pip and is
+    // overridable per-worker via localStorage (set silently by the
+    // shift-click flow below).
+    //
+    // Shift-click (opts.forcePrompt) falls back to the launcher daemon
+    // path with URL/token/strategy prompts — useful when the worker
+    // has crashed or is in a bad state and can't act on a WS message.
+    const forcePrompt = !!(opts && opts.forcePrompt);
+    const strategy = rememberedLauncherStrategy(workerId) || 'pip';
+
+    if (!forcePrompt) {
+      try {
+        const resp = await fetch(
+          apiBase + '/workers/' + encodeURIComponent(workerId) + '/upgrade',
+          {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({strategy: strategy}),
+          }
+        );
+        const data = await resp.json();
+        if (!resp.ok || data.ok === false) {
+          alert('Upgrade dispatch failed: ' + (data.error || resp.statusText) +
+                '\n\nShift-click the upgrade button to use the launcher daemon instead.');
+          return;
+        }
+        alert(`Self-upgrade dispatched to "${workerId}" (strategy: ${strategy}).\n\n` +
+              'The worker will disconnect, run the upgrade, and reconnect ' +
+              'on the new code. Watch the fleet panel for it to come back.');
+      } catch (err) {
+        alert('Upgrade dispatch failed: ' + err.message);
+      }
+      return;
+    }
+
+    // Shift-click: legacy launcher-daemon path.
     const advertised = advertisedLauncherUrl(workerId);
     const fallbackUrl = rememberedLauncherUrl(workerId);
     const knownToken = rememberedLauncherToken();
-    const knownStrategy = rememberedLauncherStrategy(workerId) || 'pip';
-    const forcePrompt = !!(opts && opts.forcePrompt);
 
     let launcherUrl = advertised || fallbackUrl;
-    let token = knownToken;
-    let strategy = knownStrategy;
+    launcherUrl = prompt(
+      `Upgrade via launcher daemon on "${workerId}" — launcher URL:`,
+      launcherUrl
+    );
+    if (!launcherUrl) return;
+    const token = prompt(`Launcher bearer token for "${workerId}":`, knownToken);
+    if (token === null || token === '') return;
+    const nextStrategy = prompt(
+      'Upgrade strategy (pip / git-pull / uv):', strategy
+    );
+    if (!nextStrategy) return;
 
-    if (forcePrompt || !launcherUrl) {
-      launcherUrl = prompt(
-        `Upgrade software on worker "${workerId}" — launcher URL on its host:`,
-        launcherUrl
-      );
-      if (!launcherUrl) return;
-    }
-    if (forcePrompt || !token) {
-      token = prompt(
-        `Launcher bearer token for "${workerId}":`,
-        token
-      );
-      if (token === null || token === '') return;
-    }
-    if (forcePrompt) {
-      const next = prompt(
-        'Upgrade strategy (pip / git-pull / uv):',
-        strategy
-      );
-      if (!next) return;
-      strategy = next.trim();
-    }
     rememberLauncherUrl(workerId, launcherUrl);
     rememberLauncherToken(token);
-    rememberLauncherStrategy(workerId, strategy);
+    rememberLauncherStrategy(workerId, nextStrategy.trim());
     try {
       const resp = await fetch(apiBase + '/fleet/upgrade', {
         method: 'POST',
@@ -1552,7 +1570,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         body: JSON.stringify({
           launcher_url: launcherUrl,
           launcher_token: token,
-          strategy: strategy,
+          strategy: nextStrategy.trim(),
         }),
       });
       const data = await resp.json();

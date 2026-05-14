@@ -75,56 +75,15 @@ def _build_skill_registry(config: TowelConfig, memory_store: Any = None) -> Skil
 
 
 def _self_update_and_reexec(strategy: str) -> None:
-    """Upgrade towel in place, then re-exec the current process.
+    """Thin wrapper around towel.launcher.self_upgrade_and_reexec.
 
-    Used by ``towel worker --auto-update`` so a freshly-booted worker
-    picks up the latest code before connecting to the controller. The
-    re-exec is required: once Python has imported ``towel`` the module
-    is pinned in memory, so simply continuing after ``pip install``
-    would still run the previous version.
-
-    Sets ``TOWEL_AUTO_UPDATE_DONE=1`` in the re-exec environment so the
-    post-exec pass skips the upgrade — otherwise every restart would
-    loop. On upgrade failure we log and continue with the existing
-    code rather than blocking the worker; a stale worker is more
-    useful than no worker.
+    Kept here as a stable name for tests/callsites and because the
+    pre-banner code path imports very little; the shared helper does
+    the work and re-execs on success.
     """
-    import subprocess
+    from towel.launcher import self_upgrade_and_reexec
 
-    from towel.launcher import UPGRADE_STRATEGIES
-
-    cmd = UPGRADE_STRATEGIES.get(strategy)
-    if cmd is None:
-        console.print(
-            f"[yellow]auto-update: unknown strategy {strategy!r}; "
-            f"skipping (known: {sorted(UPGRADE_STRATEGIES)}).[/yellow]"
-        )
-        return
-    console.print(f"[dim]auto-update: running {' '.join(cmd)}…[/dim]")
-    try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=300
-        )
-    except FileNotFoundError as exc:
-        console.print(f"[yellow]auto-update: command not found ({exc}); continuing.[/yellow]")
-        return
-    except subprocess.TimeoutExpired:
-        console.print("[yellow]auto-update: timed out after 300s; continuing.[/yellow]")
-        return
-    if result.returncode != 0:
-        tail = (result.stderr or result.stdout or "").splitlines()[-3:]
-        console.print(
-            f"[yellow]auto-update: exit {result.returncode}; continuing with current code.[/yellow]\n"
-            + "\n".join(tail)
-        )
-        return
-    console.print("[green]auto-update: succeeded, re-executing with new code.[/green]")
-    env = dict(os.environ)
-    env["TOWEL_AUTO_UPDATE_DONE"] = "1"
-    # sys.argv[0] is whatever invoked us (e.g. "towel" on PATH, or the
-    # absolute path systemd's ExecStart pointed at). execvpe resolves
-    # bare names via PATH so both forms work.
-    os.execvpe(sys.argv[0], sys.argv, env)
+    self_upgrade_and_reexec(strategy)
 
 
 BANNER = rf"""

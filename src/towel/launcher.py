@@ -221,6 +221,65 @@ _DEFAULT_UPGRADE_COMMANDS: dict[str, list[str]] = {
 UPGRADE_STRATEGIES = _DEFAULT_UPGRADE_COMMANDS
 
 
+def self_upgrade_and_reexec(strategy: str) -> bool:
+    """Run the named upgrade strategy in-process, then re-exec on success.
+
+    Shared by two paths:
+
+    * ``towel worker --auto-update`` runs this before connecting so a
+      freshly-booted worker is on the latest code.
+    * The coordinator can send a ``self_upgrade`` WS message to a running
+      worker; the worker then calls this and reboots itself without any
+      separate launcher daemon.
+
+    Re-exec is mandatory: Python pins imported modules, so a plain
+    ``pip install`` followed by ``return`` would keep running the old
+    code. ``TOWEL_AUTO_UPDATE_DONE=1`` is set on the re-exec env so the
+    ``--auto-update`` startup check does not loop forever.
+
+    On failure (unknown strategy, command not found, non-zero exit,
+    300 s timeout) we log a warning and return ``False``. The caller
+    keeps running with the existing code — a stale worker is more
+    useful than no worker.
+    """
+    import os
+    import subprocess
+    import sys
+
+    cmd = UPGRADE_STRATEGIES.get(strategy)
+    if cmd is None:
+        log.warning(
+            "self-upgrade: unknown strategy %r; known: %s",
+            strategy, sorted(UPGRADE_STRATEGIES),
+        )
+        return False
+    log.info("self-upgrade: running %s", " ".join(cmd))
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    except FileNotFoundError as exc:
+        log.warning("self-upgrade: command not found (%s); continuing.", exc)
+        return False
+    except subprocess.TimeoutExpired:
+        log.warning("self-upgrade: timed out after 300s; continuing.")
+        return False
+    if result.returncode != 0:
+        tail = (result.stderr or result.stdout or "").splitlines()[-3:]
+        log.warning(
+            "self-upgrade: exit %d; continuing. Last lines:\n%s",
+            result.returncode, "\n".join(tail),
+        )
+        return False
+    log.info("self-upgrade: succeeded, re-executing with new code.")
+    env = dict(os.environ)
+    env["TOWEL_AUTO_UPDATE_DONE"] = "1"
+    # sys.argv[0] is whatever invoked us (bare "towel" on PATH, or the
+    # absolute path systemd's ExecStart pointed at). execvpe resolves
+    # bare names via PATH so both forms work.
+    os.execvpe(sys.argv[0], sys.argv, env)
+    # Unreachable, but keep the type checker happy.
+    return True
+
+
 def build_app(token: str) -> Starlette:
     """Build the launcher's Starlette app bound to a specific bearer token."""
 

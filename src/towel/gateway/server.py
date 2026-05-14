@@ -2052,6 +2052,58 @@ class GatewayServer:
                 status_code=200 if resp.is_success else 502,
             )
 
+        async def worker_self_upgrade(request: Request) -> JSONResponse:
+            """Tell a connected worker to upgrade itself in place.
+
+            One-click upgrade path that bypasses the launcher daemon: we
+            send a ``self_upgrade`` message down the worker's existing
+            WebSocket connection. The worker runs the upgrade strategy
+            (pip / git-pull / uv) and re-execs; the reconnect loop comes
+            back online on the new code automatically.
+
+            Request body (all optional)::
+
+                {"strategy": "pip" | "git-pull" | "uv"}   # default: pip
+
+            Returns ``{"ok": true, "worker_id": ..., "strategy": ...}``
+            once the message has been sent. We don't wait for completion
+            because the worker disconnects mid-upgrade; the caller can
+            poll the fleet list to see it re-register.
+            """
+            worker_id = request.path_params["worker_id"]
+            try:
+                body = await request.json() if await request.body() else {}
+            except Exception:
+                body = {}
+            if not isinstance(body, dict):
+                body = {}
+            strategy = (body.get("strategy") or "pip").strip()
+
+            worker = self._workers.get(worker_id)
+            if worker is None or worker.ws is None:
+                return JSONResponse(
+                    {"error": f"worker {worker_id!r} not connected"},
+                    status_code=404,
+                )
+            try:
+                await worker.ws.send(
+                    json.dumps({"type": "self_upgrade", "strategy": strategy})
+                )
+            except Exception as exc:
+                log.warning(
+                    "worker self-upgrade: send to %s failed: %s", worker_id, exc
+                )
+                return JSONResponse(
+                    {"error": f"send failed: {exc}"}, status_code=502
+                )
+            log.info(
+                "worker self-upgrade: dispatched to %s (strategy=%s)",
+                worker_id, strategy,
+            )
+            return JSONResponse(
+                {"ok": True, "worker_id": worker_id, "strategy": strategy}
+            )
+
         async def fleet_replace_worker(request: Request) -> JSONResponse:
             """Atomically replace a running worker with a new spawn.
 
@@ -2709,6 +2761,7 @@ class GatewayServer:
             Route("/workers", workers_list),
             Route("/workers/{worker_id}/state", worker_state_update, methods=["POST"]),
             Route("/workers/{worker_id}/tasks", worker_tasks_update, methods=["POST"]),
+            Route("/workers/{worker_id}/upgrade", worker_self_upgrade, methods=["POST"]),
             Route("/cluster/nodes", cluster_nodes),
             Route("/cluster/handoffs", cluster_handoffs),
             Route("/cluster/idle", idle_tasks_status),

@@ -84,6 +84,33 @@ class RemoteWorkerClient:
                                 await self._cancel_job(msg.get("job_id"))
                             elif msg_type == "ping":
                                 await self._send_heartbeat(ws)
+                            elif msg_type == "self_upgrade":
+                                # Coordinator-initiated in-process upgrade. The
+                                # worker is already connected, so this skips
+                                # the launcher-daemon hop entirely — one round
+                                # trip from the operator's click. On success
+                                # self_upgrade_and_reexec re-execs and the
+                                # reconnect loop comes back on the new code;
+                                # on failure we just keep running.
+                                strategy = msg.get("strategy") or "pip"
+                                log.info(
+                                    "Received self_upgrade from controller (strategy=%s)",
+                                    strategy,
+                                )
+                                for jid, jtask in list(self._jobs.items()):
+                                    if not jtask.done():
+                                        jtask.cancel()
+                                    self._jobs.pop(jid, None)
+                                try:
+                                    await ws.close(1000, "self-upgrade in progress")
+                                except Exception:
+                                    pass
+                                from towel.launcher import self_upgrade_and_reexec
+                                self_upgrade_and_reexec(strategy)
+                                # If we get here, the upgrade failed. Break out
+                                # so the reconnect loop kicks back in with the
+                                # existing code.
+                                break
                             elif msg_type == "shutdown":
                                 # The controller is asking us to exit gracefully —
                                 # used by /fleet/replace-worker to swap models or
