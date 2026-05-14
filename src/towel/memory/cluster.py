@@ -43,6 +43,12 @@ class MemoryMutation:
     # don't know the field will just see "" via from_dict's default,
     # which is the same as an operator-set entry on a fresh store.
     source: str = ""
+    # Tags and scope ride alongside source so a project-scoped entry
+    # with operator labels stays project-scoped + labeled on every
+    # worker. Both default to empty/list on the wire so a peer that
+    # doesn't carry them just sees "no labels, global scope".
+    tags: list[str] = field(default_factory=list)
+    scope: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -53,10 +59,15 @@ class MemoryMutation:
             "timestamp": self.timestamp.isoformat(),
             "origin_worker_id": self.origin_worker_id,
             "source": self.source,
+            "tags": list(self.tags),
+            "scope": self.scope,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> MemoryMutation:
+        raw_tags = data.get("tags") or []
+        if not isinstance(raw_tags, list):
+            raw_tags = []
         return cls(
             action=data["action"],
             key=data["key"],
@@ -69,6 +80,8 @@ class MemoryMutation:
             ),
             origin_worker_id=data.get("origin_worker_id", ""),
             source=data.get("source", ""),
+            tags=[str(t) for t in raw_tags if isinstance(t, str)],
+            scope=str(data.get("scope") or ""),
         )
 
 
@@ -102,9 +115,14 @@ class ClusterMemorySync:
         origin_worker_id: str = "",
         *,
         source: str = "",
+        tags: list[str] | None = None,
+        scope: str | None = None,
     ) -> MemoryEntry:
         """Store a memory and record the mutation for cluster sync."""
-        entry = self.store.remember(key, content, memory_type, source=source)
+        entry = self.store.remember(
+            key, content, memory_type,
+            source=source, tags=tags, scope=scope,
+        )
         mutation = MemoryMutation(
             action="remember",
             key=key,
@@ -112,6 +130,11 @@ class ClusterMemorySync:
             memory_type=memory_type,
             origin_worker_id=origin_worker_id,
             source=source,
+            # The persisted entry holds the canonical post-merge tags
+            # and the scope after defaulting logic; replicate THOSE so
+            # peers end up with the same state, not the caller's input.
+            tags=list(entry.tags),
+            scope=entry.scope,
         )
         self._pending_mutations.append(mutation)
         self._version += 1
@@ -142,6 +165,8 @@ class ClusterMemorySync:
                 mutation.content,
                 mutation.memory_type,
                 source=mutation.source,
+                tags=mutation.tags or None,
+                scope=mutation.scope,
             )
             self._version += 1
             log.debug(
@@ -194,6 +219,8 @@ class ClusterMemorySync:
                 entry.content,
                 entry.memory_type,
                 source=entry.source,
+                tags=list(entry.tags) if entry.tags else None,
+                scope=entry.scope,
             )
             count += 1
         self._version = snapshot.get("version", 0)

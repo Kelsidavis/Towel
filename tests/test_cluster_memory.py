@@ -153,3 +153,92 @@ class TestMemoryMutation:
         assert restored.key == "test"
         assert restored.content == "value"
         assert restored.origin_worker_id == "w1"
+
+    def test_carries_source_tags_scope(self):
+        m = MemoryMutation(
+            action="remember",
+            key="k",
+            content="v",
+            memory_type="fact",
+            source="auto_capture:role",
+            tags=["work", "urgent"],
+            scope="proj:demo",
+        )
+        d = m.to_dict()
+        restored = MemoryMutation.from_dict(d)
+        assert restored.source == "auto_capture:role"
+        assert restored.tags == ["work", "urgent"]
+        assert restored.scope == "proj:demo"
+
+    def test_from_dict_tolerates_missing_new_fields(self):
+        # A peer running pre-tags/scope code would send only the
+        # older fields; the parser must default cleanly.
+        d = {
+            "action": "remember",
+            "key": "k",
+            "content": "v",
+            "memory_type": "fact",
+        }
+        restored = MemoryMutation.from_dict(d)
+        assert restored.tags == []
+        assert restored.scope == ""
+        assert restored.source == ""
+
+
+class TestClusterCarriesAllFields:
+    """End-to-end: tags + scope ride from one node through a mutation
+    and out the other side intact."""
+
+    def test_remember_propagates_tags_and_scope(self, tmp_path):
+        from towel.memory.cluster import ClusterMemorySync
+        from towel.memory.store import MemoryStore
+
+        # Controller side (where the write originates).
+        ctl_store = MemoryStore(store_dir=tmp_path / "ctl")
+        ctl = ClusterMemorySync(store=ctl_store, is_controller=True)
+        ctl.remember(
+            "role", "engineer", "user",
+            source="auto_capture:role",
+            tags=["public"],
+            scope="proj:alpha",
+        )
+        pending = ctl.drain_pending()
+        assert len(pending) == 1
+        m = pending[0]
+        assert m.source == "auto_capture:role"
+        assert m.tags == ["public"]
+        assert m.scope == "proj:alpha"
+
+        # Worker side applies the mutation.
+        wk_store = MemoryStore(store_dir=tmp_path / "wk")
+        wk = ClusterMemorySync(store=wk_store, is_controller=False)
+        wk.apply_mutation(m)
+        # The worker's persisted entry must carry every field.
+        e = wk_store.recall("role")
+        assert e is not None
+        assert e.source == "auto_capture:role"
+        assert e.tags == ["public"]
+        assert e.scope == "proj:alpha"
+
+    def test_snapshot_round_trip_preserves_fields(self, tmp_path):
+        from towel.memory.cluster import ClusterMemorySync
+        from towel.memory.store import MemoryStore
+
+        ctl_store = MemoryStore(store_dir=tmp_path / "ctl")
+        ctl_store.remember(
+            "k", "v", "fact",
+            source="manual",
+            tags=["x", "y"],
+            scope="proj:beta",
+        )
+        ctl = ClusterMemorySync(store=ctl_store, is_controller=True)
+        snap = ctl.build_snapshot_message()
+
+        wk_store = MemoryStore(store_dir=tmp_path / "wk")
+        wk = ClusterMemorySync(store=wk_store, is_controller=False)
+        wk.apply_snapshot(snap)
+
+        e = wk_store.recall("k")
+        assert e.tags == ["x", "y"]
+        assert e.scope == "proj:beta"
+        assert e.source == "manual"
