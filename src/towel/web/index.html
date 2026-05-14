@@ -273,6 +273,15 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   </div>
 </div>
 
+<div id="memory-inspect-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.66);z-index:1110;display:none;align-items:center;justify-content:center">
+  <div style="width:min(640px,92vw);max-height:84vh;overflow:auto;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:18px">
+    <div id="memory-inspect-body">Loading…</div>
+    <div style="text-align:right;margin-top:14px">
+      <button class="tb-btn" id="memory-inspect-close-btn">close</button>
+    </div>
+  </div>
+</div>
+
 <div id="memory-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.54);z-index:1100;display:none;align-items:center;justify-content:center">
   <div id="memory-panel" style="width:min(900px,96vw);max-height:88vh;overflow:hidden;background:var(--bg);border:1px solid var(--border);border-radius:8px;display:flex;flex-direction:column">
     <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border)">
@@ -1905,7 +1914,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         const src = e.source ? escHtml(e.source) : 'operator';
         const recall = e.recall_count || 0;
         const updated = (e.updated_at || '').slice(0, 19).replace('T', ' ');
-        return `<div style="padding:8px 10px;border:1px solid var(--border);border-radius:4px;margin-bottom:6px">`
+        return `<div style="padding:8px 10px;border:1px solid var(--border);border-radius:4px;margin-bottom:6px;cursor:pointer" data-inspect-key="${escHtml(e.key)}">`
           + `<div style="display:flex;justify-content:space-between;align-items:baseline">`
           +   `<strong>${escHtml(e.key)}</strong>`
           +   `<span style="font-size:0.8em;color:var(--text-dim)">[${escHtml(e.type || 'fact')}] · ${src} · recalls=${recall}</span>`
@@ -1947,21 +1956,95 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     }, 250);
   });
   memoryListEl.addEventListener('click', async function(e) {
-    const btn = e.target.closest('[data-mem-key]');
-    if (!btn) return;
-    const key = btn.getAttribute('data-mem-key');
-    if (!confirm('Forget memory "' + key + '"?')) return;
+    // Forget button takes precedence over the card-level click
+    // (forget lives inside the card, so closest() finds it first).
+    const forgetBtn = e.target.closest('[data-mem-key]');
+    if (forgetBtn) {
+      e.stopPropagation();
+      const key = forgetBtn.getAttribute('data-mem-key');
+      if (!confirm('Forget memory "' + key + '"?')) return;
+      try {
+        const resp = await fetch(apiBase + '/memory/' + encodeURIComponent(key), { method: 'DELETE' });
+        if (!resp.ok) {
+          alert('Forget failed: ' + resp.statusText);
+          return;
+        }
+        loadMemoryStats();
+        loadMemoryList(memorySearchEl.value.trim());
+      } catch (err) {
+        alert('Forget failed: ' + err.message);
+      }
+      return;
+    }
+    // Card-level click → open the inspect modal.
+    const card = e.target.closest('[data-inspect-key]');
+    if (!card) return;
+    openInspect(card.getAttribute('data-inspect-key'));
+  });
+
+  // ── Memory inspect modal ──────────────────────────────────────────
+  const memoryInspectOverlay = document.getElementById('memory-inspect-overlay');
+  const memoryInspectBody = document.getElementById('memory-inspect-body');
+  const memoryInspectCloseBtn = document.getElementById('memory-inspect-close-btn');
+
+  async function openInspect(key) {
+    memoryInspectBody.textContent = 'Loading…';
+    memoryInspectOverlay.style.display = 'flex';
     try {
-      const resp = await fetch(apiBase + '/memory/' + encodeURIComponent(key), { method: 'DELETE' });
+      const resp = await fetch(apiBase + '/memory/' + encodeURIComponent(key) + '/inspect');
       if (!resp.ok) {
-        alert('Forget failed: ' + resp.statusText);
+        const data = await resp.json().catch(function(){return {};});
+        memoryInspectBody.innerHTML = '<div style="color:var(--red)">'
+          + escHtml(data.error || resp.statusText) + '</div>';
         return;
       }
-      loadMemoryStats();
-      loadMemoryList(memorySearchEl.value.trim());
+      const data = await resp.json();
+      const e = data.entry || {};
+      const src = e.source ? escHtml(e.source) : 'operator';
+      const sal = (typeof data.salience === 'number') ? data.salience.toFixed(2) : '—';
+      const last = e.last_recalled_at ? escHtml(e.last_recalled_at.slice(0, 19).replace('T', ' ')) : 'never';
+      const created = (e.created_at || '').slice(0, 19).replace('T', ' ');
+      const related = data.related || [];
+      const relatedHtml = related.length
+        ? '<div style="margin-top:14px"><strong>Related</strong> (co-recall weight):'
+          + '<ul style="margin:6px 0 0 0;padding-left:18px">'
+          + related.map(function(r) {
+              return '<li style="margin:2px 0"><span data-inspect-key="' + escHtml(r.key) + '" style="cursor:pointer;color:var(--green)">'
+                + escHtml(r.key) + '</span>'
+                + ' <span style="color:var(--text-dim);font-size:0.85em">×' + r.weight + ' · ' + escHtml(r.type || 'fact') + '</span>'
+                + '</li>';
+            }).join('')
+          + '</ul></div>'
+        : '<div style="margin-top:14px;color:var(--text-dim);font-size:0.9em">No co-recall links yet.</div>';
+      memoryInspectBody.innerHTML =
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">'
+        +   '<strong style="font-size:1.1em">' + escHtml(e.key) + '</strong>'
+        +   '<span style="color:var(--text-dim);font-size:0.85em">[' + escHtml(e.type || 'fact') + '] · ' + src + '</span>'
+        + '</div>'
+        + '<div style="white-space:pre-wrap;font-family:inherit;padding:8px;background:rgba(0,0,0,0.2);border-radius:4px">'
+        +   escHtml(e.content || '')
+        + '</div>'
+        + '<div style="margin-top:10px;font-size:0.85em;color:var(--text-dim)">'
+        +   '<div>salience: ' + sal + '</div>'
+        +   '<div>recalled: ' + (e.recall_count || 0) + ' time(s), last: ' + last + '</div>'
+        +   '<div>created: ' + escHtml(created) + '</div>'
+        + '</div>'
+        + relatedHtml;
     } catch (err) {
-      alert('Forget failed: ' + err.message);
+      memoryInspectBody.innerHTML = '<div style="color:var(--red)">load failed: ' + escHtml(err.message) + '</div>';
     }
+  }
+
+  // Click a related entry to chain into its inspect view.
+  memoryInspectBody.addEventListener('click', function(e) {
+    const tgt = e.target.closest('[data-inspect-key]');
+    if (tgt) openInspect(tgt.getAttribute('data-inspect-key'));
+  });
+  memoryInspectCloseBtn.addEventListener('click', function() {
+    memoryInspectOverlay.style.display = 'none';
+  });
+  memoryInspectOverlay.addEventListener('click', function(e) {
+    if (e.target === memoryInspectOverlay) memoryInspectOverlay.style.display = 'none';
   });
 
   // Launch-worker form: toggle visibility, submit to /fleet/spawn.
@@ -2040,6 +2123,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     if(e.key==='Escape'&&isStreaming)stopGeneration();
   });
   document.addEventListener('keydown',function(e){
+    if(e.key==='Escape'&&memoryInspectOverlay.style.display==='flex'){memoryInspectOverlay.style.display='none'; return;}
     if(e.key==='Escape'&&memoryOverlay.style.display==='flex'){closeMemoryPanel(); return;}
     if(e.key==='Escape'&&fleetOverlay.classList.contains('visible')){closeFleetPanel(); return;}
     if(e.key==='Escape'&&isStreaming)stopGeneration();

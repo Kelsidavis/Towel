@@ -2431,6 +2431,79 @@ def memory_import(src: str, merge: bool) -> None:
     )
 
 
+@memory.command(name="diff")
+@click.argument("baseline", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--current",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="Compare BASELINE against this file. Default: the live SQLite store.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Output machine-readable diff.")
+def memory_diff(baseline: str, current: str | None, as_json: bool) -> None:
+    """Show what's changed since a previous `memory export`.
+
+    Pass an old JSON dump as BASELINE; the command compares it to the
+    live store (or another JSON file via --current) and prints three
+    buckets: added (key in current but not baseline), removed (in
+    baseline but not current), and changed (in both, but content
+    differs). Useful for auditing cluster sync or post-pruning runs.
+    """
+    import json as _json
+    from pathlib import Path
+
+    from towel.memory.store import MemoryStore
+
+    base = _json.loads(Path(baseline).read_text(encoding="utf-8"))
+    if not isinstance(base, dict):
+        console.print("[red]Baseline is not a JSON object.[/red]")
+        raise SystemExit(1)
+    if current:
+        cur = _json.loads(Path(current).read_text(encoding="utf-8"))
+        if not isinstance(cur, dict):
+            console.print("[red]--current is not a JSON object.[/red]")
+            raise SystemExit(1)
+    else:
+        store = MemoryStore()
+        cur = {e.key: e.to_dict() for e in store.recall_all()}
+
+    base_keys = set(base.keys())
+    cur_keys = set(cur.keys())
+    added = sorted(cur_keys - base_keys)
+    removed = sorted(base_keys - cur_keys)
+    changed = []
+    for k in sorted(base_keys & cur_keys):
+        if base[k].get("content") != cur[k].get("content"):
+            changed.append(k)
+
+    if as_json:
+        click.echo(_json.dumps({"added": added, "removed": removed, "changed": changed}, indent=2))
+        return
+
+    if not (added or removed or changed):
+        console.print("[green]No differences.[/green]")
+        return
+
+    if added:
+        console.print(f"[green]+ added ({len(added)}):[/green]")
+        for k in added:
+            content = cur[k].get("content", "")[:60]
+            console.print(f"  + {k}: {content}")
+    if removed:
+        console.print(f"[red]- removed ({len(removed)}):[/red]")
+        for k in removed:
+            content = base[k].get("content", "")[:60]
+            console.print(f"  - {k}: {content}")
+    if changed:
+        console.print(f"[yellow]~ changed ({len(changed)}):[/yellow]")
+        for k in changed:
+            before = base[k].get("content", "")[:60]
+            after = cur[k].get("content", "")[:60]
+            console.print(f"  ~ {k}")
+            console.print(f"      before: {before}")
+            console.print(f"      after:  {after}")
+
+
 @memory.command(name="stats")
 def memory_stats() -> None:
     """Summarize the memory store: counts, age, recall, and unused entries.

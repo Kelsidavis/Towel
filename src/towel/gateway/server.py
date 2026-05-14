@@ -1807,6 +1807,43 @@ class GatewayServer:
                 }
             )
 
+        async def memory_inspect(request: Request) -> JSONResponse:
+            """Return one memory + its salience, related entries, and freshness.
+
+            The web inspect modal uses this to show context that the
+            list endpoint can't carry cheaply per-row: graph neighbors,
+            computed salience score, and whether the entry has been
+            recently active. Returns 404 when the key is unknown so
+            the UI can render a clean "no such memory" state.
+            """
+            memory = getattr(self.agent, "memory", None)
+            if memory is None:
+                return JSONResponse({"error": "memory disabled"}, status_code=503)
+            key = request.path_params["key"]
+            entry = memory.recall(key)
+            if entry is None:
+                return JSONResponse(
+                    {"error": f"no memory with key {key!r}"}, status_code=404
+                )
+            try:
+                from towel.memory.store import salience as _salience
+                score = _salience(entry)
+            except Exception:
+                score = None
+            try:
+                related = memory.recall_related(key, limit=5)
+            except Exception:
+                related = []
+            return JSONResponse(
+                {
+                    "entry": entry.to_dict(),
+                    "salience": score,
+                    "related": [
+                        {"weight": w, **rel.to_dict()} for rel, w in related
+                    ],
+                }
+            )
+
         async def memory_stats(_request: Request) -> JSONResponse:
             """Aggregate counts and salience signal for the memory panel.
 
@@ -2814,6 +2851,9 @@ class GatewayServer:
             Route("/skills", skills_list),
             Route("/memory", memory_list),
             Route("/memory/stats", memory_stats),
+            # Order matters: more-specific routes first so /memory/stats
+            # and /memory/{key}/inspect don't get shadowed by /memory/{key}.
+            Route("/memory/{key}/inspect", memory_inspect),
             Route("/memory/{key}", memory_forget, methods=["DELETE"]),
             Route("/fleet/spawn", fleet_spawn, methods=["POST"]),
             Route("/fleet/replace-worker", fleet_replace_worker, methods=["POST"]),
