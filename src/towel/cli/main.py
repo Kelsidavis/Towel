@@ -2278,6 +2278,14 @@ def memory_inspect(key: str) -> None:
     console.print(f"  source:        {e.source or '(operator-set)'}")
     console.print(f"  salience:      {score:.2f}")
 
+    related = store.recall_related(key, limit=5)
+    if related:
+        console.print("\n[bold]Related memories[/bold] (by co-retrieval weight):")
+        for rel, weight in related:
+            console.print(
+                f"  [dim]{weight:3d}×[/dim] [{rel.memory_type}] {rel.key}"
+            )
+
 
 @memory.command(name="export")
 @click.option(

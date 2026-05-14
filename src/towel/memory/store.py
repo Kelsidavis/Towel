@@ -139,6 +139,24 @@ CREATE TABLE IF NOT EXISTS memories (
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
 USING fts5(content, content='memories', content_rowid='rowid', tokenize='porter unicode61');
 
+-- Co-retrieval graph. Every time the prompt-block builder pulls a
+-- batch of memories for a query, each pair gets a +1 here; over time
+-- it learns which memories tend to be relevant together ("user is
+-- engineer" + "engineer uses vim") without an LLM call. The FK
+-- cascade means forget() cleans up edges for free.
+CREATE TABLE IF NOT EXISTS memory_links (
+    source_key  TEXT NOT NULL,
+    target_key  TEXT NOT NULL,
+    weight      INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (source_key, target_key),
+    FOREIGN KEY (source_key) REFERENCES memories(key) ON DELETE CASCADE,
+    FOREIGN KEY (target_key) REFERENCES memories(key) ON DELETE CASCADE,
+    -- A memory can't link to itself.
+    CHECK (source_key <> target_key)
+);
+CREATE INDEX IF NOT EXISTS memory_links_target ON memory_links(target_key);
+CREATE INDEX IF NOT EXISTS memory_links_weight ON memory_links(weight DESC);
+
 -- Keep the FTS index in sync without manual reindexing. Triggers fire
 -- inside the same transaction as the row mutation, so a crash mid-write
 -- cannot leave the FTS shadow out of step with the source table.
@@ -474,16 +492,43 @@ class MemoryStore:
         return [_row_to_entry(r) for r in rows]
 
     def _bump_recall(self, keys: list[str]) -> None:
-        """Mark a set of memories as recently retrieved."""
+        """Mark a set of memories as recently retrieved + record co-occurrence.
+
+        Each retrieved memory gets its recall_count bumped. When more
+        than one was retrieved in the same call, every ordered pair
+        gets its memory_links.weight incremented — this is how the
+        graph learns "these memories are relevant together" without
+        any LLM or embedding step.
+        """
         if not keys:
             return
         now_iso = datetime.now(UTC).isoformat()
+        # Symmetric pairs (we record both directions) so recall_related
+        # works the same regardless of which side the operator asked
+        # about.
+        pairs: list[tuple[str, str]] = []
+        for i, a in enumerate(keys):
+            for j, b in enumerate(keys):
+                if i != j:
+                    pairs.append((a, b))
         with self._txn() as con:
             con.executemany(
                 "UPDATE memories SET recall_count = recall_count + 1, "
                 "last_recalled_at = ? WHERE key = ?",
                 [(now_iso, k) for k in keys],
             )
+            if pairs:
+                # UPSERT: insert with weight 1, or bump if the edge
+                # already exists. ON CONFLICT requires SQLite 3.24+
+                # (released 2018), which is comfortably below the
+                # 3.53.0 the doctor check verifies.
+                con.executemany(
+                    "INSERT INTO memory_links (source_key, target_key, weight) "
+                    "VALUES (?, ?, 1) "
+                    "ON CONFLICT(source_key, target_key) "
+                    "DO UPDATE SET weight = weight + 1",
+                    pairs,
+                )
 
     def to_prompt_block(
         self,
@@ -605,6 +650,32 @@ class MemoryStore:
             )
         log.info("auto_forget pruned %d memor(ies)", len(victims))
         return victims
+
+    def recall_related(
+        self, key: str, limit: int = 5
+    ) -> list[tuple[MemoryEntry, int]]:
+        """Return entries linked to ``key`` by co-retrieval, by weight.
+
+        The graph is populated by _bump_recall whenever multiple
+        memories appear in the same prompt-block; popular pairs
+        accumulate weight, occasional ones don't. ``limit`` caps the
+        result so callers (CLI inspect, UI sidebar) can show a small
+        meaningful subset.
+        """
+        if not key:
+            return []
+        con = self._connect()
+        try:
+            rows = con.execute(
+                "SELECT m.*, l.weight FROM memory_links l "
+                "JOIN memories m ON m.key = l.target_key "
+                "WHERE l.source_key = ? "
+                "ORDER BY l.weight DESC LIMIT ?",
+                (key, limit),
+            ).fetchall()
+        finally:
+            con.close()
+        return [(_row_to_entry(r), int(r["weight"])) for r in rows]
 
     def rank_by_salience(self) -> list[tuple[MemoryEntry, float]]:
         """Return every entry with its salience score, lowest first.

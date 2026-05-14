@@ -448,6 +448,58 @@ class TestSourceTracking:
         assert store.recall("op_fact") is not None
 
 
+class TestMemoryGraph:
+    def test_co_retrieval_creates_links(self, store):
+        store.remember("a", "alpha", "fact")
+        store.remember("b", "beta", "fact")
+        store.remember("c", "gamma", "fact")
+        # Pull a + b together in a prompt block — both should now have
+        # links to each other but not to c.
+        store.to_prompt_block(query="alpha beta", limit=2)
+        related_a = store.recall_related("a")
+        related_b = store.recall_related("b")
+        assert {key for entry, _ in related_a for key in [entry.key]} <= {"b", "c"}
+        # The fallback-to-recent path might pull c too; what we
+        # really want to assert is the bidirectional link a↔b exists.
+        assert any(entry.key == "b" for entry, _ in related_a)
+        assert any(entry.key == "a" for entry, _ in related_b)
+
+    def test_repeat_co_retrieval_bumps_weight(self, store):
+        store.remember("a", "x", "fact")
+        store.remember("b", "y", "fact")
+        store._bump_recall(["a", "b"])
+        store._bump_recall(["a", "b"])
+        store._bump_recall(["a", "b"])
+        related = store.recall_related("a")
+        b_weight = next(w for entry, w in related if entry.key == "b")
+        assert b_weight == 3
+
+    def test_forget_cascades_link_cleanup(self, store):
+        store.remember("a", "x", "fact")
+        store.remember("b", "y", "fact")
+        store._bump_recall(["a", "b"])
+        store.forget("b")
+        # The link from a→b should be gone since b's row is gone.
+        assert store.recall_related("a") == []
+
+    def test_self_links_excluded(self, store):
+        store.remember("solo", "only one", "fact")
+        store._bump_recall(["solo"])
+        # Single-key bump shouldn't create any links at all.
+        assert store.recall_related("solo") == []
+
+    def test_recall_related_ordered_by_weight(self, store):
+        store.remember("a", "x", "fact")
+        store.remember("b", "weak", "fact")
+        store.remember("c", "strong", "fact")
+        store._bump_recall(["a", "b"])             # a-b weight 1
+        for _ in range(5):
+            store._bump_recall(["a", "c"])          # a-c weight 5
+        related = store.recall_related("a")
+        keys_by_rank = [e.key for e, _ in related]
+        assert keys_by_rank == ["c", "b"]
+
+
 class TestMemoryEntry:
     def test_serialization_roundtrip(self):
         entry = MemoryEntry(key="test", content="value", memory_type="fact")
