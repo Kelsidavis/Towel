@@ -1294,8 +1294,44 @@ class GatewayServer:
 
         project_ctx = load_project_context()
 
+        # Inject coordinator memory into the payload. The worker's
+        # local memory is empty; without this, /api/ask agent-loop
+        # paths produce the same memory-blind responses the chat path
+        # had before commit 0202a4d. Use the most recent user turn
+        # as the recall query.
+        memory_block = ""
+        memory = getattr(self.agent, "memory", None)
+        if memory is not None:
+            last_user_msg = next(
+                (m.content for m in reversed(conversation.messages)
+                 if m.role == Role.USER),
+                "",
+            )
+            try:
+                memory_block = memory.to_prompt_block(query=last_user_msg)
+            except Exception as exc:
+                log.warning("memory.to_prompt_block failed: %s", exc)
+                memory_block = ""
+
         # Delta sync: only send new messages if worker has seen this session
         delta = self._context_sync.compute_delta(worker.id, session_id, conversation)
+        conv_dict = conversation.to_dict()
+        if memory_block:
+            # Prepend a synthetic system message so the worker's runtime
+            # (which builds its prompt from the conversation messages)
+            # sees the memory context. We don't mutate the source
+            # conversation — only the dict we're about to ship.
+            conv_dict = {
+                **conv_dict,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": memory_block,
+                        "metadata": {"source": "coord_memory_injection"},
+                    },
+                    *conv_dict["messages"],
+                ],
+            }
         if delta.is_full_sync:
             # First time or structural change — send full conversation
             payload: dict[str, Any] = {
@@ -1303,7 +1339,7 @@ class GatewayServer:
                 "job_id": job_id,
                 "session": session_id,
                 "stream": stream,
-                "conversation": conversation.to_dict(),
+                "conversation": conv_dict,
             }
         else:
             # Incremental: send only the delta
@@ -1312,7 +1348,7 @@ class GatewayServer:
                 "job_id": job_id,
                 "session": session_id,
                 "stream": stream,
-                "conversation": conversation.to_dict(),
+                "conversation": conv_dict,
                 "delta": delta.to_dict(),
             }
 

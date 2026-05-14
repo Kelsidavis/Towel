@@ -404,6 +404,93 @@ class TestRemoteExecution:
         assert not worker.busy
 
     @pytest.mark.asyncio
+    async def test_remote_generate_injects_coordinator_memory(self, gateway):
+        """The "run" payload must include a synthetic system message
+        carrying coordinator-side memory. Workers have empty memory
+        stores; without the injection they can't answer "what's my
+        favorite number?" even though the answer lives on this host."""
+        from unittest.mock import MagicMock
+
+        # Plug a stub memory store onto the agent. We only care that
+        # to_prompt_block(query=last_user) gets called and its return
+        # value lands in the payload's conversation.messages.
+        stub_memory = MagicMock()
+        stub_memory.to_prompt_block.return_value = "USER_NAME=Kelsi\nFAV_NUMBER=42"
+        gateway.agent.memory = stub_memory
+
+        session = gateway.sessions.get_or_create("mem-inject")
+        session.conversation.add(Role.USER, "what is my favorite number?")
+        worker_ws = DummyWS()
+        worker = gateway._workers.register("worker-mem", worker_ws, {"tools": False})
+
+        task = asyncio.create_task(
+            gateway._step_remote_inference("mem-inject", session, worker)
+        )
+        await asyncio.sleep(0)
+
+        # The payload should carry the memory as a SYSTEM message at the
+        # head of the conversation. We don't need the inference to
+        # complete here — only inspect what was sent.
+        assert len(worker_ws.sent) == 1
+        run_msg = worker_ws.sent[0]
+        msgs = run_msg["conversation"]["messages"]
+        assert msgs[0]["role"] == "system"
+        assert "FAV_NUMBER=42" in msgs[0]["content"]
+        assert msgs[0]["metadata"]["source"] == "coord_memory_injection"
+        # Original user message is still present after the injection.
+        assert any(m["role"] == "user" for m in msgs[1:])
+
+        # Confirm the recall query was the user's last turn.
+        stub_memory.to_prompt_block.assert_called_once()
+        kwargs = stub_memory.to_prompt_block.call_args.kwargs
+        assert kwargs["query"] == "what is my favorite number?"
+
+        # Finally drain the task so we don't leak it.
+        job_id = run_msg["job_id"]
+        await gateway._job_queues[job_id].put({
+            "type": "job_done", "job_id": job_id,
+            "result": {"text": "42", "metadata": {}},
+        })
+        await task
+
+        # And the original session.conversation must NOT have been
+        # mutated by the injection.
+        roles = [m.role.value for m in session.conversation.messages]
+        assert "system" not in roles[:1]
+
+    @pytest.mark.asyncio
+    async def test_remote_generate_omits_memory_block_when_empty(self, gateway):
+        """An empty memory corpus yields "" from to_prompt_block — the
+        payload must NOT carry a stray empty system message in that case,
+        because some worker runtimes treat any leading system message as
+        an override of their default identity prompt."""
+        from unittest.mock import MagicMock
+
+        stub_memory = MagicMock()
+        stub_memory.to_prompt_block.return_value = ""
+        gateway.agent.memory = stub_memory
+
+        session = gateway.sessions.get_or_create("mem-empty")
+        session.conversation.add(Role.USER, "hi")
+        worker_ws = DummyWS()
+        worker = gateway._workers.register("worker-empty", worker_ws, {"tools": False})
+
+        task = asyncio.create_task(
+            gateway._step_remote_inference("mem-empty", session, worker)
+        )
+        await asyncio.sleep(0)
+
+        msgs = worker_ws.sent[0]["conversation"]["messages"]
+        assert msgs[0]["role"] == "user"  # no leading synthetic system msg
+
+        job_id = worker_ws.sent[0]["job_id"]
+        await gateway._job_queues[job_id].put({
+            "type": "job_done", "job_id": job_id,
+            "result": {"text": "hello", "metadata": {}},
+        })
+        await task
+
+    @pytest.mark.asyncio
     async def test_stream_remote_inference_forwards_events_and_updates_session(self, gateway):
         session = gateway.sessions.get_or_create("remote-stream")
         session.conversation.add(Role.USER, "stream please")
