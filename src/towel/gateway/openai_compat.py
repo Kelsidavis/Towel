@@ -150,6 +150,34 @@ def build_openai_routes(
                                 response = await gateway._quick_remote_infer(
                                     session_id, sess, worker, max_tokens=512,
                                 )
+                                # Same retry-on-empty path /api/ask uses
+                                # (see commit 534e40f). When the small
+                                # worker returns no text, try the next
+                                # idle worker before surfacing the
+                                # diagnostic placeholder.
+                                if (response.metadata or {}).get(
+                                    "empty_text_fallback"
+                                ):
+                                    alt = gateway._pick_alternate_chat_worker(
+                                        exclude={worker.id},
+                                    )
+                                    if alt is not None:
+                                        if sess.conversation.messages and (
+                                            sess.conversation.messages[-1].role.value
+                                            == "assistant"
+                                        ):
+                                            sess.conversation.messages.pop()
+                                        retry = await gateway._quick_remote_infer(
+                                            session_id, sess, alt, max_tokens=512,
+                                        )
+                                        if not (retry.metadata or {}).get(
+                                            "empty_text_fallback"
+                                        ):
+                                            retry.metadata = (retry.metadata or {}) | {
+                                                "fallback_from_worker": worker.id,
+                                                "fallback_reason": "empty_text",
+                                            }
+                                            response = retry
                             else:
                                 response = await gateway._step_remote_inference(
                                     session_id, sess, worker,
