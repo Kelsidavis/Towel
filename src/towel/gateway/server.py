@@ -1811,6 +1811,19 @@ class GatewayServer:
             task_names = body.get("tasks")
             if task_names is None:
                 return JSONResponse({"error": "tasks list required"}, status_code=400)
+            # Strict type check: a string here would iterate as characters
+            # and emit confusing per-char errors ("'c' is not a valid
+            # TaskType"). The intent is unambiguously a list.
+            if not isinstance(task_names, list):
+                return JSONResponse(
+                    {"error": f"tasks must be a list (got {type(task_names).__name__})"},
+                    status_code=400,
+                )
+            if not all(isinstance(t, str) for t in task_names):
+                return JSONResponse(
+                    {"error": "tasks must be a list of strings"},
+                    status_code=400,
+                )
 
             # Validate task names
             try:

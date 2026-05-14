@@ -120,6 +120,38 @@ class TestManualTaskOverride:
             TaskType.RESEARCH,
         ]
 
+    def test_rejects_string_instead_of_list(self, gateway):
+        """A string is iterable, so the handler used to iterate
+        character-by-character and emit confusing per-char errors
+        like \"'c' is not a valid TaskType\". A type-level reject is
+        much clearer for the operator."""
+        worker_id = "stringly-host"
+        gateway._workers.register(worker_id, ws=MagicMock(), capabilities={})
+        from starlette.testclient import TestClient
+
+        client = TestClient(gateway._build_http_app())
+        resp = client.post(
+            f"/workers/{worker_id}/tasks",
+            json={"tasks": "chat"},
+        )
+        assert resp.status_code == 400
+        assert "list" in resp.json()["error"]
+        # And the worker's task list MUST still be unchanged.
+        assert worker_id not in gateway._manual_tasks
+
+    def test_rejects_list_of_non_strings(self, gateway):
+        worker_id = "wronglist-host"
+        gateway._workers.register(worker_id, ws=MagicMock(), capabilities={})
+        from starlette.testclient import TestClient
+
+        client = TestClient(gateway._build_http_app())
+        resp = client.post(
+            f"/workers/{worker_id}/tasks",
+            json={"tasks": [1, 2, 3]},
+        )
+        assert resp.status_code == 400
+        assert "strings" in resp.json()["error"]
+
 
 class TestManualTaskOverridePersistsAcrossRestart:
     """Setting tasks via the HTTP handler should also write to disk so a
