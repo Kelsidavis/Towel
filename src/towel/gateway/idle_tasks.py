@@ -197,8 +197,23 @@ class IdleTaskManager:
     """Manages background idle task scheduling and result caching."""
 
     def __init__(self) -> None:
+        import random as _random
+
         self._results: dict[IdleTask, IdleTaskResult] = {}
-        self._last_run: dict[IdleTask, float] = {}
+        # Stagger initial last_run timestamps so idle tasks don't all
+        # fire back-to-back when the coordinator starts. Without this
+        # stamp, every task's cooldown check passes immediately (last
+        # = 0 → now - 0 >> any cooldown) and the worker spends its
+        # first 15+ seconds cycling through 14 idle prompts — a real
+        # latency hit when a chat request arrives mid-stampede. Each
+        # task gets seeded to "fired somewhere in the recent past
+        # within its cooldown window", so the next firing is naturally
+        # spread across the next cooldown period.
+        now = time.time()
+        self._last_run: dict[IdleTask, float] = {
+            task: now - _random.uniform(0.05, 0.95) * IDLE_TASK_COOLDOWNS.get(task, 300)
+            for task in IDLE_TASK_PRIORITY
+        }
         self._active: dict[str, IdleTask] = {}  # worker_id → running idle task
         # Per-worker idle task config. None = use defaults from assigned tasks.
         self._worker_idle_tasks: dict[str, list[IdleTask] | None] = {}

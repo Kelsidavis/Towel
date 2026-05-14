@@ -257,6 +257,76 @@ class TestPreemption:
         assert decision.worker is None
         assert decision.reason == REASON_NO_WORKERS
 
+    def test_smaller_busy_idle_worker_preempted_for_chat(self):
+        """When a chat-class request lands and the smallest qualified
+        worker is busy with an idle task, the dispatcher should
+        preempt it rather than route to a larger non-busy worker."""
+        workers = WorkerRegistry()
+        # The small/fast worker is busy with idle work.
+        small = _make_worker(workers, "small_busy_idle", busy=True)
+        small.capabilities["total_vram_mb"] = 4096
+        small.capabilities["assigned_tasks"] = [TaskType.CHAT]
+        # The big/slow worker is free.
+        big = _make_worker(workers, "big_free", busy=False)
+        big.capabilities["total_vram_mb"] = 24000
+        big.capabilities["assigned_tasks"] = [TaskType.CHAT]
+
+        preempt_called: list[str] = []
+
+        async def preempt(w: WorkerInfo) -> None:
+            preempt_called.append(w.id)
+            workers.release(w.id)
+
+        d = _make_dispatcher(
+            workers,
+            tasks={"small_busy_idle": [TaskType.CHAT], "big_free": [TaskType.CHAT]},
+            roles={
+                "small_busy_idle": [NodeRole.CLASSIFIER, NodeRole.INFERENCE],
+                "big_free": [NodeRole.CLASSIFIER, NodeRole.INFERENCE],
+            },
+            idle_task_workers={"small_busy_idle"},
+            preempt_hook=preempt,
+        )
+        decision = asyncio.run(
+            d.async_select_for_session("s1", intent="chat", task_type=TaskType.CHAT)
+        )
+        assert decision.worker is not None
+        assert decision.worker.id == "small_busy_idle"
+        assert decision.reason == REASON_PREEMPT_IDLE
+        assert decision.preempted_idle is True
+        assert preempt_called == ["small_busy_idle"]
+
+    def test_no_smaller_preempt_when_picked_is_already_smallest(self):
+        """If the chat path picked the smaller worker, no preempt
+        should happen even when a larger worker is busy with idle."""
+        workers = WorkerRegistry()
+        small_free = _make_worker(workers, "small_free", busy=False)
+        small_free.capabilities["total_vram_mb"] = 4096
+        small_free.capabilities["assigned_tasks"] = [TaskType.CHAT]
+        big_idle = _make_worker(workers, "big_idle", busy=True)
+        big_idle.capabilities["total_vram_mb"] = 24000
+        big_idle.capabilities["assigned_tasks"] = [TaskType.CHAT]
+
+        preempted: list[str] = []
+
+        async def preempt(w: WorkerInfo) -> None:
+            preempted.append(w.id)
+            workers.release(w.id)
+
+        d = _make_dispatcher(
+            workers,
+            tasks={"small_free": [TaskType.CHAT], "big_idle": [TaskType.CHAT]},
+            idle_task_workers={"big_idle"},
+            preempt_hook=preempt,
+        )
+        decision = asyncio.run(
+            d.async_select_for_session("s1", intent="chat", task_type=TaskType.CHAT)
+        )
+        assert decision.worker is not None
+        assert decision.worker.id == "small_free"
+        # No preempt — we already had the fastest worker available.
+        assert preempted == []
+
 
 # --------------------------------------------------------------------------- #
 # History / observability                                                      #

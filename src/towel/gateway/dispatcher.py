@@ -231,6 +231,8 @@ class Dispatcher:
             excluded=excluded,
             allow_preempt=True,
         )
+        # Layer 6a: no-worker preempt. Same path as before — every
+        # worker is busy, so any idle-task interrupt opens a slot.
         if (
             decision.worker is None
             and self._preempt_hook is not None
@@ -249,8 +251,74 @@ class Dispatcher:
                     session_id=session_id,
                     preempted_idle=True,
                 )
+        # Layer 6b: smaller-is-better preempt. The layered path
+        # already picked a non-busy worker, but for prefer_fast
+        # tasks (CHAT, TRIAGE, LINT) we'd rather interrupt an idle
+        # task on a SMALLER worker than use a larger non-busy one.
+        # Without this, every chat request mid-startup-stampede
+        # lands on the heavy worker just because the fast one is
+        # cycling through email_triage and friends.
+        elif (
+            decision.worker is not None
+            and self._preempt_hook is not None
+            and task_type is not None
+        ):
+            from towel.nodes.roles import TASK_REQUIREMENTS as _TR
+            reqs = _TR.get(task_type, {})
+            if reqs.get("prefer_fast"):
+                smaller = self._smaller_idle_worker_for_task(
+                    picked=decision.worker, task=task_type, excluded=excluded,
+                )
+                if smaller is not None:
+                    await self._preempt_hook(smaller)
+                    decision = DispatchDecision(
+                        worker=smaller,
+                        intent=intent,
+                        task_type=task_type,
+                        reason=REASON_PREEMPT_IDLE,
+                        notes=(
+                            f"preempted idle task on {smaller.id} "
+                            f"(smaller model than {decision.worker.id})"
+                        ),
+                        candidates_considered=decision.candidates_considered,
+                        session_id=session_id,
+                        preempted_idle=True,
+                    )
         self._record(decision)
         return decision
+
+    def _smaller_idle_worker_for_task(
+        self, *, picked: WorkerInfo, task: TaskType, excluded: set[str]
+    ) -> WorkerInfo | None:
+        """Find a smaller-VRAM worker currently running an idle task.
+
+        Eligible iff: enabled, not draining, currently running an
+        idle task (per the idle-task predicate), assigned to the
+        same task type as ``task``, AND has smaller total_vram_mb
+        than ``picked``. Returns None when no such worker exists —
+        the original picked worker is fine to use.
+        """
+        picked_vram = int(
+            (picked.capabilities or {}).get("total_vram_mb") or 0
+        )
+        for w in self._workers.list():
+            if w.id in excluded or w.id == picked.id:
+                continue
+            if not w.enabled or w.draining:
+                continue
+            if not self._is_idle_task(w.id):
+                continue
+            caps = w.capabilities or {}
+            if task not in (caps.get("assigned_tasks") or []):
+                # Worker isn't allowed this task type even if it
+                # weren't busy — don't preempt for nothing.
+                continue
+            w_vram = int(caps.get("total_vram_mb") or 0)
+            # Strictly smaller, with a hard floor so a 0-vram
+            # worker (no GPU advertised) doesn't beat anything.
+            if 0 < w_vram < picked_vram:
+                return w
+        return None
 
     def select_for_handoff(
         self,
