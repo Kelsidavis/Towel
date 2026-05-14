@@ -1717,13 +1717,47 @@ class GatewayServer:
             many candidates were considered — so an operator can see *why* a
             given session landed on a given worker (or didn't land anywhere
             and got handled by the coordinator).
+
+            Optional filters narrow the window so operators can answer
+            specific questions ("show me only degraded routes for session X"):
+
+              ``?reason=<code>``       — exact reason-code match
+              ``?worker=<id>``         — only decisions that picked this worker
+              ``?session=<id>``        — only decisions for this session
+              ``?only_degraded=1``     — only quality_degraded decisions
+              ``?only_affinity_missed=1`` — only affinity_missed decisions
+              ``?limit=N``             — cap the response (default 20)
+
+            Filters apply *before* the limit so a tight limit doesn't hide
+            matches that would have surfaced from earlier in the buffer.
             """
-            limit = int(request.query_params.get("limit", "20"))
+            try:
+                limit = max(1, min(int(request.query_params.get("limit", "20")), 500))
+            except ValueError:
+                return JSONResponse({"error": "limit must be an integer"}, status_code=400)
+            reason = request.query_params.get("reason")
+            worker_filter = request.query_params.get("worker")
+            session_filter = request.query_params.get("session")
+            only_degraded = request.query_params.get("only_degraded") in {"1", "true"}
+            only_affinity_missed = request.query_params.get("only_affinity_missed") in {"1", "true"}
+
             assert self._dispatcher is not None
             entries = [d.to_dict() for d in self._dispatcher.history()]
+            if reason:
+                entries = [e for e in entries if e.get("reason") == reason]
+            if worker_filter:
+                entries = [e for e in entries if e.get("worker_id") == worker_filter]
+            if session_filter:
+                entries = [e for e in entries if e.get("session_id") == session_filter]
+            if only_degraded:
+                entries = [e for e in entries if e.get("quality_degraded")]
+            if only_affinity_missed:
+                entries = [e for e in entries if e.get("affinity_missed")]
+
             return JSONResponse(
                 {
                     "decisions": entries[-limit:],
+                    "total_matching": len(entries),
                     "no_workers_reason": REASON_NO_WORKERS,
                 }
             )

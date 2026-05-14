@@ -1,0 +1,159 @@
+"""Filters on /dispatch/recent so operators can ask narrow questions of
+the decision log without dumping every entry to the console.
+
+The endpoint pre-filters before the limit so tight limits don't hide
+matches buried earlier in the ring buffer.
+"""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+from starlette.testclient import TestClient
+
+from towel.config import TowelConfig
+from towel.gateway.dispatcher import DispatchDecision
+from towel.gateway.server import GatewayServer
+from towel.gateway.sessions import SessionManager
+from towel.persistence.session_pins import SessionPinStore
+from towel.persistence.store import ConversationStore
+from towel.persistence.worker_state import WorkerStateStore
+
+
+class _FakeAgent:
+    pass
+
+
+@pytest.fixture
+def gateway(tmp_path):
+    store = ConversationStore(store_dir=tmp_path)
+    return GatewayServer(
+        config=TowelConfig(),
+        agent=_FakeAgent(),
+        sessions=SessionManager(store=store),
+        pin_store=SessionPinStore(path=tmp_path / "pins.json"),
+        worker_state_store=WorkerStateStore(path=tmp_path / "worker_state.json"),
+    )
+
+
+def _stub_worker(worker_id: str):
+    """Minimal stand-in for WorkerInfo — DispatchDecision.to_dict only
+    reads ``.id`` off of it."""
+    return SimpleNamespace(id=worker_id)
+
+
+def _seed_decisions(gateway: GatewayServer) -> None:
+    """Push a known mix of decisions into the dispatcher's history buffer
+    so the filter tests have something to chew on. The shape mirrors what
+    a real ``select_for_session`` would produce."""
+    assert gateway._dispatcher is not None
+    decisions = [
+        DispatchDecision(
+            worker=_stub_worker("gpu-host"),
+            intent="chat",
+            reason="pin",
+            session_id="sess-1",
+            candidates_considered=1,
+        ),
+        DispatchDecision(
+            worker=_stub_worker("pi-host"),
+            intent="chat",
+            reason="capability_fallback",
+            session_id="sess-2",
+            candidates_considered=3,
+            quality_degraded=True,
+        ),
+        DispatchDecision(
+            worker=_stub_worker("gpu-host"),
+            intent="chat",
+            reason="affinity",
+            session_id="sess-1",
+            candidates_considered=2,
+        ),
+        DispatchDecision(
+            worker=_stub_worker("other-host"),
+            intent="task",
+            reason="task_match",
+            session_id="sess-3",
+            candidates_considered=4,
+            affinity_missed=True,
+            previous_worker_id="gpu-host",
+        ),
+    ]
+    for d in decisions:
+        gateway._dispatcher._record(d)
+
+
+class TestDispatchRecentFilters:
+    def test_no_filters_returns_all_recent(self, gateway):
+        _seed_decisions(gateway)
+        client = TestClient(gateway._build_http_app())
+        resp = client.get("/dispatch/recent?limit=10").json()
+        assert len(resp["decisions"]) == 4
+        assert resp["total_matching"] == 4
+
+    def test_reason_filter(self, gateway):
+        _seed_decisions(gateway)
+        client = TestClient(gateway._build_http_app())
+        resp = client.get("/dispatch/recent?reason=affinity").json()
+        assert len(resp["decisions"]) == 1
+        assert resp["decisions"][0]["reason"] == "affinity"
+
+    def test_worker_filter(self, gateway):
+        _seed_decisions(gateway)
+        client = TestClient(gateway._build_http_app())
+        resp = client.get("/dispatch/recent?worker=gpu-host").json()
+        assert len(resp["decisions"]) == 2
+        assert {d["worker_id"] for d in resp["decisions"]} == {"gpu-host"}
+
+    def test_session_filter(self, gateway):
+        _seed_decisions(gateway)
+        client = TestClient(gateway._build_http_app())
+        resp = client.get("/dispatch/recent?session=sess-1").json()
+        assert len(resp["decisions"]) == 2
+        for d in resp["decisions"]:
+            assert d["session_id"] == "sess-1"
+
+    def test_only_degraded(self, gateway):
+        _seed_decisions(gateway)
+        client = TestClient(gateway._build_http_app())
+        resp = client.get("/dispatch/recent?only_degraded=1").json()
+        assert len(resp["decisions"]) == 1
+        assert resp["decisions"][0]["quality_degraded"] is True
+
+    def test_only_affinity_missed(self, gateway):
+        _seed_decisions(gateway)
+        client = TestClient(gateway._build_http_app())
+        resp = client.get("/dispatch/recent?only_affinity_missed=1").json()
+        assert len(resp["decisions"]) == 1
+        assert resp["decisions"][0]["affinity_missed"] is True
+
+    def test_combined_filters(self, gateway):
+        _seed_decisions(gateway)
+        client = TestClient(gateway._build_http_app())
+        # gpu-host AND session sess-1 — both decisions match.
+        resp = client.get(
+            "/dispatch/recent?worker=gpu-host&session=sess-1"
+        ).json()
+        assert len(resp["decisions"]) == 2
+        # gpu-host AND a reason it never had — empty.
+        resp = client.get(
+            "/dispatch/recent?worker=gpu-host&reason=capability_fallback"
+        ).json()
+        assert resp["decisions"] == []
+        assert resp["total_matching"] == 0
+
+    def test_filter_applies_before_limit(self, gateway):
+        _seed_decisions(gateway)
+        client = TestClient(gateway._build_http_app())
+        # Even with limit=1, the gpu-host filter should still see both
+        # gpu-host decisions in total_matching even though only 1 is returned.
+        resp = client.get("/dispatch/recent?worker=gpu-host&limit=1").json()
+        assert len(resp["decisions"]) == 1
+        assert resp["total_matching"] == 2
+
+    def test_invalid_limit_returns_400(self, gateway):
+        client = TestClient(gateway._build_http_app())
+        resp = client.get("/dispatch/recent?limit=abc")
+        assert resp.status_code == 400

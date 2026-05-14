@@ -357,6 +357,10 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         </div>
         <div class="fleet-section">
           <h3>Recent dispatch decisions</h3>
+          <div style="margin-bottom:6px;font-size:0.8em;display:flex;gap:12px;flex-wrap:wrap">
+            <label><input type="checkbox" id="dispatch-filter-degraded"> only quality-degraded</label>
+            <label><input type="checkbox" id="dispatch-filter-affinity-missed"> only affinity-missed</label>
+          </div>
           <div class="fleet-list" id="fleet-dispatch-list"></div>
         </div>
         <div class="fleet-section">
@@ -626,7 +630,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         // /dispatch/recent and /fleet/inventory are recent additions —
         // tolerate older coordinators by falling through to empty data
         // rather than tripping Promise.all.
-        apiGet('/dispatch/recent?limit=10').catch(() => ({ decisions: [] })),
+        apiGet('/dispatch/recent?limit=10' + dispatchFilterQuery()).catch(() => ({ decisions: [] })),
         apiGet('/fleet/inventory').catch(() => ({ models: [] }))
       ]);
       fleetState = {
@@ -895,6 +899,15 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         }
       }, FLEET_REFRESH_INTERVAL_MS);
     }
+    // Re-fetch the dispatch list whenever a filter checkbox flips, instead
+    // of waiting up to 5s for the periodic refresh tick.
+    ['dispatch-filter-degraded', 'dispatch-filter-affinity-missed'].forEach(function(id) {
+      const el = document.getElementById(id);
+      if (el && !el.dataset.wired) {
+        el.addEventListener('change', loadFleetState);
+        el.dataset.wired = '1';
+      }
+    });
   }
 
   function closeFleetPanel() {
@@ -1273,6 +1286,16 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   // for this browser session.
   function rememberedLauncherUrl(workerId) {
     return localStorage.getItem('towel.launcher.' + workerId + '.url') || '';
+  }
+  function dispatchFilterQuery() {
+    // Build the query-string suffix the dispatch fetch should use based
+    // on the operator's checkbox state. Empty string when no filter is on.
+    const degraded = document.getElementById('dispatch-filter-degraded');
+    const affinityMissed = document.getElementById('dispatch-filter-affinity-missed');
+    const params = [];
+    if (degraded && degraded.checked) params.push('only_degraded=1');
+    if (affinityMissed && affinityMissed.checked) params.push('only_affinity_missed=1');
+    return params.length ? '&' + params.join('&') : '';
   }
   function advertisedLauncherUrl(workerId) {
     // Pulled from worker.capabilities.launcher_url at the last fleet refresh.
