@@ -3045,7 +3045,16 @@ class GatewayServer:
             query = request.query_params.get("q", "")
             if not query:
                 return JSONResponse({"error": "Missing ?q= parameter"}, status_code=400)
-            limit = int(request.query_params.get("limit", "20"))
+            # Sanitize limit: int() raises on non-numeric, and an
+            # uncapped value could scan an entire archive on a busy
+            # coordinator. Clamp to 1..200.
+            try:
+                limit = int(request.query_params.get("limit", "20"))
+            except ValueError:
+                return JSONResponse(
+                    {"error": "limit must be an integer"}, status_code=400
+                )
+            limit = max(1, min(limit, 200))
             store = self.sessions.store
             if not store:
                 return JSONResponse({"results": []})
@@ -3076,7 +3085,13 @@ class GatewayServer:
 
         async def conversations_list(request: Request) -> JSONResponse:
             """List all persisted conversations (not just active ones)."""
-            limit = int(request.query_params.get("limit", "50"))
+            try:
+                limit = int(request.query_params.get("limit", "50"))
+            except ValueError:
+                return JSONResponse(
+                    {"error": "limit must be an integer"}, status_code=400
+                )
+            limit = max(1, min(limit, 500))
             store = self.sessions.store
             if not store:
                 return JSONResponse({"conversations": []})
