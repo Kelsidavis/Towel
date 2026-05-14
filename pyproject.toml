@@ -55,7 +55,17 @@ voice = [
     "mlx-whisper>=0.4.0",
     "sounddevice>=0.5.0",
 ]
-all = ["towel-ai[mlx,dev,voice]"]
+# Optional vector recall over memory. Pulls sentence-transformers
+# (which transitively pulls torch + transformers, ~hundreds of MB on
+# first install). With this extra, the memory store fuses BM25 + graph
+# + cosine via RRF; without it, retrieval is BM25 + graph and the
+# embedding column stays NULL. numpy is included so we don't have to
+# fall back to pure-python cosine math.
+embeddings = [
+    "sentence-transformers>=2.7",
+    "numpy>=1.24",
+]
+all = ["towel-ai[mlx,dev,voice,embeddings]"]
 
 [project.scripts]
 towel = "towel.cli.main:cli"

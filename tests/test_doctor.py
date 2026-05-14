@@ -229,7 +229,7 @@ class TestRunDoctor:
         config = TowelConfig()
         config.gateway.port = 19997  # avoid conflicts
         checks = run_doctor(config)
-        assert len(checks) == 10
+        assert len(checks) == 11
         names = [c.name for c in checks]
         assert "Environment" in names
         assert "Configuration" in names
@@ -240,6 +240,7 @@ class TestRunDoctor:
         assert "Storage" in names
         assert "Persisted worker state" in names
         assert "SQLite FTS5" in names
+        assert "Memory embeddings" in names
         assert "Memory store" in names
 
     def test_all_checks_finalized(self):

@@ -77,6 +77,7 @@ def run_doctor(config: TowelConfig | None = None) -> list[Check]:
     checks.append(check_storage())
     checks.append(check_persisted_worker_state())
     checks.append(check_sqlite_fts5())
+    checks.append(check_memory_embeddings())
     checks.append(check_memory_store())
 
     return checks
@@ -550,6 +551,30 @@ def check_sqlite_fts5() -> Check:
             "Debian 11+, official python.org installers all do). On "
             "Alpine, install sqlite-dev and rebuild Python, or use the "
             "glibc image."
+        )
+    return c
+
+
+def check_memory_embeddings() -> Check:
+    """Report whether the optional vector-recall extra is installed.
+
+    Pure informational: warn (not fail) when missing, since the
+    memory store works fine without — retrieval just doesn't get
+    paraphrase recall, and ``fused_search`` degrades to BM25 alone.
+    """
+    from towel.memory import embeddings
+
+    c = Check("Memory embeddings")
+    if embeddings.is_available():
+        c.ok(
+            f"sentence-transformers installed — vector recall enabled "
+            f"(model: {embeddings.DEFAULT_MODEL})"
+        )
+    else:
+        c.warn("Embeddings extra not installed — retrieval is BM25 + graph only")
+        c.suggestions.append(
+            "Install the extra for paraphrase recall: "
+            "pip install 'towel-ai[embeddings]'"
         )
     return c
 

@@ -372,6 +372,12 @@ class MemoryStore:
         """
         now = datetime.now(UTC)
         now_iso = now.isoformat()
+        # Compute the embedding outside the transaction — it can take
+        # ~5ms for short strings, longer on cold start, and we don't
+        # want to hold a write lock that long. None when the extras
+        # aren't installed; the column just stays NULL.
+        from towel.memory import embeddings as _emb
+        embedding_blob = _emb.encode(content)
         with self._txn() as con:
             row = con.execute(
                 "SELECT created_at, source FROM memories WHERE key = ?", (key,)
@@ -379,17 +385,17 @@ class MemoryStore:
             if row is None:
                 con.execute(
                     "INSERT INTO memories "
-                    "(key, content, memory_type, created_at, updated_at, source) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (key, content, memory_type, now_iso, now_iso, source),
+                    "(key, content, memory_type, created_at, updated_at, source, embedding) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (key, content, memory_type, now_iso, now_iso, source, embedding_blob),
                 )
                 created_at = now
                 stored_source = source
             else:
                 con.execute(
                     "UPDATE memories SET content = ?, memory_type = ?, "
-                    "updated_at = ? WHERE key = ?",
-                    (content, memory_type, now_iso, key),
+                    "updated_at = ?, embedding = ? WHERE key = ?",
+                    (content, memory_type, now_iso, embedding_blob, key),
                 )
                 created_at = datetime.fromisoformat(row["created_at"])
                 try:
@@ -491,6 +497,74 @@ class MemoryStore:
             con.close()
         return [_row_to_entry(r) for r in rows]
 
+    def vector_search(self, query: str, limit: int = 5) -> list[MemoryEntry]:
+        """Cosine-rank memories against ``query`` via stored embeddings.
+
+        Returns ``[]`` whenever the embeddings extra isn't installed
+        or when no entry in the corpus has an embedding yet — callers
+        should fall back to BM25 in those cases (``fused_search``
+        does this for you).
+        """
+        from towel.memory import embeddings as _emb
+
+        query = (query or "").strip()
+        if not query or not _emb.is_available():
+            return []
+        query_blob = _emb.encode(query)
+        if not query_blob:
+            return []
+        con = self._connect()
+        try:
+            rows = con.execute(
+                "SELECT key, embedding FROM memories WHERE embedding IS NOT NULL"
+            ).fetchall()
+        finally:
+            con.close()
+        if not rows:
+            return []
+        scored = _emb.cosine_topk(
+            query_blob,
+            [(r["key"], r["embedding"]) for r in rows],
+            k=limit,
+        )
+        if not scored:
+            return []
+        # Materialize the entries in score order.
+        out: list[MemoryEntry] = []
+        for key, _score in scored:
+            entry = self.recall(key)
+            if entry is not None:
+                out.append(entry)
+        return out
+
+    def fused_search(self, query: str, limit: int = 5) -> list[MemoryEntry]:
+        """BM25 + vector via Reciprocal Rank Fusion, capped at ``limit``.
+
+        Standard RRF: each ranker contributes ``1 / (k + rank_i)`` to
+        the score of each candidate it sees; we sum across rankers
+        and pick the top-K. The constant ``k=60`` is the value from
+        the original RRF paper — empirically robust without needing
+        per-query tuning.
+
+        When only BM25 is available (no embeddings extra, or empty
+        vector tier) the function degrades to BM25 alone.
+        """
+        rrf_k = 60
+        bm25 = self.search(query, limit=limit * 2)
+        vec = self.vector_search(query, limit=limit * 2)
+        if not vec:
+            return bm25[:limit]
+        scores: dict[str, float] = {}
+        entries: dict[str, MemoryEntry] = {}
+        for rank, e in enumerate(bm25):
+            scores[e.key] = scores.get(e.key, 0.0) + 1.0 / (rrf_k + rank + 1)
+            entries[e.key] = e
+        for rank, e in enumerate(vec):
+            scores[e.key] = scores.get(e.key, 0.0) + 1.0 / (rrf_k + rank + 1)
+            entries[e.key] = e
+        ordered = sorted(scores, key=lambda k: -scores[k])[:limit]
+        return [entries[k] for k in ordered]
+
     def _bump_recall(self, keys: list[str]) -> None:
         """Mark a set of memories as recently retrieved + record co-occurrence.
 
@@ -560,7 +634,10 @@ class MemoryStore:
             # memories that BM25 missed because the user's wording
             # didn't share lexical tokens.
             seed_k = max(1, limit // 2 + 1)
-            entries = self.search(query, limit=seed_k)
+            # Use the trio fusion (BM25 + vector via RRF) when
+            # embeddings are available; falls back to BM25 alone
+            # otherwise. Graph augmentation is layered on below.
+            entries = self.fused_search(query, limit=seed_k)
             if entries:
                 seen = {e.key for e in entries}
                 # Round-robin one neighbor per seed so the result
