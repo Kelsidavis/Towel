@@ -231,9 +231,23 @@ class RemoteWorkerClient:
 
         try:
             if stream:
+                # Instrument time-to-first-token + total stream time.
+                # Reported on job_done so coordinator metrics and API
+                # response metadata can show cold-vs-warm latency
+                # behaviour. ttft_ms in particular is the operator's
+                # main signal for "is the model cold-loading?" —
+                # without it, all the operator sees is a long total
+                # elapsed with no indication of where the time went.
+                import time as _time
+                stream_start = _time.monotonic()
+                ttft_ms: float | None = None
                 full_text = ""
+                tokens_seen = 0
                 async for chunk in self.agent.stream_from_request(request):
+                    if ttft_ms is None and chunk:
+                        ttft_ms = (_time.monotonic() - stream_start) * 1000.0
                     full_text += chunk
+                    tokens_seen += 1
                     await ws.send(
                         json.dumps(
                             {
@@ -243,12 +257,23 @@ class RemoteWorkerClient:
                             }
                         )
                     )
+                total_ms = (_time.monotonic() - stream_start) * 1000.0
+                meta: dict[str, Any] = {
+                    "total_ms": total_ms,
+                    "chunks": tokens_seen,
+                }
+                if ttft_ms is not None:
+                    meta["ttft_ms"] = ttft_ms
+                    # Rough tps from chunks (each chunk ~ 1 token for
+                    # llama-server streaming).
+                    gen_time_s = max(0.001, (total_ms - ttft_ms) / 1000.0)
+                    meta["tps"] = round(tokens_seen / gen_time_s, 1)
                 await ws.send(
                     json.dumps(
                         {
                             "type": "job_done",
                             "job_id": job_id,
-                            "result": {"text": full_text, "metadata": {}},
+                            "result": {"text": full_text, "metadata": meta},
                         }
                     )
                 )
