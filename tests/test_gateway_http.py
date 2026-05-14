@@ -442,6 +442,36 @@ class TestSimpleAskAPI:
         contents = [m.content for m in api_default.conversation.messages]
         assert "hello" not in contents
 
+    def test_ask_rejects_overlong_session_id(self, client):
+        """Session IDs flow into dispatch logs, filesystem paths, and
+        URL params. A 1000-char session_id breaks every list view and
+        log line — same length rule as memory keys (commit 1865e7d)."""
+        resp = client.post(
+            "/api/ask",
+            json={"message": "hi", "session_id": "z" * 1000},
+        )
+        assert resp.status_code == 400
+        assert "256" in resp.json()["error"]
+
+    def test_ask_rejects_control_chars_in_session_id(self, client):
+        """Newlines in session_id break log readability and would
+        appear in dispatch decision dumps as multi-line entries."""
+        for bad in ("a\nb", "tab\there", "null\x00here"):
+            resp = client.post(
+                "/api/ask",
+                json={"message": "hi", "session_id": bad},
+            )
+            assert resp.status_code == 400, f"accepted bad session_id {bad!r}"
+            assert "control" in resp.json()["error"].lower()
+
+    def test_ask_rejects_non_string_session_id(self, client):
+        resp = client.post(
+            "/api/ask",
+            json={"message": "hi", "session_id": 12345},
+        )
+        assert resp.status_code == 400
+        assert "string" in resp.json()["error"]
+
     def test_retry_failure_restores_original_placeholder(self, gateway, client):
         """When the empty-response retry path crashes (worker DC,
         timeout, anything), the session must still have a coherent

@@ -3517,6 +3517,24 @@ class GatewayServer:
                 return JSONResponse({"error": "message is required"}, status_code=400)
 
             session_id = body.get("session_id") or body.get("session") or "api-default"
+            if not isinstance(session_id, str):
+                return JSONResponse(
+                    {"error": "session_id must be a string"}, status_code=400,
+                )
+            # Same length + control-char rules as memory keys
+            # (commit 1865e7d). Session IDs flow into dispatch logs,
+            # filesystem paths, and URL params; absurd lengths or
+            # newlines break log readability and produce broken URLs.
+            if len(session_id) > 256:
+                return JSONResponse(
+                    {"error": "session_id must be 256 chars or fewer"},
+                    status_code=400,
+                )
+            if any(ord(c) < 0x20 or ord(c) == 0x7F for c in session_id):
+                return JSONResponse(
+                    {"error": "session_id must not contain control characters"},
+                    status_code=400,
+                )
             system_override = body.get("system")
 
             session = self.sessions.get_or_create(session_id)
