@@ -125,6 +125,13 @@ class TowelConfig(BaseModel):
     # auditing several months of activity may want to bump it.
     memory_recall_log_cap: int = 5000
 
+    # In-memory dispatch decision history (ring buffer). 50 was the
+    # original default which only covers minutes on a busy
+    # coordinator. 500 trades ~50KB for several hours of audit at
+    # typical traffic — still negligible. Bump higher for long-
+    # running daemons where post-hoc debugging matters.
+    dispatch_history_size: int = 500
+
     @classmethod
     def load(cls, path: Path | None = None) -> TowelConfig:
         """Load config from TOML file, falling back to defaults."""

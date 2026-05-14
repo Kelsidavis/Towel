@@ -150,6 +150,7 @@ class GatewayServer:
             node_tracker=self._node_tracker,
             idle_task_predicate=self._idle_manager.is_idle_task,
             preempt_hook=self._preempt_idle_task,
+            history_size=int(getattr(self.config, "dispatch_history_size", 500) or 500),
         )
         # Initialize cluster memory from agent's memory store if available
         memory_store = getattr(self.agent, "memory", None)
@@ -1754,11 +1755,33 @@ class GatewayServer:
             if only_affinity_missed:
                 entries = [e for e in entries if e.get("affinity_missed")]
 
+            # Log freshness: oldest-entry age + cap occupancy so the
+            # UI can warn when the operator is looking at a saturated
+            # ring buffer (audit data is being dropped) or a stale
+            # window (no recent activity).
+            history_size = int(getattr(self.config, "dispatch_history_size", 500) or 500)
+            log_status: dict[str, Any] = {
+                "size": len(self._dispatcher.history()),
+                "cap": history_size,
+            }
+            full_history = self._dispatcher.history()
+            if full_history:
+                from datetime import datetime, UTC
+                try:
+                    oldest_ts = datetime.fromisoformat(
+                        full_history[0].to_dict().get("ts", "")
+                    )
+                    age_s = (datetime.now(UTC) - oldest_ts).total_seconds()
+                    log_status["oldest_age_seconds"] = int(age_s)
+                except Exception:
+                    pass
+                log_status["saturated"] = len(full_history) >= history_size
             return JSONResponse(
                 {
                     "decisions": entries[-limit:],
                     "total_matching": len(entries),
                     "no_workers_reason": REASON_NO_WORKERS,
+                    "log_status": log_status,
                 }
             )
 
