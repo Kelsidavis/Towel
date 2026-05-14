@@ -1609,33 +1609,116 @@ def doctor() -> None:
 
 
 @cli.command(name="install-worker")
-def install_worker() -> None:
-    """Install systemd user service for auto-starting the Towel worker on boot."""
+@click.option(
+    "--llama-model",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help=(
+        "Path to a GGUF model. When set, also install towel-llama.service "
+        "to run llama-server as a sibling unit; the worker gains a "
+        "Wants=/After= dependency so the backend starts first."
+    ),
+)
+@click.option("--llama-port", default=8080, type=int, help="llama-server port (default 8080)")
+@click.option(
+    "--llama-ngl",
+    default=99,
+    type=int,
+    help="GPU layers to offload (-ngl). Lower this if llama-server hits CUDA OOM.",
+)
+@click.option(
+    "--llama-ctx",
+    default=4096,
+    type=int,
+    help=(
+        "Context size (-c). Towel's tool registry can produce 20K+ token "
+        "system prompts — bump this if you load many skills."
+    ),
+)
+def install_worker(
+    llama_model: str | None,
+    llama_port: int,
+    llama_ngl: int,
+    llama_ctx: int,
+) -> None:
+    """Install systemd user service for auto-starting the Towel worker on boot.
+
+    Pass --llama-model to also install a sibling towel-llama.service that
+    runs llama-server with the given GGUF; the worker unit gains a
+    Wants=/After= dependency so the backend starts first.
+    """
     import shutil
+    import subprocess
     from pathlib import Path
 
-    service_name = "towel-worker.service"
     systemd_dir = Path.home() / ".config" / "systemd" / "user"
     systemd_dir.mkdir(parents=True, exist_ok=True)
 
-    # Find towel binary
     towel_bin = shutil.which("towel")
     if not towel_bin:
         console.print("[red]Cannot find 'towel' in PATH. Install towel first.[/red]")
         raise SystemExit(1)
 
-    service_content = f"""\
+    user_path = f"{Path.home() / '.local' / 'bin'}:/usr/local/bin:/usr/bin:/bin"
+    services_to_start: list[str] = []
+
+    if llama_model:
+        llama_bin = shutil.which("llama-server")
+        if not llama_bin:
+            console.print(
+                "[red]Cannot find 'llama-server' in PATH. "
+                "Install llama.cpp first (or omit --llama-model).[/red]"
+            )
+            raise SystemExit(1)
+        # llama-server built from source typically pulls libmtmd.so etc. from
+        # ~/.local/lib — systemd does not inherit the user shell's
+        # LD_LIBRARY_PATH, so set it explicitly here.
+        llama_lib = Path.home() / ".local" / "lib"
+        llama_unit = f"""\
 [Unit]
-Description=Towel AI Worker — auto-discovers GPU, models, and controller
+Description=Towel llama-server backend ({Path(llama_model).name})
 After=network-online.target
 Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={llama_bin} -m {llama_model} \\
+    --port {llama_port} -ngl {llama_ngl} -c {llama_ctx} \\
+    --parallel 1 --jinja
+Restart=on-failure
+RestartSec=10
+Environment=PATH={user_path}
+Environment=LD_LIBRARY_PATH={llama_lib}
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=towel-llama
+
+[Install]
+WantedBy=default.target
+"""
+        llama_service = "towel-llama.service"
+        (systemd_dir / llama_service).write_text(llama_unit)
+        console.print(f"[green]Wrote[/green] {systemd_dir / llama_service}")
+        services_to_start.append(llama_service)
+
+    worker_deps = "network-online.target"
+    if llama_model:
+        worker_deps += " towel-llama.service"
+
+    worker_unit = f"""\
+[Unit]
+Description=Towel AI Worker — auto-discovers GPU, models, and controller
+After={worker_deps}
+Wants={worker_deps}
 
 [Service]
 Type=simple
 ExecStart={towel_bin} worker
 Restart=always
 RestartSec=10
-Environment=PATH={Path.home() / '.local' / 'bin'}:/usr/local/bin:/usr/bin:/bin
+Environment=PATH={user_path}
 
 # Logging
 StandardOutput=journal
@@ -1645,23 +1728,30 @@ SyslogIdentifier=towel-worker
 [Install]
 WantedBy=default.target
 """
-    dest = systemd_dir / service_name
-    dest.write_text(service_content)
-    console.print(f"[green]Wrote[/green] {dest}")
-
-    # Enable and start
-    import subprocess
+    worker_service = "towel-worker.service"
+    (systemd_dir / worker_service).write_text(worker_unit)
+    console.print(f"[green]Wrote[/green] {systemd_dir / worker_service}")
+    services_to_start.append(worker_service)
 
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-    subprocess.run(["systemctl", "--user", "enable", service_name], check=True)
-    subprocess.run(["systemctl", "--user", "start", service_name], check=True)
+    for svc in services_to_start:
+        subprocess.run(["systemctl", "--user", "enable", svc], check=True)
+        subprocess.run(["systemctl", "--user", "start", svc], check=True)
 
     # Enable lingering so it runs without login
     subprocess.run(["loginctl", "enable-linger"], check=False)
 
-    console.print(f"[green]Enabled and started {service_name}[/green]")
+    for svc in services_to_start:
+        console.print(f"[green]Enabled and started {svc}[/green]")
     console.print()
     console.print("[dim]The worker will now start on boot and auto-discover the controller.[/dim]")
+    if llama_model:
+        console.print(
+            f"[dim]llama-server runs on port {llama_port} with "
+            f"-ngl {llama_ngl} -c {llama_ctx}. Tune by editing "
+            f"~/.config/systemd/user/towel-llama.service then "
+            f"`systemctl --user restart towel-llama`.[/dim]"
+        )
     console.print("[dim]Check status:  systemctl --user status towel-worker[/dim]")
     console.print("[dim]View logs:     journalctl --user -u towel-worker -f[/dim]")
     console.print("[dim]Stop:          systemctl --user stop towel-worker[/dim]")
