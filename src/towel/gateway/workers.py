@@ -25,6 +25,10 @@ class WorkerInfo:
     current_job_id: str | None = None
     current_session_id: str | None = None
     last_seen: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # When this worker most recently transitioned from idle → busy. Lets
+    # operators tell "running a long task" apart from "stuck for 15 minutes"
+    # — without this, /workers shows busy=true with no notion of duration.
+    busy_since: datetime | None = None
 
     def touch(self, capabilities: dict[str, Any] | None = None) -> None:
         """Refresh heartbeat metadata."""
@@ -34,6 +38,11 @@ class WorkerInfo:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize worker state for APIs."""
+        busy_for = (
+            (datetime.now(UTC) - self.busy_since).total_seconds()
+            if self.busy and self.busy_since is not None
+            else None
+        )
         return {
             "id": self.id,
             "capabilities": dict(self.capabilities),
@@ -43,6 +52,8 @@ class WorkerInfo:
             "current_job_id": self.current_job_id,
             "current_session_id": self.current_session_id,
             "last_seen": self.last_seen.isoformat(),
+            "busy_since": self.busy_since.isoformat() if self.busy_since else None,
+            "busy_for_seconds": busy_for,
         }
 
 
@@ -290,6 +301,7 @@ class WorkerRegistry:
         worker.busy = True
         worker.current_job_id = job_id
         worker.current_session_id = session_id
+        worker.busy_since = datetime.now(UTC)
         worker.touch()
 
     def release(self, worker_id: str) -> None:
@@ -298,9 +310,18 @@ class WorkerRegistry:
             worker.busy = False
             worker.current_job_id = None
             worker.current_session_id = None
+            worker.busy_since = None
             worker.touch()
 
-    def stats(self) -> dict[str, int]:
+    def stats(self, stuck_threshold_secs: float = 300.0) -> dict[str, int]:
+        """Aggregate counts for the fleet panel.
+
+        ``stuck_threshold_secs`` defines when a busy worker counts as
+        possibly-stuck. Default 5 minutes — picked because typical local
+        model generation finishes in well under a minute even with large
+        models and long contexts; anything past 5 minutes usually means a
+        wedged request, an MLX kernel hang, or a network stall.
+        """
         total = len(self._workers)
         busy = sum(1 for worker in self._workers.values() if worker.busy)
         enabled = sum(1 for worker in self._workers.values() if worker.enabled)
@@ -311,6 +332,14 @@ class WorkerRegistry:
             for worker in self._workers.values()
             if worker.enabled and not worker.draining and not worker.busy
         )
+        now = datetime.now(UTC)
+        stuck = sum(
+            1
+            for worker in self._workers.values()
+            if worker.busy
+            and worker.busy_since is not None
+            and (now - worker.busy_since).total_seconds() >= stuck_threshold_secs
+        )
         return {
             "total": total,
             "busy": busy,
@@ -318,6 +347,7 @@ class WorkerRegistry:
             "enabled": enabled,
             "draining": draining,
             "disabled": disabled,
+            "stuck": stuck,
         }
 
     def __len__(self) -> int:

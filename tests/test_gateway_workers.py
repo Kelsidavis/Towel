@@ -233,6 +233,7 @@ class TestGatewayWorkerVisibility:
             "enabled": 2,
             "draining": 0,
             "disabled": 0,
+            "stuck": 0,
         }
 
     def test_sessions_endpoint_includes_assigned_worker(self, gateway):

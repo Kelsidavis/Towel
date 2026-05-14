@@ -780,6 +780,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       ['Workers', stats.total || 0],
       ['Idle', stats.idle || 0],
       ['Busy', stats.busy || 0],
+      ['Stuck', stats.stuck || 0],
       ['Hot', hot],
       ['Degraded', degraded]
     ];
@@ -802,6 +803,19 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         const availability = worker.enabled === false ? 'disabled' : 'enabled';
         const flow = worker.draining ? 'draining' : 'ready';
         const busy = worker.busy ? 'busy' : 'idle';
+        // Surface how long a busy worker has been busy so operators can
+        // tell normal-long-running from possibly-stuck. The threshold
+        // mirrors the coordinator-side stuck_threshold_secs default.
+        const busyFor = (worker.busy && typeof worker.busy_for_seconds === 'number')
+          ? worker.busy_for_seconds
+          : null;
+        const STUCK_THRESHOLD_SECS = 300;
+        function formatBusyFor(seconds) {
+          if (seconds < 60) return Math.round(seconds) + 's';
+          if (seconds < 3600) return Math.round(seconds / 60) + 'm';
+          return (seconds / 3600).toFixed(1) + 'h';
+        }
+        const isStuck = busyFor !== null && busyFor >= STUCK_THRESHOLD_SECS;
         const allTasks = fleetState.allTasks || [];
         const taskOptions = allTasks.map(function(t) {
           const selected = tasks.indexOf(t) >= 0 ? ' selected' : '';
@@ -819,6 +833,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
               <span class="fleet-badge">${escHtml(model)}</span>
               ${renderQualityBadge(worker.quality_tier)}
               ${caps.launcher_url ? `<span class="fleet-badge ok" title="Launcher daemon advertised at ${escHtml(caps.launcher_url)} — replace/upgrade pre-fills this URL">launcher</span>` : ''}
+              ${busyFor !== null ? `<span class="fleet-badge ${isStuck ? 'err' : 'warn'}" title="Time since this worker started its current job. Past ${STUCK_THRESHOLD_SECS}s the dispatcher considers it possibly stuck.">busy ${escHtml(formatBusyFor(busyFor))}${isStuck ? ' — possibly stuck' : ''}</span>` : ''}
             </div>
             <div class="fleet-meta">
               <span>roles: ${escHtml(roles)}</span>
