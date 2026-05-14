@@ -143,6 +143,61 @@ class TestMemoryEndpoint:
         assert resp.status_code == 404
         assert "never-existed" in resp.json()["error"]
 
+    def test_patch_updates_content(self, store, memory):
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+        resp = client.patch(
+            "/memory/user_role",
+            json={"content": "senior data scientist"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["content"] == "senior data scientist"
+        # And the change is durable.
+        assert memory.recall("user_role").content == "senior data scientist"
+
+    def test_patch_replaces_tags_wholesale(self, store, memory):
+        memory.remember(
+            "tagged", "x", memory_type="fact", tags=["old1", "old2"],
+        )
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+        resp = client.patch("/memory/tagged", json={"tags": ["new"]})
+        assert resp.status_code == 200
+        # PATCH semantics REPLACE the tag list (not merge — that's
+        # what add_tag is for).
+        assert memory.recall("tagged").tags == ["new"]
+
+    def test_patch_changes_type(self, store, memory):
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+        resp = client.patch(
+            "/memory/favourite_color", json={"type": "user"}
+        )
+        assert resp.status_code == 200
+        assert memory.recall("favourite_color").memory_type == "user"
+
+    def test_patch_rejects_unknown_type(self, store, memory):
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+        resp = client.patch(
+            "/memory/favourite_color", json={"type": "bogus"}
+        )
+        assert resp.status_code == 400
+
+    def test_patch_unknown_key_returns_404(self, store, memory):
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+        resp = client.patch("/memory/never-existed", json={"content": "x"})
+        assert resp.status_code == 404
+
+    def test_patch_changes_scope(self, store, memory):
+        memory.remember("rove", "x", scope="proj:a")
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+        resp = client.patch("/memory/rove", json={"scope": ""})
+        assert resp.status_code == 200
+        assert memory.recall("rove").scope == ""
+
     def test_delete_returns_503_when_no_memory_backend(self, store):
         class _BareAgent:
             pass

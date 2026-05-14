@@ -2196,6 +2196,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
           + '</div>'
         : '';
       const scope = e.scope ? escHtml(e.scope) : 'global';
+      // Stash the raw entry so the edit toggle can populate the form.
+      memoryInspectBody.dataset.entry = JSON.stringify(e);
       memoryInspectBody.innerHTML =
         '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">'
         +   '<strong style="font-size:1.1em">' + escHtml(e.key) + '</strong>'
@@ -2210,7 +2212,10 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         +   '<div>recalled: ' + (e.recall_count || 0) + ' time(s), last: ' + last + '</div>'
         +   '<div>created: ' + escHtml(created) + '</div>'
         + '</div>'
-        + relatedHtml;
+        + relatedHtml
+        + '<div style="margin-top:14px;text-align:right">'
+        +   '<button class="tb-btn" id="memory-inspect-edit-btn">edit</button>'
+        + '</div>';
     } catch (err) {
       memoryInspectBody.innerHTML = '<div style="color:var(--red)">load failed: ' + escHtml(err.message) + '</div>';
     }
@@ -2375,10 +2380,103 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   });
 
   // Click a related entry to chain into its inspect view.
-  memoryInspectBody.addEventListener('click', function(e) {
+  // Also: handle the edit-toggle button and the save/cancel inside
+  // the edit form. One listener so we don't compete with nested
+  // event handlers.
+  memoryInspectBody.addEventListener('click', async function(e) {
+    const editBtn = e.target.closest('#memory-inspect-edit-btn');
+    if (editBtn) {
+      renderInspectEdit();
+      return;
+    }
+    const cancelBtn = e.target.closest('#memory-inspect-cancel-btn');
+    if (cancelBtn) {
+      // Re-render the read-only view from the stashed entry key.
+      try {
+        const stash = JSON.parse(memoryInspectBody.dataset.entry || '{}');
+        if (stash.key) openInspect(stash.key);
+      } catch (_err) {}
+      return;
+    }
+    const saveBtn = e.target.closest('#memory-inspect-save-btn');
+    if (saveBtn) {
+      await saveInspectEdit();
+      return;
+    }
     const tgt = e.target.closest('[data-inspect-key]');
     if (tgt) openInspect(tgt.getAttribute('data-inspect-key'));
   });
+
+  function renderInspectEdit() {
+    let e;
+    try {
+      e = JSON.parse(memoryInspectBody.dataset.entry || '{}');
+    } catch (_err) { return; }
+    if (!e.key) return;
+    const tagsStr = Array.isArray(e.tags) ? e.tags.join(', ') : '';
+    const scopeVal = e.scope || '';
+    const types = ['user', 'preference', 'project', 'fact'];
+    memoryInspectBody.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">'
+      +   '<strong style="font-size:1.1em">' + escHtml(e.key) + '</strong>'
+      +   '<span style="color:var(--text-dim);font-size:0.85em">editing…</span>'
+      + '</div>'
+      + '<label style="display:block;color:var(--text-dim);font-size:0.8em;margin-top:8px">content</label>'
+      + '<textarea id="memory-edit-content" rows="6" style="width:100%;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px;font:inherit">'
+      +   escHtml(e.content || '')
+      + '</textarea>'
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">'
+      +   '<label style="display:block;color:var(--text-dim);font-size:0.8em">type'
+      +     '<select id="memory-edit-type" style="width:100%;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px">'
+      +       types.map(function(t) {
+              const sel = t === (e.type || 'fact') ? ' selected' : '';
+              return '<option value="' + t + '"' + sel + '>' + t + '</option>';
+            }).join('')
+      +     '</select>'
+      +   '</label>'
+      +   '<label style="display:block;color:var(--text-dim);font-size:0.8em">scope'
+      +     '<input id="memory-edit-scope" type="text" value="' + escHtml(scopeVal) + '" placeholder="(global)" style="width:100%;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px;font:inherit">'
+      +   '</label>'
+      + '</div>'
+      + '<label style="display:block;color:var(--text-dim);font-size:0.8em;margin-top:8px">tags (comma-separated)'
+      +   '<input id="memory-edit-tags" type="text" value="' + escHtml(tagsStr) + '" style="width:100%;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px;font:inherit">'
+      + '</label>'
+      + '<div style="display:flex;justify-content:flex-end;gap:6px;margin-top:14px">'
+      +   '<button class="tb-btn" id="memory-inspect-cancel-btn">cancel</button>'
+      +   '<button class="tb-btn" id="memory-inspect-save-btn" style="color:var(--green);border-color:var(--green)">save</button>'
+      + '</div>';
+  }
+
+  async function saveInspectEdit() {
+    let e;
+    try {
+      e = JSON.parse(memoryInspectBody.dataset.entry || '{}');
+    } catch (_err) { return; }
+    if (!e.key) return;
+    const content = (document.getElementById('memory-edit-content') || {}).value || '';
+    const mtype = (document.getElementById('memory-edit-type') || {}).value || 'fact';
+    const scope = (document.getElementById('memory-edit-scope') || {}).value || '';
+    const tagsRaw = (document.getElementById('memory-edit-tags') || {}).value || '';
+    const tags = tagsRaw.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+    try {
+      const resp = await fetch(apiBase + '/memory/' + encodeURIComponent(e.key), {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({content: content, type: mtype, scope: scope, tags: tags}),
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(function(){return {};});
+        alert('Save failed: ' + (data.error || resp.statusText));
+        return;
+      }
+      // Re-open inspect to pick up the saved state, refresh list/stats.
+      await openInspect(e.key);
+      loadMemoryStats();
+      loadMemoryList(memorySearchEl ? memorySearchEl.value.trim() : '');
+    } catch (err) {
+      alert('Save failed: ' + err.message);
+    }
+  }
   memoryInspectCloseBtn.addEventListener('click', function() {
     memoryInspectOverlay.style.display = 'none';
   });

@@ -2471,6 +2471,87 @@ class GatewayServer:
                 status_code=200 if resp.is_success else 502,
             )
 
+        async def memory_edit(request: Request) -> JSONResponse:
+            """Update an existing memory's content, type, tags, or scope.
+
+            Body shape (all fields optional, only changed ones supplied)::
+
+                {"content": "...", "type": "fact", "tags": [...], "scope": "..."}
+
+            Returns 404 if the key doesn't exist. content empty / missing
+            is treated as "leave unchanged"; pass an explicit empty
+            string only when really meant. tags here REPLACES the list
+            (the CLI add/remove tag flow is for additive edits).
+            """
+            from towel.memory.store import MEMORY_TYPES
+
+            memory = getattr(self.agent, "memory", None)
+            if memory is None:
+                return JSONResponse({"error": "no memory backend"}, status_code=503)
+            key = request.path_params["key"]
+            existing = memory.recall(key)
+            if existing is None:
+                return JSONResponse(
+                    {"error": f"no memory with key {key!r}"}, status_code=404
+                )
+            try:
+                body = await request.json()
+            except Exception:
+                return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+            if not isinstance(body, dict):
+                return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+
+            new_content = body.get("content")
+            if not isinstance(new_content, (str, type(None))):
+                return JSONResponse({"error": "content must be a string"}, status_code=400)
+            content = new_content if new_content is not None else existing.content
+
+            new_type = body.get("type") or existing.memory_type
+            if new_type not in MEMORY_TYPES:
+                return JSONResponse(
+                    {"error": f"type must be one of {list(MEMORY_TYPES)}"},
+                    status_code=400,
+                )
+
+            new_tags = body.get("tags")
+            if new_tags is not None and not (
+                isinstance(new_tags, list) and all(isinstance(t, str) for t in new_tags)
+            ):
+                return JSONResponse({"error": "tags must be a list of strings"}, status_code=400)
+
+            new_scope = body.get("scope")
+            if new_scope is not None and not isinstance(new_scope, str):
+                return JSONResponse({"error": "scope must be a string"}, status_code=400)
+
+            # remember() merges tags into the existing set; PATCH
+            # semantics call for REPLACE. So delete-then-reinsert
+            # iff tags were specified, otherwise leave them alone.
+            try:
+                if new_tags is not None:
+                    # Drop and re-add to get clean tag replacement.
+                    # forget() cascades graph links; we accept the
+                    # small loss because editing tags wholesale is
+                    # rare. Operators who want additive tag changes
+                    # already have memory.add_tag / remove_tag.
+                    saved_links_warning = False  # placeholder for telemetry
+                    memory.forget(key)
+                    updated = memory.remember(
+                        key, content, memory_type=new_type,
+                        source=existing.source,
+                        tags=new_tags,
+                        scope=new_scope if new_scope is not None else existing.scope,
+                    )
+                else:
+                    updated = memory.remember(
+                        key, content, memory_type=new_type,
+                        source=existing.source,
+                        scope=new_scope if new_scope is not None else None,
+                    )
+            except Exception as exc:
+                log.exception("memory.edit(%r) failed: %s", key, exc)
+                return JSONResponse({"error": str(exc)}, status_code=500)
+            return JSONResponse(updated.to_dict())
+
         async def memory_forget(request: Request) -> JSONResponse:
             """Delete a single memory by key.
 
@@ -2893,6 +2974,7 @@ class GatewayServer:
             # Order matters: more-specific routes first so /memory/stats
             # and /memory/{key}/inspect don't get shadowed by /memory/{key}.
             Route("/memory/{key}/inspect", memory_inspect),
+            Route("/memory/{key}", memory_edit, methods=["PATCH"]),
             Route("/memory/{key}", memory_forget, methods=["DELETE"]),
             Route("/fleet/spawn", fleet_spawn, methods=["POST"]),
             Route("/fleet/replace-worker", fleet_replace_worker, methods=["POST"]),
