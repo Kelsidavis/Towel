@@ -1608,9 +1608,33 @@ class GatewayServer:
             )
         )
 
+        # Chunk timeout: how long to wait for the next event from the
+        # worker. Without this an unannounced worker DC mid-stream
+        # leaves the queue.get() hanging forever — the client websocket
+        # stays open, the session never releases the worker assignment,
+        # and the operator has no way to unwedge it short of killing
+        # the coordinator.
+        chunk_timeout = float(
+            getattr(self.config, "worker_inference_timeout", 300.0) or 300.0
+        )
         try:
             while True:
-                msg = await queue.get()
+                try:
+                    msg = await asyncio.wait_for(queue.get(), timeout=chunk_timeout)
+                except asyncio.TimeoutError:
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "type": "error",
+                                "session": session_id,
+                                "message": (
+                                    f"timeout waiting for next stream event from "
+                                    f"{worker.id} after {chunk_timeout:.0f}s"
+                                ),
+                            }
+                        )
+                    )
+                    break
                 msg_type = msg.get("type")
                 if msg_type == "job_event":
                     event = msg.get("event", {})
@@ -1667,8 +1691,23 @@ class GatewayServer:
                     }
                 )
             )
+            # Chunk timeout: bound how long we'll wait for the next
+            # event. A silent worker DC mid-stream would otherwise
+            # leave this generator hanging — the SSE client would keep
+            # the HTTP connection open, the session would stay assigned
+            # to the dead worker, and the operator would have no way
+            # to recover short of restarting the coordinator.
+            chunk_timeout = float(
+                getattr(self.config, "worker_inference_timeout", 300.0) or 300.0
+            )
             while True:
-                msg = await queue.get()
+                try:
+                    msg = await asyncio.wait_for(queue.get(), timeout=chunk_timeout)
+                except asyncio.TimeoutError:
+                    raise RuntimeError(
+                        f"timeout waiting for next stream event from "
+                        f"{worker.id} after {chunk_timeout:.0f}s"
+                    )
                 msg_type = msg.get("type")
                 if msg_type == "job_event":
                     event = msg.get("event", {})
