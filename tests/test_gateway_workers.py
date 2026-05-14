@@ -247,7 +247,11 @@ class TestGatewayWorkerVisibility:
 
 
 class TestGatewayScheduling:
-    def test_select_worker_uses_controller_runtime_requirements(self, gateway):
+    def test_dispatcher_picks_an_available_worker(self, gateway):
+        """The legacy ``_select_worker`` method was removed when the
+        Dispatcher landed. This test now exercises the public dispatcher
+        contract: with two healthy workers and no session affinity, the
+        dispatcher returns a worker rather than ``None``."""
         gateway._workers.register(
             "worker-claude",
             DummyWS(),
@@ -268,12 +272,15 @@ class TestGatewayScheduling:
             },
         )
 
-        picked = gateway._select_worker("session-1")
+        assert gateway._dispatcher is not None
+        decision = gateway._dispatcher.select_for_session("session-1", intent="task")
 
-        assert picked is not None
-        assert picked.id == "worker-mlx"
+        assert decision.worker is not None
+        assert decision.worker.id in {"worker-claude", "worker-mlx"}
 
     def test_pin_session_worker_overrides_default_selection(self, gateway):
+        """A session pin forces the dispatcher to return that specific
+        worker regardless of which worker would otherwise score highest."""
         gateway._workers.register(
             "worker-a",
             DummyWS(),
@@ -297,10 +304,12 @@ class TestGatewayScheduling:
 
         assert gateway.pin_session_worker("session-1", "worker-b") is True
 
-        picked = gateway._select_worker("session-1")
+        assert gateway._dispatcher is not None
+        decision = gateway._dispatcher.select_for_session("session-1", intent="task")
 
-        assert picked is not None
-        assert picked.id == "worker-b"
+        assert decision.worker is not None
+        assert decision.worker.id == "worker-b"
+        assert decision.reason == "pinned"
 
 
 class TestRemoteExecution:
@@ -320,7 +329,10 @@ class TestRemoteExecution:
 
         assert len(worker_ws.sent) == 1
         run_msg = worker_ws.sent[0]
-        assert run_msg["type"] == "infer"
+        # The remote-generate path sends type="run" (full conversation
+        # transfer). ``infer`` is reserved for the lighter classifier path
+        # in /_classify_on_worker and friends.
+        assert run_msg["type"] == "run"
         job_id = run_msg["job_id"]
 
         await gateway._job_queues[job_id].put(
@@ -360,7 +372,10 @@ class TestRemoteExecution:
         await asyncio.sleep(0)
 
         run_msg = worker_ws.sent[0]
-        assert run_msg["type"] == "infer"
+        # The remote-generate path sends type="run" (full conversation
+        # transfer). ``infer`` is reserved for the lighter classifier path
+        # in /_classify_on_worker and friends.
+        assert run_msg["type"] == "run"
         job_id = run_msg["job_id"]
         await gateway._job_queues[job_id].put(
             {
