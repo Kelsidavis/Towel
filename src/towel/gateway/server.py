@@ -1197,9 +1197,14 @@ class GatewayServer:
         await worker.ws.send(json.dumps(payload))
 
         accumulated_text = ""
+        # Inference-chunk timeout: how long we'll wait for the next
+        # token / event from the worker. Operator-tunable so a cold
+        # 30B model doesn't trip a 120s default before its first
+        # token. Falls back to 300s if config is absent.
+        chunk_timeout = float(getattr(self.config, "worker_inference_timeout", 300.0) or 300.0)
         try:
             while True:
-                msg = await asyncio.wait_for(queue.get(), timeout=120.0)
+                msg = await asyncio.wait_for(queue.get(), timeout=chunk_timeout)
                 msg_type = msg.get("type")
                 if msg_type == "job_event":
                     event = msg.get("event", {})

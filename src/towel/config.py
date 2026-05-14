@@ -132,6 +132,17 @@ class TowelConfig(BaseModel):
     # running daemons where post-hoc debugging matters.
     dispatch_history_size: int = 500
 
+    # Max seconds the coordinator waits for any single chunk from a
+    # remote worker during inference. The previous hard-coded 120s
+    # was too tight for cold-loaded large models — a 30B llama-server
+    # on a quiet GPU routinely takes 90-180s to produce its first
+    # token, and the timeout fires before the model is ready. 300s
+    # is conservative; bump higher for very large models or slow
+    # hosts. Failures here log a TimeoutError and tear down the WS
+    # connection, so a too-low value also costs the operator a
+    # reconnect cycle.
+    worker_inference_timeout: float = 300.0
+
     @classmethod
     def load(cls, path: Path | None = None) -> TowelConfig:
         """Load config from TOML file, falling back to defaults."""
