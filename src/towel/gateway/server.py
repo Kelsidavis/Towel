@@ -1785,13 +1785,16 @@ class GatewayServer:
                 )
             mem_type = request.query_params.get("type") or None
             query = request.query_params.get("q") or None
+            tag = request.query_params.get("tag") or None
             try:
                 if query:
                     entries = memory.search(query)
                     if mem_type:
                         entries = [e for e in entries if e.memory_type == mem_type]
+                    if tag:
+                        entries = [e for e in entries if tag in (e.tags or [])]
                 else:
-                    entries = memory.recall_all(memory_type=mem_type)
+                    entries = memory.recall_all(memory_type=mem_type, tag=tag)
             except Exception as exc:
                 log.exception("Memory listing failed: %s", exc)
                 return JSONResponse(

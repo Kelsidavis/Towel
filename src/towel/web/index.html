@@ -330,6 +330,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     </div>
     <div id="memory-body" style="padding:14px 18px;overflow:auto;flex:1">
       <div id="memory-stats" style="margin-bottom:12px;color:var(--text-dim);font-size:0.9em">Loading…</div>
+      <div id="memory-tag-filter" style="margin-bottom:8px;display:flex;flex-wrap:wrap;gap:4px;align-items:center"></div>
       <div id="memory-list"></div>
     </div>
   </div>
@@ -1933,9 +1934,62 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     }
   }
 
+  // Single active tag filter on the panel (null = no filter). Updated
+  // by chip clicks below and applied to every list refresh.
+  let activeMemoryTag = null;
+
+  async function loadMemoryTagFilter() {
+    const tagFilterEl = document.getElementById('memory-tag-filter');
+    if (!tagFilterEl) return;
+    try {
+      const resp = await fetch(apiBase + '/memory?limit=500');
+      const data = await resp.json();
+      const tags = {};
+      for (const e of data.memories || []) {
+        for (const t of e.tags || []) {
+          tags[t] = (tags[t] || 0) + 1;
+        }
+      }
+      const sorted = Object.entries(tags).sort(function(a, b) { return b[1] - a[1]; });
+      if (!sorted.length) {
+        tagFilterEl.innerHTML = '<span style="color:var(--text-dim);font-size:0.8em">No tags in use yet.</span>';
+        return;
+      }
+      const chips = sorted.map(function(pair) {
+        const tag = pair[0], n = pair[1];
+        const active = activeMemoryTag === tag;
+        const bg = active ? 'var(--green)' : 'rgba(80,160,255,0.18)';
+        const color = active ? 'var(--bg)' : 'var(--text)';
+        return '<span data-tag="' + escHtml(tag) + '" style="cursor:pointer;background:' + bg
+          + ';color:' + color + ';padding:2px 8px;border-radius:8px;font-size:0.8em">'
+          + escHtml(tag) + ' · ' + n + '</span>';
+      });
+      const clear = activeMemoryTag
+        ? '<span data-tag="" style="cursor:pointer;color:var(--text-dim);font-size:0.8em;padding:2px 6px">clear ✕</span>'
+        : '';
+      tagFilterEl.innerHTML = '<span style="color:var(--text-dim);font-size:0.8em;margin-right:4px">tags:</span>'
+        + chips.join('') + clear;
+    } catch (err) {
+      tagFilterEl.innerHTML = '';
+    }
+  }
+
+  // Delegated click on the tag filter row.
+  document.addEventListener('click', function(e) {
+    const chip = e.target.closest('#memory-tag-filter [data-tag]');
+    if (!chip) return;
+    const tag = chip.getAttribute('data-tag') || null;
+    activeMemoryTag = activeMemoryTag === tag ? null : tag;
+    loadMemoryList(memorySearchEl ? memorySearchEl.value.trim() : '');
+    loadMemoryTagFilter();
+  });
+
   async function loadMemoryList(query) {
-    const url = apiBase + '/memory'
-      + (query ? '?q=' + encodeURIComponent(query) : '?limit=200');
+    const params = [];
+    if (query) params.push('q=' + encodeURIComponent(query));
+    else params.push('limit=200');
+    if (activeMemoryTag) params.push('tag=' + encodeURIComponent(activeMemoryTag));
+    const url = apiBase + '/memory' + (params.length ? '?' + params.join('&') : '');
     try {
       const resp = await fetch(url);
       const data = await resp.json();
@@ -1977,7 +2031,9 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   function openMemoryPanel() {
     memoryOverlay.style.display = 'flex';
     memorySearchEl.value = '';
+    activeMemoryTag = null;
     loadMemoryStats();
+    loadMemoryTagFilter();
     loadMemoryList('');
   }
   function closeMemoryPanel() { memoryOverlay.style.display = 'none'; }
@@ -1986,6 +2042,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   memoryCloseBtn.addEventListener('click', closeMemoryPanel);
   memoryRefreshBtn.addEventListener('click', function() {
     loadMemoryStats();
+    loadMemoryTagFilter();
     loadMemoryList(memorySearchEl.value.trim());
   });
   memoryOverlay.addEventListener('click', function(e) {
