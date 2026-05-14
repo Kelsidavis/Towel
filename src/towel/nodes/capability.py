@@ -7,6 +7,55 @@ from datetime import UTC, datetime
 from typing import Any
 
 
+def resources_from_worker_caps(caps: dict[str, Any]) -> "NodeResources":
+    """Build a NodeResources from a worker's full capabilities dict.
+
+    Workers report VRAM at the top level of ``caps`` (``total_vram_mb``)
+    and inside a ``gpus`` array, NOT inside the ``resources`` sub-dict.
+    They also report ``ram_available_mb`` (psutil's convention) rather
+    than ``ram_used_mb``. Without this helper:
+
+      - /cluster/nodes showed ``vram_total_mb: 0`` for every worker
+        regardless of GPU presence.
+      - RAM-used always read 0.
+      - The heartbeat path (every 15s) re-applied the buggy
+        `NodeResources.from_dict` over the resources sub-dict and
+        clobbered any correct value the register path had managed
+        to set.
+
+    Used by both ``NodeCapability.from_worker_capabilities`` and the
+    NodeTracker heartbeat update so the cluster view stays correct
+    across both code paths.
+    """
+    resources_data = dict(caps.get("resources") or {})
+    if not resources_data and caps.get("hostname"):
+        resources_data = {"hostname": caps["hostname"]}
+    if "vram_total_mb" not in resources_data:
+        top_vram = caps.get("total_vram_mb")
+        if top_vram is None:
+            # Older workers report only per-GPU vram_mb in `gpus`.
+            gpus = caps.get("gpus") or []
+            if isinstance(gpus, list):
+                top_vram = sum(
+                    int(g.get("vram_mb", 0))
+                    for g in gpus
+                    if isinstance(g, dict)
+                )
+        if top_vram:
+            resources_data["vram_total_mb"] = int(top_vram)
+    if (
+        "ram_used_mb" not in resources_data
+        and "ram_total_mb" in resources_data
+        and "ram_available_mb" in resources_data
+    ):
+        resources_data["ram_used_mb"] = max(
+            0,
+            int(resources_data["ram_total_mb"])
+            - int(resources_data["ram_available_mb"]),
+        )
+    return NodeResources.from_dict(resources_data)
+
+
 @dataclass
 class NodeResources:
     """Hardware resources available on a node."""
@@ -192,44 +241,9 @@ class NodeCapability:
     @classmethod
     def from_worker_capabilities(cls, worker_id: str, caps: dict[str, Any]) -> NodeCapability:
         """Build a NodeCapability from the flat capabilities dict workers send."""
-        resources_data = dict(caps.get("resources") or {})
-        if not resources_data and caps.get("hostname"):
-            resources_data = {"hostname": caps["hostname"]}
-        # Workers report VRAM at the top level of `caps` (and inside
-        # `gpus`), NOT inside `resources` — so the previous code
-        # silently left vram_total_mb=0 for every worker, making
-        # /cluster/nodes useless for the operator question "which node
-        # has free VRAM right now?". Hoist the value into the
-        # resources_data dict if it's missing.
-        if "vram_total_mb" not in resources_data:
-            top_vram = caps.get("total_vram_mb")
-            if top_vram is None:
-                # Older workers report only per-GPU vram_mb in `gpus`.
-                gpus = caps.get("gpus") or []
-                if isinstance(gpus, list):
-                    top_vram = sum(
-                        int(g.get("vram_mb", 0))
-                        for g in gpus
-                        if isinstance(g, dict)
-                    )
-            if top_vram:
-                resources_data["vram_total_mb"] = int(top_vram)
-        # Workers report `ram_available_mb` (psutil convention), not
-        # `ram_used_mb`. Derive used from total - available so the
-        # cluster view doesn't always read "RAM used: 0".
-        if (
-            "ram_used_mb" not in resources_data
-            and "ram_total_mb" in resources_data
-            and "ram_available_mb" in resources_data
-        ):
-            resources_data["ram_used_mb"] = max(
-                0,
-                int(resources_data["ram_total_mb"])
-                - int(resources_data["ram_available_mb"]),
-            )
         return cls(
             worker_id=worker_id,
-            resources=NodeResources.from_dict(resources_data),
+            resources=resources_from_worker_caps(caps),
             backend=caps.get("backend", ""),
             model=str(caps.get("model", "")),
             modes=caps.get("modes", []),

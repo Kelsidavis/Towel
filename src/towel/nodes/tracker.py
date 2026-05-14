@@ -69,10 +69,14 @@ class NodeTracker:
         if not node:
             return False
 
-        # Update resources if provided
-        resources = capabilities.get("resources")
-        if resources:
-            node.resources = NodeResources.from_dict(resources)
+        # Update resources if provided. Use the same hoist helper the
+        # register path uses so VRAM and ram_used don't get clobbered
+        # to zero every 15-second heartbeat — the resources sub-dict
+        # alone is missing top-level fields like total_vram_mb.
+        from towel.nodes.capability import resources_from_worker_caps
+
+        if capabilities.get("resources") or capabilities.get("total_vram_mb") or capabilities.get("gpus"):
+            node.resources = resources_from_worker_caps(capabilities)
 
         # Update context window if it changed (model swap, etc)
         new_ctx = capabilities.get("context_window")

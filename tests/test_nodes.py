@@ -179,6 +179,42 @@ class TestNodeTracker:
         assert removed is not None
         assert len(tracker) == 0
 
+    def test_heartbeat_preserves_top_level_vram(self):
+        """Workers heartbeat every 15s with the same top-level-vram
+        capability shape they used at register. The heartbeat path
+        previously called NodeResources.from_dict on the resources
+        sub-dict alone, which lacks total_vram_mb — so each heartbeat
+        clobbered the vram back to 0. The cluster view then
+        oscillated between "correct" (just after register) and
+        "useless" (after the next heartbeat tick)."""
+        tracker = NodeTracker()
+        caps = {
+            "hostname": "SparklesMint",
+            "backend": "llama",
+            "total_vram_mb": 16303,
+            "gpus": [{"name": "RTX 5080", "vram_mb": 16303}],
+            "resources": {
+                "hostname": "SparklesMint",
+                "cpu_count": 32,
+                "ram_total_mb": 128709,
+                "ram_available_mb": 117307,
+            },
+        }
+        node = tracker.register("w-spark", caps)
+        assert node.resources.vram_total_mb == 16303
+
+        # Now heartbeat with live_resources added but the same
+        # underlying shape. The tracker must keep the vram intact.
+        caps_hb = dict(caps)
+        caps_hb["live_resources"] = {"load_avg_1min": 2.5, "cpu_pressure": 0.1}
+        ok = tracker.update_heartbeat("w-spark", caps_hb)
+        assert ok is True
+        node_after = tracker.get("w-spark")
+        assert node_after is not None
+        assert node_after.resources.vram_total_mb == 16303
+        # ram_used still derived from total - available.
+        assert node_after.resources.ram_used_mb == 128709 - 117307
+
     def test_context_slot_lifecycle(self):
         tracker = NodeTracker()
         tracker.register("w1", {"backend": "mlx", "context_window": 8192})
