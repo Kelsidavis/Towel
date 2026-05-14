@@ -119,6 +119,16 @@ class TestRemember:
         assert server.store.recall("k").memory_type == "fact"
 
 
+class TestSearchTagFilter:
+    def test_search_with_tag_param(self, server):
+        server.store.remember("a", "alpha beta", "fact", tags=["work"])
+        server.store.remember("b", "alpha gamma", "fact", tags=["home"])
+        reply = _call(server, "memory_search", {"query": "alpha", "tag": "work"})
+        text = _text(reply)
+        assert "a:" in text
+        assert "b:" not in text
+
+
 class TestRememberTags:
     def test_remember_with_tags(self, server):
         _call(

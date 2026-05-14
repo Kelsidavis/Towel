@@ -448,6 +448,36 @@ class TestSourceTracking:
         assert store.recall("op_fact") is not None
 
 
+class TestTagAwareSearch:
+    def test_search_filters_by_tag(self, store):
+        store.remember("a", "alpha beta", "fact", tags=["work"])
+        store.remember("b", "alpha gamma", "fact", tags=["home"])
+        results = store.search("alpha", tag="work")
+        assert [e.key for e in results] == ["a"]
+
+    def test_fused_search_filters_by_tag(self, store):
+        store.remember("a", "the project quack", "fact", tags=["pets"])
+        store.remember("b", "the project work", "fact", tags=["job"])
+        store.remember("c", "project notes", "fact", tags=["pets"])
+        results = store.fused_search("project", tag="pets")
+        keys = {e.key for e in results}
+        assert keys <= {"a", "c"}
+        assert "b" not in keys
+
+    def test_tag_filter_with_graph_neighbors(self, store):
+        # Even neighbor expansion respects the tag filter — an
+        # un-tagged neighbor of a tagged seed should NOT slip into
+        # the result set under a tag filter.
+        store.remember("anchor", "scientist data", "fact", tags=["work"])
+        store.remember("buddy", "tangential note", "fact", tags=[])
+        for _ in range(5):
+            store._bump_recall(["anchor", "buddy"])
+        results = store.fused_search("scientist", tag="work")
+        keys = {e.key for e in results}
+        assert "anchor" in keys
+        assert "buddy" not in keys
+
+
 class TestTags:
     def test_remember_accepts_tags(self, store):
         store.remember("k", "v", tags=["work", "urgent"])

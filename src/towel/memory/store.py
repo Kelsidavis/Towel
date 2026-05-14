@@ -540,7 +540,12 @@ class MemoryStore:
 
     # ── retrieval ─────────────────────────────────────────────────────
 
-    def search(self, query: str, limit: int = 5) -> list[MemoryEntry]:
+    def search(
+        self,
+        query: str,
+        limit: int = 5,
+        tag: str | None = None,
+    ) -> list[MemoryEntry]:
         """BM25-ranked search over memory content.
 
         Returns up to ``limit`` entries ordered by FTS5 rank (most
@@ -548,6 +553,10 @@ class MemoryStore:
         often because the user typed a stopword or a substring that FTS5
         treats as a token boundary — falls back to a case-insensitive
         substring scan so simple "what's my role" lookups still work.
+
+        ``tag``, if set, restricts the result set to entries carrying
+        that exact tag — applied as a post-filter so BM25 ranking is
+        preserved within the tagged subset.
 
         Does NOT bump recall stats; that's the caller's job (typically
         ``to_prompt_block``) so internal callers like ``towel memory
@@ -583,7 +592,10 @@ class MemoryStore:
                 ).fetchall()
         finally:
             con.close()
-        return [_row_to_entry(r) for r in rows]
+        entries = [_row_to_entry(r) for r in rows]
+        if tag:
+            entries = [e for e in entries if tag in e.tags]
+        return entries
 
     def add_tag(self, key: str, tag: str) -> bool:
         """Append a tag to an existing memory. Returns True on a real change.
@@ -726,7 +738,12 @@ class MemoryStore:
                 out.append(entry)
         return out
 
-    def fused_search(self, query: str, limit: int = 5) -> list[MemoryEntry]:
+    def fused_search(
+        self,
+        query: str,
+        limit: int = 5,
+        tag: str | None = None,
+    ) -> list[MemoryEntry]:
         """3-way Reciprocal Rank Fusion: BM25 + vector + graph.
 
         Standard RRF: each ranker contributes ``1 / (k + rank_i)`` to
@@ -751,8 +768,11 @@ class MemoryStore:
         rather than over-weighting the surviving signals.
         """
         rrf_k = 60
-        bm25 = self.search(query, limit=limit * 2)
-        vec = self.vector_search(query, limit=limit * 2)
+        # Tag filter is applied to each ranker so neither BM25 nor the
+        # vector path can dominate by surfacing untagged matches.
+        bm25 = self.search(query, limit=limit * 2, tag=tag)
+        vec_all = self.vector_search(query, limit=limit * 2)
+        vec = [e for e in vec_all if not tag or tag in e.tags]
         # Graph ranker: seed from the top BM25 hit (most-confident
         # lexical anchor), pull weighted neighbors. If BM25 missed
         # too, try the top vector hit so paraphrase queries still
@@ -760,9 +780,9 @@ class MemoryStore:
         graph_entries: list[MemoryEntry] = []
         anchor = (bm25 or vec or [None])[0]
         if anchor is not None:
-            graph_entries = [
-                rel for rel, _w in self.recall_related(anchor.key, limit=limit * 2)
-            ]
+            for rel, _w in self.recall_related(anchor.key, limit=limit * 2):
+                if not tag or tag in rel.tags:
+                    graph_entries.append(rel)
 
         scores: dict[str, float] = {}
         entries: dict[str, MemoryEntry] = {}

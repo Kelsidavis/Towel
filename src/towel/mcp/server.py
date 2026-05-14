@@ -48,9 +48,10 @@ def _tool_definitions() -> list[dict[str, Any]]:
         {
             "name": "memory_search",
             "description": (
-                "Search persistent memory by BM25 relevance to a query, "
-                "with graph-augmented neighbors. Returns up to `limit` "
-                "entries ordered by best match first."
+                "Search persistent memory by BM25 + vector + graph "
+                "fusion. Returns up to `limit` entries ranked by "
+                "combined relevance. Pass `tag` to restrict the "
+                "result set to memories carrying that label."
             ),
             "inputSchema": {
                 "type": "object",
@@ -64,6 +65,10 @@ def _tool_definitions() -> list[dict[str, Any]]:
                         "default": 5,
                         "minimum": 1,
                         "maximum": 50,
+                    },
+                    "tag": {
+                        "type": "string",
+                        "description": "Restrict to memories carrying this exact tag.",
                     },
                 },
                 "required": ["query"],
@@ -209,23 +214,17 @@ class MemoryMCPServer:
     def _t_search(self, args: dict[str, Any]) -> str:
         query = args.get("query", "")
         limit = int(args.get("limit", 5))
-        entries = self.store.search(query, limit=limit)
-        # Augment with graph neighbors of the top hit so MCP clients
-        # see the same BM25+graph fusion the in-process runtime gets.
-        seen = {e.key for e in entries}
-        for seed in list(entries):
-            if len(entries) >= limit:
-                break
-            for rel, _w in self.store.recall_related(seed.key, limit=3):
-                if rel.key in seen or len(entries) >= limit:
-                    continue
-                seen.add(rel.key)
-                entries.append(rel)
+        tag = args.get("tag") or None
+        # fused_search runs the same BM25 + vector + graph RRF the
+        # in-process runtime uses, so MCP clients get parity with the
+        # local agent without duplicating retrieval logic.
+        entries = self.store.fused_search(query, limit=limit, tag=tag)
         if not entries:
             return "No matching memories."
         lines = [f"Found {len(entries)} memor(ies):"]
         for e in entries:
-            lines.append(f"  [{e.memory_type}] {e.key}: {e.content}")
+            tag_str = f" {{{','.join(e.tags)}}}" if e.tags else ""
+            lines.append(f"  [{e.memory_type}]{tag_str} {e.key}: {e.content}")
         return "\n".join(lines)
 
     def _t_recall(self, args: dict[str, Any]) -> str:

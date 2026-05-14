@@ -2245,19 +2245,30 @@ def memory_remove(key: str) -> None:
 
 @memory.command(name="search")
 @click.argument("query")
-def memory_search(query: str) -> None:
-    """Search memories."""
+@click.option("--tag", default=None, help="Restrict results to entries carrying this tag.")
+@click.option(
+    "--fused/--bm25-only",
+    default=True,
+    help="Default fused: BM25 + vector + graph RRF. --bm25-only uses lexical match only.",
+)
+def memory_search(query: str, tag: str | None, fused: bool) -> None:
+    """Search memories by relevance to QUERY (BM25 + vector + graph)."""
     from towel.memory.store import MemoryStore
 
     store = MemoryStore()
-    results = store.search(query)
+    if fused:
+        results = store.fused_search(query, limit=10, tag=tag)
+    else:
+        results = store.search(query, limit=10, tag=tag)
 
     if not results:
-        console.print(f"[dim]No memories matching:[/dim] {query}")
+        console.print(f"[dim]No memories matching:[/dim] {query}"
+                      + (f" [tag={tag}]" if tag else ""))
         return
 
     for e in results:
-        console.print(f"  [green]{e.key}[/green] [dim][{e.memory_type}][/dim]")
+        tag_str = f" [{', '.join(e.tags)}]" if e.tags else ""
+        console.print(f"  [green]{e.key}[/green] [dim][{e.memory_type}]{tag_str}[/dim]")
         console.print(f"    {e.content}")
 
 

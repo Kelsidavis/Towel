@@ -69,7 +69,8 @@ class MemorySkill(Skill):
                 name="recall",
                 description=(
                     "Search your memories. Use when the user "
-                    "references something from a past session."
+                    "references something from a past session. Pass "
+                    "a tag to restrict the search to a labeled subset."
                 ),
                 parameters={
                     "type": "object",
@@ -77,6 +78,10 @@ class MemorySkill(Skill):
                         "query": {
                             "type": "string",
                             "description": "Search term (searches keys and content)",
+                        },
+                        "tag": {
+                            "type": "string",
+                            "description": "Optional: restrict to memories carrying this tag.",
                         },
                     },
                     "required": ["query"],
@@ -108,12 +113,13 @@ class MemorySkill(Skill):
 
             case "recall":
                 query = arguments["query"]
+                tag = arguments.get("tag") or None
                 # fused_search = BM25 + vector (when embeddings extra
                 # installed), degrades to BM25 alone otherwise. Same
                 # retrieval the prompt-block injection uses, so the
                 # LLM-driven recall and the automatic injection don't
                 # disagree about what's relevant.
-                results = self._store.fused_search(query, limit=5)
+                results = self._store.fused_search(query, limit=5, tag=tag)
                 if not results:
                     return "No matching memories found."
                 lines = [f"Found {len(results)} memory(ies):"]
