@@ -110,3 +110,86 @@ class TestExtractViaLLM:
 
         out = asyncio.run(extract_via_llm("text", step))
         assert out == []
+
+
+class TestScheduleBackgroundExtraction:
+    """The fire-and-forget path. Tests run the loop briefly to let
+    the scheduled task complete, then inspect the store."""
+
+    def test_schedules_and_writes_captures(self, tmp_path):
+        from towel.memory.llm_extract import schedule_background_extraction, _inflight
+        from towel.memory.store import MemoryStore
+
+        _inflight.clear()  # isolate from other tests
+        store = MemoryStore(store_dir=tmp_path)
+
+        async def step(prompt: str) -> str:
+            return '[{"key": "role", "content": "engineer", "type": "user"}]'
+
+        async def run() -> None:
+            scheduled = schedule_background_extraction(
+                "I am a senior engineer", step, store,
+            )
+            assert scheduled is True
+            # Yield to let the scheduled task run to completion.
+            await asyncio.sleep(0.05)
+
+        asyncio.run(run())
+        assert store.recall("role") is not None
+        assert store.recall("role").source == "llm_extract:auto"
+
+    def test_deduplicates_inflight_text(self, tmp_path):
+        from towel.memory.llm_extract import schedule_background_extraction, _inflight
+        from towel.memory.store import MemoryStore
+
+        _inflight.clear()
+        store = MemoryStore(store_dir=tmp_path)
+        calls = []
+
+        async def step(prompt: str) -> str:
+            calls.append(prompt)
+            await asyncio.sleep(0.01)
+            return "[]"
+
+        async def run() -> None:
+            a = schedule_background_extraction("identical text", step, store)
+            b = schedule_background_extraction("identical text", step, store)
+            assert a is True
+            # Second call dedup-rejects while the first is in flight.
+            assert b is False
+            await asyncio.sleep(0.05)
+
+        asyncio.run(run())
+        # Only one inference call despite two schedule attempts.
+        assert len(calls) == 1
+
+    def test_no_loop_returns_false(self, tmp_path):
+        # Calling outside an asyncio loop must just refuse to
+        # schedule rather than crash the synchronous caller.
+        from towel.memory.llm_extract import schedule_background_extraction, _inflight
+        from towel.memory.store import MemoryStore
+
+        _inflight.clear()
+        store = MemoryStore(store_dir=tmp_path)
+
+        async def step(prompt: str) -> str:
+            return "[]"
+
+        # No asyncio.run wrapping → no running loop.
+        result = schedule_background_extraction("x", step, store)
+        assert result is False
+
+    def test_empty_text_skips_schedule(self, tmp_path):
+        from towel.memory.llm_extract import schedule_background_extraction, _inflight
+        from towel.memory.store import MemoryStore
+
+        _inflight.clear()
+        store = MemoryStore(store_dir=tmp_path)
+
+        async def step(prompt: str) -> str:
+            return "[]"
+
+        async def run() -> bool:
+            return schedule_background_extraction("   ", step, store)
+
+        assert asyncio.run(run()) is False

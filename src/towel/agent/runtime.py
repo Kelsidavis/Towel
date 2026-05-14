@@ -642,9 +642,36 @@ class AgentRuntime:
         # Heuristic auto-capture: run before the memory block is built
         # so any new captures land in this same turn's prompt instead
         # of waiting one round-trip to be useful.
+        regex_captures = []
         if query and self.memory and getattr(self.config, "auto_capture", True):
             from towel.memory.auto_capture import apply as _ac_apply
-            _ac_apply(query, self.memory)
+            regex_captures = _ac_apply(query, self.memory)
+        # LLM-based extract fires only when regex missed and the
+        # operator opted in. Background task — the user's response
+        # is not blocked. Same backend serializes the work behind
+        # the actual turn generation, so an idle moment is when the
+        # extraction actually runs.
+        if (
+            query and self.memory
+            and not regex_captures
+            and getattr(self.config, "auto_llm_extract", False)
+        ):
+            try:
+                from towel.agent.conversation import Conversation as _Conv, Role as _Role
+                from towel.memory.llm_extract import schedule_background_extraction
+
+                async def _step(prompt: str) -> str:
+                    c = _Conv()
+                    c.add(_Role.USER, prompt)
+                    msg = await self.step(c)
+                    return getattr(msg, "content", "") or ""
+
+                schedule_background_extraction(
+                    query, _step, self.memory,
+                    scope=self.memory.default_scope or None,
+                )
+            except Exception as exc:
+                log.debug("auto-llm-extract scheduling failed: %s", exc)
         system_content = self._build_system_content(
             include_tools_section=not use_native_tools,
             query=query,

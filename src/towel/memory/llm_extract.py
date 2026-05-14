@@ -121,6 +121,72 @@ def parse_response(raw: str) -> list[LLMCapture]:
     return out
 
 
+# Track in-flight queries so a chatty user doesn't pile up parallel
+# extractions for the same text. The runtime fires once and drops
+# duplicate requests until the first one finishes.
+_inflight: set[str] = set()
+
+
+def schedule_background_extraction(
+    text: str,
+    step: Callable[[str], Awaitable[str]],
+    store: Any,
+    *,
+    scope: str | None = None,
+) -> bool:
+    """Fire-and-forget LLM extraction in the current asyncio loop.
+
+    Returns True if a task was actually scheduled. Returns False
+    when:
+
+    * the text is empty,
+    * we're not in an asyncio loop (sync caller — runtime always
+      is async, so this is just a guard),
+    * an extraction for this exact text is already in flight.
+
+    Failures inside the task are swallowed at debug level — the
+    user's response must never be blocked or fail because of
+    background extraction. Captures land with source set to
+    ``llm_extract:auto`` so they're easy to audit and tidy
+    independently of operator-driven extract calls.
+    """
+    import asyncio
+
+    text = (text or "").strip()
+    if not text:
+        return False
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    if text in _inflight:
+        return False
+    _inflight.add(text)
+
+    async def _run() -> None:
+        try:
+            captures = await extract_via_llm(text, step)
+            for cap in captures:
+                if store.recall(cap.key) is not None:
+                    continue
+                try:
+                    store.remember(
+                        cap.key, cap.content,
+                        memory_type=cap.memory_type,
+                        source="llm_extract:auto",
+                        scope=scope,
+                    )
+                except Exception as exc:
+                    log.debug("auto-llm-extract store write failed: %s", exc)
+        except Exception as exc:
+            log.debug("auto-llm-extract task failed: %s", exc)
+        finally:
+            _inflight.discard(text)
+
+    loop.create_task(_run())
+    return True
+
+
 async def extract_via_llm(
     text: str, step: Callable[[str], Awaitable[str]]
 ) -> list[LLMCapture]:

@@ -112,6 +112,14 @@ class TowelConfig(BaseModel):
     # so false positives stay low. Set to False to disable entirely.
     auto_capture: bool = True
 
+    # When regex auto-capture produces zero captures on a user turn,
+    # fire a background LLM call to extract memories the patterns
+    # missed (multi-sentence context, paraphrase, indirect mention).
+    # Off by default because it costs one extra inference call per
+    # quiet turn. Failures are silent — the user's response is never
+    # blocked, but a slow backend still serializes the work.
+    auto_llm_extract: bool = False
+
     @classmethod
     def load(cls, path: Path | None = None) -> TowelConfig:
         """Load config from TOML file, falling back to defaults."""
