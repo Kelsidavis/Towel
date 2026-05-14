@@ -282,6 +282,17 @@ def serve(
 
 
 async def _start(agent: Any, gateway: Any) -> None:
+    # Surface INFO-level events from the gateway (worker registrations,
+    # dispatch decisions, idle-result sweeps, etc.) in the terminal.
+    # Without this the root logger defaults to WARNING and the operator
+    # sees the Rich banner once then silence even as workers connect.
+    import logging as _logging
+
+    _logging.basicConfig(
+        level=_logging.INFO,
+        format="[%(asctime)s] %(levelname)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
     await agent.load_model()
     console.print("[green]Ready. Gateway starting...[/green]")
     await gateway.start()
