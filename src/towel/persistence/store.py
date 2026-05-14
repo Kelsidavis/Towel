@@ -89,6 +89,7 @@ class ConversationStore:
                         created_at=conv.created_at.isoformat(),
                         message_count=len(conv),
                         summary=conv.display_title,
+                        tags=conv.tags,
                     )
                 )
             except (json.JSONDecodeError, KeyError, ValueError):
@@ -246,6 +247,7 @@ class ConversationSummary:
         message_count: int,
         summary: str,
         title: str = "",
+        tags: list[str] | None = None,
     ) -> None:
         self.id = id
         self.title = title
@@ -253,3 +255,8 @@ class ConversationSummary:
         self.created_at = created_at
         self.message_count = message_count
         self.summary = summary  # display_title (title if set, else auto)
+        # Tags hoisted to the summary so callers (e.g. /api/sessions)
+        # don't have to re-read each conversation JSON to render the
+        # session list — observed in profiling: 50 sessions × one
+        # file-read each per /api/sessions call.
+        self.tags = list(tags) if tags else []

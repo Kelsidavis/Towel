@@ -3260,23 +3260,20 @@ class GatewayServer:
             summaries = store.list_conversations(limit=50)
             items = []
             for s in summaries:
-                item: dict[str, Any] = {
-                    "id": s.id,
-                    "title": s.title,
-                    "channel": s.channel,
-                    "created_at": s.created_at,
-                    "message_count": s.message_count,
-                    "summary": s.summary,
-                }
-                # Load tags
-                try:
-                    import json as _json
-
-                    data = _json.loads(store._path_for(s.id).read_text(encoding="utf-8"))
-                    item["tags"] = data.get("tags", [])
-                except Exception:
-                    item["tags"] = []
-                items.append(item)
+                # Tags now ride on the summary itself — no second
+                # file-read per session needed (was 50 extra disk
+                # reads per /api/sessions call before).
+                items.append(
+                    {
+                        "id": s.id,
+                        "title": s.title,
+                        "channel": s.channel,
+                        "created_at": s.created_at,
+                        "message_count": s.message_count,
+                        "summary": s.summary,
+                        "tags": list(s.tags),
+                    }
+                )
             return JSONResponse({"sessions": items})
 
         async def admin_restart(_request: Any) -> JSONResponse:
