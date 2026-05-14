@@ -225,6 +225,24 @@ END;
 """
 
 
+def open_for_config(config: Any) -> MemoryStore:
+    """Construct a MemoryStore wired from a TowelConfig.
+
+    Centralizes the "scope + cap + future knobs" wiring so the five
+    runtime construction sites (serve, worker, chat, mcp, ask) don't
+    each have to repeat the config plumbing. Falls back to defaults
+    when the relevant attributes don't exist — keeps this importable
+    from non-runtime contexts that pass a stub config.
+    """
+    from towel.memory.scope import derive_scope
+
+    store = MemoryStore(default_scope=derive_scope())
+    cap = getattr(config, "memory_recall_log_cap", None)
+    if isinstance(cap, int) and cap > 0:
+        store.RECALL_LOG_CAP = cap
+    return store
+
+
 def _row_to_entry(row: sqlite3.Row) -> MemoryEntry:
     last = row["last_recalled_at"]
     # Older rows may predate the `source` or `tags` columns —
@@ -1215,13 +1233,29 @@ class MemoryStore:
                 break
         return out
 
+    # Tunable cap on the recall_log table. The default matches the
+    # original cap=5000 default for record_recall — kept as a class
+    # attribute so operators can rebind it (e.g. for very long-running
+    # daemons that want a fatter audit window) without forking the
+    # signature on every call site.
+    RECALL_LOG_CAP: int = 5000
+
+    def recall_log_size(self) -> int:
+        """How many rows the recall_log currently holds. Used by doctor."""
+        con = self._connect()
+        try:
+            row = con.execute("SELECT COUNT(*) AS n FROM recall_log").fetchone()
+        finally:
+            con.close()
+        return int(row["n"]) if row else 0
+
     def record_recall(
         self,
         query: str,
         keys: list[str],
         *,
         scope: str | None = None,
-        cap: int = 5000,
+        cap: int | None = None,
     ) -> None:
         """Append a row to recall_log and trim to ``cap`` newest entries.
 
@@ -1234,6 +1268,7 @@ class MemoryStore:
         """
         if not query or not keys:
             return
+        effective_cap = cap if cap is not None else self.RECALL_LOG_CAP
         now_iso = datetime.now(UTC).isoformat()
         scope_str = scope if scope is not None else self.default_scope
         try:
@@ -1248,7 +1283,7 @@ class MemoryStore:
                     "DELETE FROM recall_log WHERE id NOT IN ("
                     "  SELECT id FROM recall_log ORDER BY id DESC LIMIT ?"
                     ")",
-                    (cap,),
+                    (effective_cap,),
                 )
         except sqlite3.Error as exc:
             # Recall logging is best-effort — must never break retrieval.

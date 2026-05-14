@@ -307,13 +307,13 @@ def serve(
     console.print()
 
     from towel.gateway.server import GatewayServer
-    from towel.memory.scope import derive_scope
     from towel.memory.store import MemoryStore
 
     # Derive a project scope from the cwd the coordinator was started
     # in. New captures land in that scope, retrieval ORs current-scope
     # with global so universal facts (role, preferences) still surface.
-    memory = MemoryStore(default_scope=derive_scope())
+    from towel.memory.store import open_for_config as _mk_memory_store
+    memory = _mk_memory_store(config)
     skills = _build_skill_registry(config, memory_store=memory)
     agent_rt = _build_runtime(
         config, skills, memory, backend, claude_model, ollama_url, llama_url, llama_model
@@ -493,11 +493,11 @@ def worker(
     console.print()
 
     from towel.gateway.worker_client import RemoteWorkerClient, default_worker_capabilities
-    from towel.memory.scope import derive_scope
     from towel.memory.store import MemoryStore
     from towel.skills.registry import SkillRegistry
 
-    memory = MemoryStore(default_scope=derive_scope())
+    from towel.memory.store import open_for_config as _mk_memory_store
+    memory = _mk_memory_store(config)
     skills = _build_skill_registry(config, memory_store=memory) if allow_tools else SkillRegistry()
     agent_rt = _build_runtime(
         config, skills, memory, backend, claude_model, ollama_url, llama_url, llama_model
@@ -629,11 +629,11 @@ def chat(
     from towel.agent.conversation import Conversation, Role
     from towel.agent.events import EventType
     from towel.cli.slash import SlashContext, handle_slash
-    from towel.memory.scope import derive_scope
     from towel.memory.store import MemoryStore
     from towel.persistence.store import ConversationStore
 
-    memory = MemoryStore(default_scope=derive_scope())
+    from towel.memory.store import open_for_config as _mk_memory_store
+    memory = _mk_memory_store(config)
     skills = _build_skill_registry(config, memory_store=memory)
     agent_rt = _build_runtime(
         config, skills, memory, backend, claude_model, ollama_url, llama_url, llama_model
@@ -1199,13 +1199,12 @@ def mcp_serve() -> None:
     memory_forget, memory_related, memory_stats.
     """
     from towel.mcp import serve_stdio
-    from towel.memory.scope import derive_scope
-    from towel.memory.store import MemoryStore
+    from towel.memory.store import open_for_config
 
     # Tie the store to the project the MCP server was started in
     # so MCP-driven writes land in the right scope by default.
     # Clients can still override via the per-call `scope` argument.
-    store = MemoryStore(default_scope=derive_scope())
+    store = open_for_config(TowelConfig.load())
     try:
         serve_stdio(store=store)
     except KeyboardInterrupt:
@@ -1993,10 +1992,10 @@ def ask(
     if system:
         config.identity = system
 
-    from towel.memory.scope import derive_scope
     from towel.memory.store import MemoryStore
 
-    memory = MemoryStore(default_scope=derive_scope())
+    from towel.memory.store import open_for_config as _mk_memory_store
+    memory = _mk_memory_store(config)
     skills = _build_skill_registry(config, memory_store=memory)
     backend = config.backend or _auto_detect_backend()
     agent_rt = _build_runtime(
@@ -2728,7 +2727,6 @@ def memory_extract(
     import sys as _sys
 
     from towel.memory.llm_extract import extract_via_llm
-    from towel.memory.scope import derive_scope
     from towel.memory.store import MemoryStore
 
     if stdin:
@@ -2786,6 +2784,38 @@ def memory_extract(
     console.print(f"\n[bold]{suffix} {added}, skipped {skipped}.[/bold]")
     if dry_run:
         console.print("[dim]Re-run with --apply to commit.[/dim]")
+
+
+@memory.command(name="healthcheck")
+def memory_healthcheck() -> None:
+    """Run the memory-related doctor checks and exit non-zero on failures.
+
+    Subset of `towel doctor` focused on the memory subsystem so this
+    is cheap to drop into cron / CI as a smoke test. Same Check
+    objects as the full doctor; same exit semantics — non-zero on
+    any fail, zero otherwise (warnings don't fail).
+    """
+    from towel.cli.doctor import (
+        check_memory_embeddings,
+        check_memory_store,
+        check_sqlite_fts5,
+    )
+
+    checks = [
+        check_sqlite_fts5(),
+        check_memory_embeddings(),
+        check_memory_store(),
+    ]
+    failed = 0
+    for c in checks:
+        c.render()
+        if not c.passed:
+            failed += 1
+    console.print()
+    if failed:
+        console.print(f"  [red]{failed} failed[/red]")
+        raise SystemExit(1)
+    console.print("  [green]memory subsystem hoopy[/green]")
 
 
 @memory.command(name="ingest")

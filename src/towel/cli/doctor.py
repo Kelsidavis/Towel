@@ -642,8 +642,8 @@ def check_memory_store() -> Check:
     # retrieved anything. Surface this only when count > 5 — small
     # stores legitimately don't have recall history yet.
     try:
-        recalls = store.recent_recalls(limit=1)
-        if count > 5 and not recalls:
+        log_size = store.recall_log_size()
+        if count > 5 and log_size == 0:
             c.warn(
                 "No recall events logged — has the agent run any "
                 "queries since the recall_log was introduced?"
@@ -652,6 +652,16 @@ def check_memory_store() -> Check:
                 "Send a message through the agent or run "
                 "`towel memory search QUERY` to populate the log."
             )
+        elif log_size > 0:
+            cap = store.RECALL_LOG_CAP
+            pct = (log_size * 100 // cap) if cap else 0
+            c.ok(f"Recall log: {log_size} events ({pct}% of cap {cap})")
+            if log_size >= cap:
+                c.warn(
+                    "Recall log is at cap — older events are being "
+                    "pruned. Bump TowelConfig.memory_recall_log_cap "
+                    "to extend the audit window."
+                )
     except Exception:
         pass
 

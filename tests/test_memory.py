@@ -638,6 +638,31 @@ class TestRecallLog:
         assert rows[0]["query"] == "q4"
 
 
+class TestRecallLogCap:
+    def test_uses_class_attr_cap_when_none_passed(self, tmp_path):
+        store = MemoryStore(store_dir=tmp_path)
+        store.RECALL_LOG_CAP = 2
+        store.remember("k", "v")
+        for i in range(5):
+            store.record_recall(f"q{i}", ["k"])
+        assert store.recall_log_size() == 2
+
+    def test_open_for_config_applies_cap(self, tmp_path):
+        from towel.config import TowelConfig
+        from towel.memory.store import open_for_config
+
+        cfg = TowelConfig()
+        cfg.memory_recall_log_cap = 99
+        # Operate in tmp_path to keep the system store untouched.
+        import os
+        os.environ["TOWEL_HOME"] = str(tmp_path)
+        try:
+            store = open_for_config(cfg)
+            assert store.RECALL_LOG_CAP == 99
+        finally:
+            os.environ.pop("TOWEL_HOME", None)
+
+
 class TestRecallsReturning:
     def test_finds_recalls_that_returned_key(self, store):
         store.remember("alpha", "x", "fact")

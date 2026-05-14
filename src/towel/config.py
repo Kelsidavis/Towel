@@ -120,6 +120,11 @@ class TowelConfig(BaseModel):
     # blocked, but a slow backend still serializes the work.
     auto_llm_extract: bool = False
 
+    # Cap on the per-query recall_log table. 5000 rows is ~750KB and
+    # well under any actual storage concern; long-running daemons
+    # auditing several months of activity may want to bump it.
+    memory_recall_log_cap: int = 5000
+
     @classmethod
     def load(cls, path: Path | None = None) -> TowelConfig:
         """Load config from TOML file, falling back to defaults."""
