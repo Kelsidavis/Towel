@@ -331,6 +331,20 @@ class TestConversationsAPI:
         resp = client.get("/conversations/nope/export")
         assert resp.status_code == 404
 
+    def test_export_unknown_format_rejected(self, store, client):
+        """A client passing `format=evil` previously got markdown back
+        with no indication of the typo. Better to fail loud — 400
+        with the list of valid formats."""
+        conv = Conversation(id="exp-fmt", channel="cli")
+        conv.add(Role.USER, "hi")
+        store.save(conv)
+
+        resp = client.get("/conversations/exp-fmt/export?format=evil")
+        assert resp.status_code == 400
+        assert "markdown" in resp.json()["error"]
+        assert "json" in resp.json()["error"]
+        assert "text" in resp.json()["error"]
+
 
 class TestSimpleAskAPI:
     def test_ask_missing_message(self, client):

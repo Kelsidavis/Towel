@@ -3261,6 +3261,15 @@ class GatewayServer:
 
             conv_id = request.path_params["conv_id"]
             fmt = request.query_params.get("format", "markdown")
+            # Reject unknown formats explicitly rather than silently
+            # falling back to markdown — a client passing `format=evil`
+            # got markdown back with no indication of the typo, which
+            # made it hard to spot config errors.
+            if fmt not in ("markdown", "json", "text"):
+                return JSONResponse(
+                    {"error": "format must be one of: markdown, json, text"},
+                    status_code=400,
+                )
             store = self.sessions.store
             if not store:
                 return JSONResponse({"error": "No store"}, status_code=500)
