@@ -6,6 +6,7 @@ from towel.cli.doctor import (
     check_environment,
     check_gateway,
     check_mlx,
+    check_persisted_worker_state,
     check_skills,
     check_storage,
     run_doctor,
@@ -144,12 +145,60 @@ class TestStorageCheck:
         assert c.passed
 
 
+class TestPersistedWorkerStateCheck:
+    def test_clean_slate_when_file_absent(self, tmp_path, monkeypatch):
+        # Point the default store at an empty tmp dir.
+        from towel.persistence import worker_state
+
+        monkeypatch.setattr(
+            worker_state, "DEFAULT_WORKER_STATE_PATH", tmp_path / "absent.json"
+        )
+        c = check_persisted_worker_state()
+        c.finalize()
+        assert c.passed
+        assert any("clean slate" in d for d in c.details)
+
+    def test_reports_disabled_draining_and_overrides(self, tmp_path, monkeypatch):
+        import json
+
+        from towel.persistence import worker_state
+
+        state_path = tmp_path / "worker_state.json"
+        state_path.write_text(
+            json.dumps(
+                {
+                    "gpu-host": {
+                        "enabled": False,
+                        "draining": False,
+                        "tasks": ["code_review"],
+                    },
+                    "pi-host": {
+                        "enabled": True,
+                        "draining": True,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            worker_state, "DEFAULT_WORKER_STATE_PATH", state_path
+        )
+        c = check_persisted_worker_state()
+        c.finalize()
+        assert c.passed
+        # Disabled and draining warnings surfaced.
+        assert any("gpu-host" in w for w in c.warnings)
+        assert any("pi-host" in w for w in c.warnings)
+        # Manual override is in details (it's informational, not a warning).
+        assert any("code_review" in d for d in c.details)
+
+
 class TestRunDoctor:
     def test_run_all_checks(self):
         config = TowelConfig()
         config.gateway.port = 19997  # avoid conflicts
         checks = run_doctor(config)
-        assert len(checks) == 7
+        assert len(checks) == 8
         names = [c.name for c in checks]
         assert "Environment" in names
         assert "Configuration" in names
@@ -158,6 +207,7 @@ class TestRunDoctor:
         assert "Skills" in names
         assert "Gateway" in names
         assert "Storage" in names
+        assert "Persisted worker state" in names
 
     def test_all_checks_finalized(self):
         checks = run_doctor(TowelConfig())

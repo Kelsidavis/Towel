@@ -75,6 +75,7 @@ def run_doctor(config: TowelConfig | None = None) -> list[Check]:
     checks.append(check_skills(config))
     checks.append(check_gateway(config))
     checks.append(check_storage())
+    checks.append(check_persisted_worker_state())
 
     return checks
 
@@ -437,6 +438,60 @@ def check_gateway(config: TowelConfig) -> Check:
             c.ok(f"{label} port {port} is available")
 
     c.ok("Gateway not running (start with: towel serve)")
+
+    return c
+
+
+def check_persisted_worker_state() -> Check:
+    """Surface persisted worker state so operators can audit it.
+
+    The coordinator stores enabled/draining flags and manual task overrides
+    in ``$TOWEL_HOME/worker_state.json``. When operators wonder "why is this
+    worker disabled?" or "why is my GPU host only picking up chat?", the
+    answer often lives here — exposing it from doctor avoids needing to
+    crack open the JSON file by hand.
+    """
+    from towel.persistence.worker_state import WorkerStateStore
+
+    c = Check("Persisted worker state")
+    store = WorkerStateStore()
+    if not store.path.exists():
+        c.ok("No persisted worker state (clean slate)")
+        return c
+
+    try:
+        states = store.load()
+    except Exception as exc:
+        c.fail(f"Failed to read {store.path}: {exc}")
+        return c
+
+    if not states:
+        c.ok(f"{store.path} is present but empty")
+        return c
+
+    disabled = [wid for wid, s in states.items() if not s.get("enabled", True)]
+    draining = [wid for wid, s in states.items() if s.get("draining", False)]
+    overrides = {
+        wid: s.get("tasks") for wid, s in states.items() if s.get("tasks")
+    }
+
+    c.ok(f"{len(states)} worker(s) with persisted state in {store.path}")
+    if disabled:
+        c.warn(f"Disabled (excluded from dispatch): {', '.join(disabled)}")
+        c.suggestions.append(
+            "Re-enable via the fleet panel or POST /workers/{id}/enable"
+        )
+    if draining:
+        c.warn(f"Draining (no new sessions): {', '.join(draining)}")
+    if overrides:
+        for worker_id, tasks in overrides.items():
+            c.details.append(
+                f"Manual task override for {worker_id}: {', '.join(tasks)}"
+            )
+        c.suggestions.append(
+            "Clear an override by POSTing an empty tasks list to "
+            "/workers/{id}/tasks"
+        )
 
     return c
 
