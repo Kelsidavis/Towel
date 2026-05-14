@@ -84,9 +84,29 @@ class DispatchDecision:
     # see the degradation and either upgrade a worker or accept the
     # quality drop.
     quality_degraded: bool = False
+    # Timing data filled in by the inference path after the request
+    # completes. None until the response lands; populated in-place via
+    # `record_completion` below so the dispatch log shows operators
+    # how long each routing decision actually took to satisfy.
+    ttft_ms: float | None = None
+    total_ms: float | None = None
+
+    def record_completion(self, *, ttft_ms: float | None, total_ms: float | None) -> None:
+        """Stamp post-dispatch timing onto this decision.
+
+        Inference paths (_quick_remote_infer / _step_remote_inference)
+        call this when the worker's response lands so the dispatch
+        log surfaces cold-vs-warm without operators having to grep
+        worker logs. Idempotent — second call overwrites; harmless
+        when called with None.
+        """
+        if ttft_ms is not None:
+            self.ttft_ms = float(ttft_ms)
+        if total_ms is not None:
+            self.total_ms = float(total_ms)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "worker_id": self.worker.id if self.worker else None,
             "intent": self.intent,
             "task_type": str(self.task_type) if self.task_type else None,
@@ -100,6 +120,11 @@ class DispatchDecision:
             "previous_worker_id": self.previous_worker_id,
             "quality_degraded": self.quality_degraded,
         }
+        if self.ttft_ms is not None:
+            out["ttft_ms"] = round(self.ttft_ms, 1)
+        if self.total_ms is not None:
+            out["total_ms"] = round(self.total_ms, 1)
+        return out
 
 
 class Dispatcher:
@@ -571,6 +596,19 @@ class Dispatcher:
         # Build the dict shape ``node_meets_task_requirements`` expects.
         node = {"capabilities": worker.capabilities or {}}
         return not node_meets_task_requirements(node, task)
+
+    def last_decision_for_session(self, session_id: str) -> DispatchDecision | None:
+        """Most-recent decision recorded for ``session_id``, or None.
+
+        Used by the inference paths to stamp ttft/total timing onto
+        the dispatch decision after the response lands — gives the
+        operator a single place (dispatch log) to see both who got
+        chosen AND how long it took.
+        """
+        for d in reversed(self._history):
+            if d.session_id == session_id:
+                return d
+        return None
 
     def _record(self, decision: DispatchDecision) -> None:
         self._history.append(decision)

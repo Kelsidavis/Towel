@@ -812,6 +812,15 @@ class GatewayServer:
                 # numbers — previously this path discarded everything
                 # but the text, leaving tokens=0 tps=0 in responses.
                 remote_meta = result.get("metadata", {}) or {}
+                # Stamp timing onto the dispatch decision so the
+                # operator can see both routing + latency in one view.
+                if self._dispatcher is not None:
+                    decision = self._dispatcher.last_decision_for_session(session_id)
+                    if decision is not None:
+                        decision.record_completion(
+                            ttft_ms=remote_meta.get("ttft_ms"),
+                            total_ms=remote_meta.get("total_ms"),
+                        )
                 response = Message(
                     role=Role.ASSISTANT,
                     content=text,
@@ -3185,15 +3194,25 @@ class GatewayServer:
                     session.conversation.messages.append(response)
                 self.sessions.save(session_id)
 
-                return JSONResponse(
-                    {
-                        "response": response.content,
-                        "session": session_id,
-                        "tokens": response.metadata.get("tokens", 0),
-                        "tps": round(response.metadata.get("tps", 0), 1),
-                        "worker": response.metadata.get("remote_worker", "coordinator"),
-                    }
-                )
+                # Surface timing data when the worker reported it.
+                # ttft_ms isn't always present (streaming-only path
+                # populates it); fall back to total_ms or omit the
+                # field when neither is known.
+                meta = response.metadata or {}
+                body: dict[str, Any] = {
+                    "response": response.content,
+                    "session": session_id,
+                    "tokens": meta.get("tokens", 0),
+                    "tps": round(meta.get("tps", 0), 1),
+                    "worker": meta.get("remote_worker", "coordinator"),
+                }
+                if isinstance(meta.get("ttft_ms"), (int, float)):
+                    body["ttft_ms"] = round(meta["ttft_ms"], 1)
+                if isinstance(meta.get("total_ms"), (int, float)):
+                    body["total_ms"] = round(meta["total_ms"], 1)
+                if meta.get("empty_text_tool_call_fallback"):
+                    body["fallback"] = "empty_text_tool_call"
+                return JSONResponse(body)
             except Exception as e:
                 return JSONResponse({"error": str(e)}, status_code=500)
             finally:
