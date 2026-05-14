@@ -398,11 +398,22 @@ class LlamaRuntime:
             if reasoning.strip():
                 text = reasoning
         usage = data.get("usage", {})
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        completion_tokens = usage.get("completion_tokens", 0)
+        # When we substituted reasoning_content for empty content,
+        # llama-server's usage.completion_tokens reflects the empty
+        # `content`, not the text we're actually returning. Same for
+        # builds that simply don't populate usage. Estimate from the
+        # returned text so the UI and OpenAI-compat clients see a
+        # number that lines up with the response they got.
+        if completion_tokens == 0 and text:
+            from towel.agent.context import count_tokens_fallback
+            completion_tokens = count_tokens_fallback(text)
         return LlamaGenerationResult(
             text=text,
             tool_calls=_normalize_openai_tool_calls(message.get("tool_calls") or []),
-            prompt_tokens=usage.get("prompt_tokens", 0),
-            completion_tokens=usage.get("completion_tokens", 0),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
         )
 
     async def stream(self, conversation: Conversation) -> AsyncIterator[str]:

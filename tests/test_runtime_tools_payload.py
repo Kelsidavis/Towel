@@ -261,6 +261,106 @@ class TestClaudeNativeTools:
         assert calls[0].arguments == {"path": "a"}
 
 
+class TestLlamaTokenAccounting:
+    """`generate_from_request` must report sensible completion_tokens
+    even when llama-server's `usage` block is missing or wrong.
+
+    Reasoning models (Qwen3, DeepSeek-R1) routinely return empty
+    `content` plus a populated `reasoning_content`; the runtime
+    substitutes the reasoning text for content, but the `usage`
+    block still reflects the empty content. Reporting 0 tokens
+    when we just handed the caller 500 chars of text confuses
+    both the UI and OpenAI-compat clients tracking spend.
+    """
+
+    def _runtime_with_mock(self, response_data: dict[str, Any]) -> LlamaRuntime:
+        import httpx
+
+        config = TowelConfig(identity="You are Towel.")
+        rt = LlamaRuntime(config, skills=_skills_with_one_tool(), auto_start=False)
+        rt._loaded = True
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=response_data)
+
+        rt._mock_transport = httpx.MockTransport(handler)
+        return rt
+
+    def _request(self) -> dict[str, Any]:
+        return {
+            "mode": "llama_chat",
+            "messages": [{"role": "user", "content": "hello"}],
+            "system": "You are Towel.",
+        }
+
+    async def _generate(self, rt: LlamaRuntime, request: dict[str, Any]):
+        # Patch httpx.AsyncClient to use the mock transport. The simplest
+        # path that doesn't require a fixture is monkey-patching at the
+        # module level for the duration of the call.
+        import httpx
+        from towel.agent import llama_runtime as mod
+
+        orig_async_client = mod.httpx.AsyncClient
+
+        def _client_with_mock(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
+            kwargs["transport"] = rt._mock_transport
+            return orig_async_client(*args, **kwargs)
+
+        mod.httpx.AsyncClient = _client_with_mock
+        try:
+            return await rt.generate_from_request(request)
+        finally:
+            mod.httpx.AsyncClient = orig_async_client
+
+    def test_reasoning_fallback_estimates_completion_tokens(self):
+        # Worst case: content empty, reasoning_content populated,
+        # usage reports zero. The runtime returns reasoning as text
+        # and must estimate the count rather than reporting 0.
+        import asyncio
+
+        reasoning = "This is a long reasoning trace. " * 20  # ~120 tokens
+        rt = self._runtime_with_mock({
+            "choices": [{
+                "message": {
+                    "content": "",
+                    "reasoning_content": reasoning,
+                }
+            }],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 0},
+        })
+        result = asyncio.run(self._generate(rt, self._request()))
+        assert result.text.startswith("This is a long reasoning trace.")
+        assert result.completion_tokens > 0
+        # ~4 chars/token, length-of-reasoning gives us a meaningful number.
+        assert result.completion_tokens >= 100
+
+    def test_zero_usage_with_real_content_estimates_too(self):
+        # Some llama-server builds simply omit `usage` or return zeros.
+        # Reporting 0 tokens for visible content is the same UX bug.
+        import asyncio
+
+        rt = self._runtime_with_mock({
+            "choices": [{"message": {"content": "Hello there!"}}],
+            "usage": {},
+        })
+        result = asyncio.run(self._generate(rt, self._request()))
+        assert result.text == "Hello there!"
+        assert result.completion_tokens > 0
+
+    def test_real_usage_is_preserved(self):
+        # When llama-server reports a real count, we MUST use it
+        # rather than overriding with our estimate.
+        import asyncio
+
+        rt = self._runtime_with_mock({
+            "choices": [{"message": {"content": "Hello!"}}],
+            "usage": {"prompt_tokens": 12, "completion_tokens": 3},
+        })
+        result = asyncio.run(self._generate(rt, self._request()))
+        assert result.completion_tokens == 3
+        assert result.prompt_tokens == 12
+
+
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #
 # --------------------------------------------------------------------------- #

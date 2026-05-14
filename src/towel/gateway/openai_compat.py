@@ -163,6 +163,15 @@ def build_openai_routes(
                     response = await agent.step(conv)
                 meta = response.metadata or {}
                 completion_tokens = meta.get("tokens", meta.get("output_tokens", 0))
+                # Defensive: when the worker reports zero completion_tokens
+                # but we have visible content, estimate from the response
+                # text. Happens when an upstream llama-server build doesn't
+                # populate usage, or when a worker is running pre-fix code
+                # and silently drops the count for reasoning_content
+                # substitutions.
+                if completion_tokens == 0 and response.content:
+                    from towel.agent.context import count_tokens_fallback
+                    completion_tokens = count_tokens_fallback(response.content)
                 # Prefer the worker's reported prompt_tokens; fall back
                 # to estimating from the conversation we sent. Previous
                 # code derived prompt_tokens from completion_tokens // 4
