@@ -273,6 +273,26 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   </div>
 </div>
 
+<div id="memory-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.54);z-index:1100;display:none;align-items:center;justify-content:center">
+  <div id="memory-panel" style="width:min(900px,96vw);max-height:88vh;overflow:hidden;background:var(--bg);border:1px solid var(--border);border-radius:8px;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border)">
+      <div>
+        <strong>MEMORY</strong>
+        <div style="font-size:0.8em;color:var(--text-dim)">Persistent agent state — captured automatically and explicitly via the remember tool.</div>
+      </div>
+      <div style="display:flex;gap:6px">
+        <input id="memory-search" type="text" placeholder="search content…" style="background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font:inherit">
+        <button class="tb-btn" id="memory-refresh-btn" title="Refresh memory list">refresh</button>
+        <button class="tb-btn" id="memory-close-btn" title="Close memory panel">close</button>
+      </div>
+    </div>
+    <div id="memory-body" style="padding:14px 18px;overflow:auto;flex:1">
+      <div id="memory-stats" style="margin-bottom:12px;color:var(--text-dim);font-size:0.9em">Loading…</div>
+      <div id="memory-list"></div>
+    </div>
+  </div>
+</div>
+
 <div id="fleet-overlay">
   <div id="fleet-panel">
     <div id="fleet-header">
@@ -405,6 +425,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     <div class="session-info" id="session-info"></div>
     <div class="actions">
       <button class="tb-btn" id="tb-fleet" title="Open worker and route controls">fleet</button>
+      <button class="tb-btn" id="tb-memory" title="View persistent memory: stats, recent captures, search">memory</button>
       <button class="tb-btn" id="tb-export" title="Export as markdown">export</button>
       <button class="tb-btn" id="tb-delete" title="Delete conversation">delete</button>
     </div>
@@ -1834,6 +1855,115 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   });
   fleetCloseBtn.addEventListener('click',closeFleetPanel);
 
+  // ── Memory panel ──────────────────────────────────────────────────
+  const memoryOverlay = document.getElementById('memory-overlay');
+  const memoryListEl = document.getElementById('memory-list');
+  const memoryStatsEl = document.getElementById('memory-stats');
+  const memorySearchEl = document.getElementById('memory-search');
+  const memoryRefreshBtn = document.getElementById('memory-refresh-btn');
+  const memoryCloseBtn = document.getElementById('memory-close-btn');
+  const tbMemory = document.getElementById('tb-memory');
+
+  async function loadMemoryStats() {
+    try {
+      const resp = await fetch(apiBase + '/memory/stats');
+      const s = await resp.json();
+      if (!s || s.error) {
+        memoryStatsEl.textContent = s && s.error ? s.error : 'no stats';
+        return;
+      }
+      const recallPct = s.total ? Math.round((s.recalled / s.total) * 100) : 0;
+      const byType = Object.entries(s.by_type || {}).sort((a,b)=>b[1]-a[1]);
+      const bySource = Object.entries(s.by_source || {}).sort((a,b)=>b[1]-a[1]);
+      memoryStatsEl.innerHTML =
+        `<div><strong>${s.total}</strong> entries · `
+        + `<strong>${s.recalled}</strong> recalled (${recallPct}%) · `
+        + `<strong>${s.total_recall_events}</strong> total recalls</div>`
+        + `<div style="margin-top:4px">types: `
+        + byType.map(([k,v])=>`<span style="margin-right:8px">${escHtml(k)}=${v}</span>`).join('')
+        + `</div>`
+        + `<div style="margin-top:2px">sources: `
+        + bySource.map(([k,v])=>`<span style="margin-right:8px">${escHtml(k)}=${v}</span>`).join('')
+        + `</div>`;
+    } catch (err) {
+      memoryStatsEl.textContent = 'stats fetch failed: ' + err.message;
+    }
+  }
+
+  async function loadMemoryList(query) {
+    const url = apiBase + '/memory'
+      + (query ? '?q=' + encodeURIComponent(query) : '?limit=200');
+    try {
+      const resp = await fetch(url);
+      const data = await resp.json();
+      const entries = data.memories || [];
+      if (!entries.length) {
+        memoryListEl.innerHTML = '<div style="color:var(--text-dim)">No memories.</div>';
+        return;
+      }
+      memoryListEl.innerHTML = entries.map(function(e) {
+        const src = e.source ? escHtml(e.source) : 'operator';
+        const recall = e.recall_count || 0;
+        const updated = (e.updated_at || '').slice(0, 19).replace('T', ' ');
+        return `<div style="padding:8px 10px;border:1px solid var(--border);border-radius:4px;margin-bottom:6px">`
+          + `<div style="display:flex;justify-content:space-between;align-items:baseline">`
+          +   `<strong>${escHtml(e.key)}</strong>`
+          +   `<span style="font-size:0.8em;color:var(--text-dim)">[${escHtml(e.type || 'fact')}] · ${src} · recalls=${recall}</span>`
+          + `</div>`
+          + `<div style="margin-top:4px;white-space:pre-wrap;font-family:inherit">${escHtml((e.content || '').slice(0, 400))}${(e.content || '').length > 400 ? '…' : ''}</div>`
+          + `<div style="font-size:0.75em;color:var(--text-dim);margin-top:4px">updated ${escHtml(updated)}`
+          +   ` <button data-mem-key="${escHtml(e.key)}" class="tb-btn" style="margin-left:6px;padding:2px 6px;font-size:0.85em">forget</button>`
+          + `</div>`
+          + `</div>`;
+      }).join('');
+    } catch (err) {
+      memoryListEl.innerHTML = '<div style="color:var(--red)">load failed: ' + escHtml(err.message) + '</div>';
+    }
+  }
+
+  function openMemoryPanel() {
+    memoryOverlay.style.display = 'flex';
+    memorySearchEl.value = '';
+    loadMemoryStats();
+    loadMemoryList('');
+  }
+  function closeMemoryPanel() { memoryOverlay.style.display = 'none'; }
+
+  tbMemory.addEventListener('click', openMemoryPanel);
+  memoryCloseBtn.addEventListener('click', closeMemoryPanel);
+  memoryRefreshBtn.addEventListener('click', function() {
+    loadMemoryStats();
+    loadMemoryList(memorySearchEl.value.trim());
+  });
+  memoryOverlay.addEventListener('click', function(e) {
+    if (e.target === memoryOverlay) closeMemoryPanel();
+  });
+  // Debounced search so each keystroke doesn't slam the API.
+  let memorySearchTimer = null;
+  memorySearchEl.addEventListener('input', function() {
+    clearTimeout(memorySearchTimer);
+    memorySearchTimer = setTimeout(function() {
+      loadMemoryList(memorySearchEl.value.trim());
+    }, 250);
+  });
+  memoryListEl.addEventListener('click', async function(e) {
+    const btn = e.target.closest('[data-mem-key]');
+    if (!btn) return;
+    const key = btn.getAttribute('data-mem-key');
+    if (!confirm('Forget memory "' + key + '"?')) return;
+    try {
+      const resp = await fetch(apiBase + '/memory/' + encodeURIComponent(key), { method: 'DELETE' });
+      if (!resp.ok) {
+        alert('Forget failed: ' + resp.statusText);
+        return;
+      }
+      loadMemoryStats();
+      loadMemoryList(memorySearchEl.value.trim());
+    } catch (err) {
+      alert('Forget failed: ' + err.message);
+    }
+  });
+
   // Launch-worker form: toggle visibility, submit to /fleet/spawn.
   fleetLaunchBtn.addEventListener('click', function() {
     const open = fleetLaunchForm.style.display !== 'none';
@@ -1910,6 +2040,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     if(e.key==='Escape'&&isStreaming)stopGeneration();
   });
   document.addEventListener('keydown',function(e){
+    if(e.key==='Escape'&&memoryOverlay.style.display==='flex'){closeMemoryPanel(); return;}
     if(e.key==='Escape'&&fleetOverlay.classList.contains('visible')){closeFleetPanel(); return;}
     if(e.key==='Escape'&&isStreaming)stopGeneration();
   });

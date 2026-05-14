@@ -1807,6 +1807,50 @@ class GatewayServer:
                 }
             )
 
+        async def memory_stats(_request: Request) -> JSONResponse:
+            """Aggregate counts and salience signal for the memory panel.
+
+            Returns a small JSON object the UI can use to render a
+            dashboard without pulling the entire corpus client-side.
+            """
+            memory = getattr(self.agent, "memory", None)
+            if memory is None:
+                return JSONResponse(
+                    {"total": 0, "recalled": 0, "by_type": {}, "by_source": {}}
+                )
+            try:
+                entries = memory.recall_all()
+            except Exception as exc:
+                log.exception("Memory stats failed: %s", exc)
+                return JSONResponse(
+                    {"error": f"Memory backend error: {exc}"}, status_code=500
+                )
+            total = len(entries)
+            recalled = sum(1 for e in entries if e.recall_count > 0)
+            by_type: dict[str, int] = {}
+            by_source: dict[str, int] = {}
+            for e in entries:
+                by_type[e.memory_type] = by_type.get(e.memory_type, 0) + 1
+                src = (getattr(e, "source", "") or "") or "operator"
+                by_source[src] = by_source.get(src, 0) + 1
+            # Recent unvalidated captures: surfaces likely heuristic
+            # false-positives so operators can spot-check.
+            pending = sorted(
+                (e for e in entries if e.recall_count == 0),
+                key=lambda e: e.created_at,
+                reverse=True,
+            )[:5]
+            return JSONResponse(
+                {
+                    "total": total,
+                    "recalled": recalled,
+                    "total_recall_events": sum(e.recall_count for e in entries),
+                    "by_type": by_type,
+                    "by_source": by_source,
+                    "recent_unvalidated": [e.to_dict() for e in pending],
+                }
+            )
+
         async def fleet_inventory(_request: Request) -> JSONResponse:
             """Aggregate ``available_models`` across the whole fleet.
 
@@ -2769,6 +2813,7 @@ class GatewayServer:
             Route("/dispatch/explain", dispatch_explain),
             Route("/skills", skills_list),
             Route("/memory", memory_list),
+            Route("/memory/stats", memory_stats),
             Route("/memory/{key}", memory_forget, methods=["DELETE"]),
             Route("/fleet/spawn", fleet_spawn, methods=["POST"]),
             Route("/fleet/replace-worker", fleet_replace_worker, methods=["POST"]),
