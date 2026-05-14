@@ -93,6 +93,36 @@ def cli() -> None:
     pass
 
 
+async def _load_model_with_friendly_error(agent_rt: Any) -> bool:
+    """Call ``agent_rt.load_model()`` and render a remediation panel on failure.
+
+    Returns ``True`` on success, ``False`` after printing a friendly Rich
+    Panel listing the three most common causes. Used by user-facing
+    commands (``chat``, ``ask``, ``commit``, etc.) so a bad model name or a
+    stopped backend produces actionable guidance instead of a bare stack
+    trace.
+    """
+    try:
+        await agent_rt.load_model()
+    except Exception as exc:
+        console.print(
+            Panel(
+                f"[bold red]Failed to load model.[/bold red]\n\n{exc}\n\n"
+                "[dim]Common causes:[/dim]\n"
+                "  • Wrong model name in [cyan]~/.towel/config.toml[/cyan] — "
+                "run [cyan]towel setup[/cyan] to pick one\n"
+                "  • Backend not running (e.g. Ollama daemon stopped) — "
+                "check [cyan]towel doctor[/cyan]\n"
+                "  • No network for first-time download — "
+                "verify the model identifier exists",
+                border_style="red",
+                title="Don't Panic.",
+            )
+        )
+        return False
+    return True
+
+
 def _auto_detect_backend() -> str | None:
     """Auto-detect the best available backend for this system."""
     from towel.agent.discovery import detect_gpus, find_llama_server
@@ -579,23 +609,7 @@ def chat(
 
     async def _chat_loop() -> None:
         console.print("[dim]Connecting...[/dim]")
-        try:
-            await agent_rt.load_model()
-        except Exception as exc:
-            console.print(
-                Panel(
-                    f"[bold red]Failed to load model.[/bold red]\n\n{exc}\n\n"
-                    "[dim]Common causes:[/dim]\n"
-                    "  • Wrong model name in [cyan]~/.towel/config.toml[/cyan] — "
-                    "run [cyan]towel setup[/cyan] to pick one\n"
-                    "  • Backend not running (e.g. Ollama daemon stopped) — "
-                    "check [cyan]towel doctor[/cyan]\n"
-                    "  • No network for first-time download — "
-                    "verify the model identifier exists",
-                    border_style="red",
-                    title="Don't Panic.",
-                )
-            )
+        if not await _load_model_with_friendly_error(agent_rt):
             return
         console.print("[green]Ready.[/green]\n")
 
@@ -1772,7 +1786,8 @@ def ask(
     async def _run() -> None:
         if not raw:
             console.print("[dim]Loading model...[/dim]", stderr=True)
-        await agent_rt.load_model()
+        if not await _load_model_with_friendly_error(agent_rt):
+            return
 
         if stream and not raw:
             async for event in agent_rt.step_streaming(conv):
@@ -2735,7 +2750,8 @@ def watch(files: tuple[str, ...], prompt: str | None, interval: float, once: boo
         conv.add(Role.USER, full)
 
         async def _run() -> None:
-            await agent_rt.load_model()
+            if not await _load_model_with_friendly_error(agent_rt):
+                return
             response = await agent_rt.step(conv)
             console.print(f"\n[bold green]towel>[/bold green] {response.content}")
             meta = response.metadata
