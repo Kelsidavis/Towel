@@ -2284,7 +2284,16 @@ class GatewayServer:
             for worker in self._workers.list():
                 caps = worker.capabilities or {}
                 inventory = caps.get("available_models") or []
-                cached = model in inventory
+                # Treat the currently-loaded model as "cached" — it
+                # has to be on disk to be loaded in RAM. Without this
+                # check, a worker actively serving the requested model
+                # comes back has_model_cached=false, which misleads
+                # replace-worker UIs into recommending a fresh download.
+                current_model = caps.get("model")
+                cached = (
+                    model in inventory
+                    or (isinstance(current_model, str) and current_model == model)
+                )
                 worker_cap = float(caps.get("max_param_b_est") or 0.0)
                 fits = est_size is None or worker_cap >= est_size
                 tier = worker_quality_tier(caps)
