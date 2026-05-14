@@ -272,6 +272,102 @@ class TestWorkersEndpointSurfacesOverrideFlag:
         assert flagged and flagged[0]["tasks_overridden"] is False
 
 
+class TestOfflinePersistedSurface:
+    """Offline workers with persisted state should be visible in /workers
+    so operators can manage them (clear stale overrides for hosts that
+    aren't currently connected, etc.)."""
+
+    def test_offline_persisted_surfaced_in_workers_payload(self, tmp_path, store):
+        import json
+
+        state_path = tmp_path / "worker_state.json"
+        state_path.write_text(
+            json.dumps(
+                {
+                    "offline-host": {
+                        "enabled": False,
+                        "draining": False,
+                        "tasks": ["chat"],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        gateway = GatewayServer(
+            config=TowelConfig(),
+            agent=_FakeAgent(),
+            sessions=SessionManager(store=store),
+            pin_store=SessionPinStore(path=tmp_path / "pins.json"),
+            worker_state_store=WorkerStateStore(path=state_path),
+        )
+        # No worker connected — should still surface via offline_persisted.
+        from starlette.testclient import TestClient
+
+        client = TestClient(gateway._build_http_app())
+        resp = client.get("/workers").json()
+        assert resp["workers"] == []
+        offline = resp["offline_persisted"]
+        assert len(offline) == 1
+        assert offline[0]["id"] == "offline-host"
+        assert offline[0]["enabled"] is False
+        assert offline[0]["manual_tasks"] == ["chat"]
+
+    def test_clear_offline_worker_override(self, tmp_path, store):
+        import json
+
+        state_path = tmp_path / "worker_state.json"
+        state_path.write_text(
+            json.dumps(
+                {
+                    "offline-host": {
+                        "enabled": True,
+                        "draining": False,
+                        "tasks": ["chat"],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        gateway = GatewayServer(
+            config=TowelConfig(),
+            agent=_FakeAgent(),
+            sessions=SessionManager(store=store),
+            pin_store=SessionPinStore(path=tmp_path / "pins.json"),
+            worker_state_store=WorkerStateStore(path=state_path),
+        )
+        from starlette.testclient import TestClient
+
+        client = TestClient(gateway._build_http_app())
+        resp = client.post("/workers/offline-host/tasks", json={"tasks": []})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["cleared_offline"] is True
+        # Re-load /workers: override no longer surfaces.
+        next_resp = client.get("/workers").json()
+        offline = next_resp["offline_persisted"]
+        assert all(
+            not o.get("manual_tasks") for o in offline if o["id"] == "offline-host"
+        )
+
+    def test_setting_override_on_unknown_worker_rejected(self, tmp_path, store):
+        gateway = GatewayServer(
+            config=TowelConfig(),
+            agent=_FakeAgent(),
+            sessions=SessionManager(store=store),
+            pin_store=SessionPinStore(path=tmp_path / "pins.json"),
+            worker_state_store=WorkerStateStore(path=tmp_path / "worker_state.json"),
+        )
+        from starlette.testclient import TestClient
+
+        client = TestClient(gateway._build_http_app())
+        # Setting a non-empty list on a worker that doesn't exist (and never
+        # did) should still 404 — prevents typos creating ghost overrides.
+        resp = client.post(
+            "/workers/never-existed/tasks", json={"tasks": ["chat"]}
+        )
+        assert resp.status_code == 404
+
+
 class TestUnknownTaskOnDisk:
     def test_unknown_task_value_on_disk_is_skipped(self, tmp_path, store):
         """If the schema evolves and an unknown task name is on disk,

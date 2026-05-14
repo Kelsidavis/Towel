@@ -360,6 +360,10 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
           <div class="fleet-list" id="fleet-dispatch-list"></div>
         </div>
         <div class="fleet-section">
+          <h3>Persisted state for offline workers</h3>
+          <div class="fleet-list" id="fleet-offline-list"></div>
+        </div>
+        <div class="fleet-section">
           <h3>Cached models across the fleet</h3>
           <input type="text" id="fleet-inventory-filter"
                  placeholder="filter by model name…"
@@ -452,6 +456,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   const fleetDispatchListEl = document.getElementById('fleet-dispatch-list');
   const fleetInventoryListEl = document.getElementById('fleet-inventory-list');
   const fleetInventoryFilterEl = document.getElementById('fleet-inventory-filter');
+  const fleetOfflineListEl = document.getElementById('fleet-offline-list');
 
   let ws = null, isStreaming = false;
   let currentAssistantEl = null, currentContentEl = null;
@@ -626,6 +631,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       ]);
       fleetState = {
         workers: workers.workers || [],
+        offlinePersisted: workers.offline_persisted || [],
         sessions: sessions.sessions || [],
         requirements: workers.requirements || {},
         pins: workers.pins || {},
@@ -647,6 +653,40 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         fleetInventoryListEl.innerHTML = '<div class="fleet-empty">Inventory unavailable.</div>';
       }
     }
+  }
+
+  function renderOfflinePersisted() {
+    if (!fleetOfflineListEl) return;
+    const items = fleetState.offlinePersisted || [];
+    if (!items.length) {
+      fleetOfflineListEl.innerHTML =
+        '<div class="fleet-empty">No persisted state for offline workers.</div>';
+      return;
+    }
+    fleetOfflineListEl.innerHTML = items.map(function(entry) {
+      const flags = [];
+      if (!entry.enabled) flags.push('<span class="fleet-badge err">disabled</span>');
+      if (entry.draining) flags.push('<span class="fleet-badge warn">draining</span>');
+      const tasks = entry.manual_tasks || [];
+      const taskChips = tasks.length
+        ? tasks.map(function(t) {
+            return '<span class="fleet-badge">' + escHtml(t) + '</span>';
+          }).join('')
+        : '<span class="fleet-empty" style="display:inline">no manual tasks</span>';
+      const clearBtn = tasks.length
+        ? `<button class="fleet-btn" data-worker-id="${escHtml(entry.id)}" data-worker-op="clear-offline-tasks" title="Clear the persisted manual task override for this offline worker">clear tasks</button>`
+        : '';
+      return `
+        <div class="fleet-card">
+          <div class="fleet-card-head">
+            <div class="fleet-card-title" title="Worker is not currently connected">${escHtml(entry.id)}</div>
+            <div class="fleet-badge">offline</div>
+          </div>
+          <div class="fleet-badges">${flags.join('')}</div>
+          <div class="fleet-meta"><span>manual tasks: ${taskChips}</span></div>
+          <div class="fleet-controls">${clearBtn}</div>
+        </div>`;
+    }).join('');
   }
 
   function renderFleetInventory() {
@@ -807,6 +847,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
 
     renderDispatchDecisions();
     renderFleetInventory();
+    renderOfflinePersisted();
 
     if (!fleetState.sessions.length) {
       fleetRoutesListEl.innerHTML = '<div class="fleet-empty">No active routes.</div>';
@@ -1572,6 +1613,20 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       alert(err.message || 'Failed to update worker.');
     }
   });
+
+  if (fleetOfflineListEl) {
+    fleetOfflineListEl.addEventListener('click', async function(e) {
+      const btn = e.target.closest('[data-worker-op="clear-offline-tasks"]');
+      if (!btn) return;
+      const workerId = btn.getAttribute('data-worker-id');
+      try {
+        await apiPost('/workers/' + encodeURIComponent(workerId) + '/tasks', { tasks: [] });
+        loadFleetState();
+      } catch (err) {
+        alert(err.message || 'Failed to clear offline worker tasks.');
+      }
+    });
+  }
 
   fleetRoutesListEl.addEventListener('click', async function(e) {
     const btn = e.target.closest('[data-route-op]');

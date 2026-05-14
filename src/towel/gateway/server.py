@@ -1534,7 +1534,9 @@ class GatewayServer:
 
         async def workers_list(_request: Any) -> JSONResponse:
             workers_data = []
+            live_ids: set[str] = set()
             for worker in self._workers.matching():
+                live_ids.add(worker.id)
                 wd = worker.to_dict()
                 wd["roles"] = [str(r) for r in self._node_roles.get(worker.id, [])]
                 wd["assigned_tasks"] = [str(t) for t in self._node_tasks.get(worker.id, [])]
@@ -1548,9 +1550,42 @@ class GatewayServer:
                 # a glance without having to inspect capabilities by hand.
                 wd["quality_tier"] = worker_quality_tier(worker.capabilities or {})
                 workers_data.append(wd)
+
+            # Workers that have persisted state but aren't currently
+            # connected. Without surfacing these, operators can't see or
+            # clear an override for a worker that's offline — they'd have
+            # to edit worker_state.json by hand or wait for it to come back.
+            offline: list[dict[str, Any]] = []
+            seen: set[str] = set()
+            for worker_id, state in self._worker_states.items():
+                if worker_id in live_ids or worker_id in seen:
+                    continue
+                seen.add(worker_id)
+                offline.append({
+                    "id": worker_id,
+                    "enabled": bool(state.get("enabled", True)),
+                    "draining": bool(state.get("draining", False)),
+                    "manual_tasks": [
+                        str(t) for t in self._manual_tasks.get(worker_id, [])
+                    ],
+                })
+            # Catch overrides that exist in memory but never made it to the
+            # persisted file (shouldn't happen post-fix, but defend in depth).
+            for worker_id, tasks in self._manual_tasks.items():
+                if worker_id in live_ids or worker_id in seen:
+                    continue
+                seen.add(worker_id)
+                offline.append({
+                    "id": worker_id,
+                    "enabled": True,
+                    "draining": False,
+                    "manual_tasks": [str(t) for t in tasks],
+                })
+
             return JSONResponse(
                 {
                     "workers": workers_data,
+                    "offline_persisted": offline,
                     "all_tasks": [str(t) for t in TaskType],
                     "requirements": self._desired_worker_capabilities(),
                     "pins": dict(self._session_pins),
@@ -1558,11 +1593,15 @@ class GatewayServer:
             )
 
         async def worker_tasks_update(request: Request) -> JSONResponse:
-            """Override the auto-assigned tasks for a worker."""
+            """Override the auto-assigned tasks for a worker.
+
+            Accepts requests for offline workers too, but only to clear an
+            existing override (empty list). Setting a non-empty override on
+            an unknown worker is rejected to prevent typos from creating
+            phantom entries.
+            """
             worker_id = request.path_params["worker_id"]
             worker = self._workers.get(worker_id)
-            if not worker:
-                return JSONResponse({"error": "Worker not found"}, status_code=404)
             try:
                 body = await request.json()
             except Exception:
@@ -1577,6 +1616,27 @@ class GatewayServer:
                 tasks = [TaskType(t) for t in task_names]
             except ValueError as e:
                 return JSONResponse({"error": f"Invalid task: {e}"}, status_code=400)
+
+            # Live worker required for setting a new override, but clearing
+            # one is allowed for any known persisted-state entry so operators
+            # can wipe overrides for currently-offline workers.
+            if worker is None:
+                if tasks:
+                    return JSONResponse(
+                        {"error": "Worker not found (cannot set override on offline worker)"},
+                        status_code=404,
+                    )
+                had_override = worker_id in self._manual_tasks
+                self._manual_tasks.pop(worker_id, None)
+                self._node_tasks.pop(worker_id, None)
+                if had_override:
+                    self._save_worker_states()
+                return JSONResponse({
+                    "worker_id": worker_id,
+                    "assigned_tasks": [],
+                    "tasks_overridden": False,
+                    "cleared_offline": had_override,
+                })
 
             # Stash the override so a reconnect doesn't wipe the operator's
             # choice. An empty list explicitly removes the override and
