@@ -284,6 +284,7 @@ Config lives in `~/.towel/config.toml`. Three built-in agent profiles: **coder**
 | `memory_recall_log_cap` | `5000` | Max rows in the per-query recall log (oldest pruned) |
 | `dispatch_history_size` | `500` | Dispatch decision ring buffer — hours of audit at typical traffic |
 | `worker_inference_timeout` | `300.0` | Seconds the coordinator waits for the next chunk from a remote worker before tearing down the WS. Bump for cold-loaded large models |
+| `mdns_advertise_ip` | `""` | Override the IP advertised via mDNS. Useful on Tailscale / WireGuard / multi-homed hosts where the auto-detected IP isn't the one workers can reach |
 
 ## Contributing
 

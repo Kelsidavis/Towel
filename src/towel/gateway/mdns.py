@@ -25,7 +25,14 @@ DEFAULT_TIMEOUT_S = 30.0
 
 
 def _local_ip() -> str:
-    """Best-effort LAN IP address."""
+    """Best-effort LAN IP address.
+
+    The "connect to 8.8.8.8" trick reveals whichever interface the
+    OS would route an external packet through. On hosts with
+    Tailscale / WireGuard / multi-homed setups, that's often NOT
+    the LAN interface workers can reach — see ``mdns_advertise_ip``
+    in TowelConfig for the operator override.
+    """
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
@@ -37,15 +44,23 @@ def _local_ip() -> str:
 class TowelServiceAdvertiser:
     """Advertise this coordinator via mDNS so workers can find it."""
 
-    def __init__(self, port: int, hostname: str | None = None) -> None:
+    def __init__(
+        self,
+        port: int,
+        hostname: str | None = None,
+        advertise_ip: str = "",
+    ) -> None:
         self.port = port
         self.hostname = hostname or socket.gethostname()
+        # Explicit operator override beats heuristic detection on
+        # multi-interface hosts. Empty string = auto-detect.
+        self._advertise_ip = advertise_ip.strip()
         self._zc: AsyncZeroconf | None = None
         self._info: AsyncServiceInfo | None = None
 
     async def start(self) -> None:
         """Register the service on the network."""
-        ip = _local_ip()
+        ip = self._advertise_ip or _local_ip()
         self._info = AsyncServiceInfo(
             SERVICE_TYPE,
             f"towel-controller-{self.hostname}.{SERVICE_TYPE}",

@@ -188,7 +188,10 @@ class GatewayServer:
         try:
             from towel.gateway.mdns import TowelServiceAdvertiser
 
-            self._mdns_advertiser = TowelServiceAdvertiser(port=gw.port)
+            self._mdns_advertiser = TowelServiceAdvertiser(
+                port=gw.port,
+                advertise_ip=getattr(self.config, "mdns_advertise_ip", "") or "",
+            )
             await self._mdns_advertiser.start()
         except Exception as exc:
             log.warning("mDNS advertisement failed (workers can still connect manually): %s", exc)

@@ -143,6 +143,15 @@ class TowelConfig(BaseModel):
     # reconnect cycle.
     worker_inference_timeout: float = 300.0
 
+    # Override the IP address advertised via mDNS. Empty means
+    # auto-detect via the "connect to 8.8.8.8" trick, which on
+    # machines with Tailscale / WireGuard / multiple interfaces
+    # often picks the wrong one — workers connect to the VPN IP
+    # rather than the LAN IP. Setting this to the wired LAN address
+    # makes discovery deterministic. Leave empty in single-interface
+    # setups.
+    mdns_advertise_ip: str = ""
+
     @classmethod
     def load(cls, path: Path | None = None) -> TowelConfig:
         """Load config from TOML file, falling back to defaults."""
