@@ -190,6 +190,26 @@ class TestMemoryEndpoint:
         resp = client.patch("/memory/never-existed", json={"content": "x"})
         assert resp.status_code == 404
 
+    def test_patch_rejects_empty_content(self, store, memory):
+        """POST requires non-empty content; PATCH must too. Without
+        this, an accidental `{"content": ""}` silently destroys the
+        memory's content with no way to recover."""
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+        # Confirm there's a real entry to attempt destroying.
+        assert memory.recall("favourite_color") is not None
+        resp = client.patch("/memory/favourite_color", json={"content": ""})
+        assert resp.status_code == 400
+        assert "empty" in resp.json()["error"].lower()
+        # And content must still be intact.
+        assert memory.recall("favourite_color").content != ""
+
+    def test_patch_rejects_whitespace_content(self, store, memory):
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+        resp = client.patch("/memory/favourite_color", json={"content": "   \t\n  "})
+        assert resp.status_code == 400
+
     def test_post_creates_new_entry(self, store, memory):
         gw = _gateway(store, _FakeAgent(memory))
         client = TestClient(gw._build_http_app())

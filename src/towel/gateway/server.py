@@ -2896,10 +2896,12 @@ class GatewayServer:
 
                 {"content": "...", "type": "fact", "tags": [...], "scope": "..."}
 
-            Returns 404 if the key doesn't exist. content empty / missing
-            is treated as "leave unchanged"; pass an explicit empty
-            string only when really meant. tags here REPLACES the list
-            (the CLI add/remove tag flow is for additive edits).
+            Returns 404 if the key doesn't exist. An omitted `content`
+            leaves the existing content unchanged; an explicit empty
+            string is rejected (400) — that path silently destroyed
+            memories before, with no good use case for clobbering to
+            empty. tags here REPLACES the list (the CLI add/remove
+            tag flow is for additive edits).
             """
             from towel.memory.store import MEMORY_TYPES
 
@@ -2922,6 +2924,19 @@ class GatewayServer:
             new_content = body.get("content")
             if not isinstance(new_content, (str, type(None))):
                 return JSONResponse({"error": "content must be a string"}, status_code=400)
+            # Explicit empty/whitespace content is rejected. POST already
+            # requires non-empty content; allowing PATCH to clobber to ""
+            # silently destroys the memory. Operators who want to drop a
+            # memory should call DELETE.
+            if isinstance(new_content, str) and new_content != "" and not new_content.strip():
+                return JSONResponse(
+                    {"error": "content must not be whitespace-only"}, status_code=400,
+                )
+            if new_content == "":
+                return JSONResponse(
+                    {"error": "content must not be empty; DELETE the key to remove it"},
+                    status_code=400,
+                )
             content = new_content if new_content is not None else existing.content
 
             new_type = body.get("type") or existing.memory_type
