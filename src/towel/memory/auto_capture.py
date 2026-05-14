@@ -246,6 +246,48 @@ def extract(text: str) -> list[Capture]:
     return out
 
 
+# Patterns that make sense to run on tool output. Tool results are
+# rarely first-person prose — file listings, JSON, command output —
+# so most user-turn heuristics would just generate false positives.
+# Only the explicit "remember that X" pattern fires here, and only
+# when the tool result clearly carries the operator's own words
+# (e.g. the recall tool echoing back a remember-this).
+_TOOL_RESULT_LABELS = frozenset({"explicit-remember"})
+
+
+def apply_tool_result(
+    tool_name: str, result_text: str, store: MemoryStore
+) -> list[Capture]:
+    """Auto-capture against the output of a tool call.
+
+    Uses a much tighter pattern subset than ``apply()`` because tool
+    output is typically structured data, not the operator's prose —
+    running the full extractor over a directory listing or a git diff
+    would mostly create noise. Captures are tagged with ``tool:<name>``
+    as the source label so the operator can audit them separately.
+    """
+    if not result_text:
+        return []
+    written: list[Capture] = []
+    for cap in extract(result_text):
+        if cap.source_pattern not in _TOOL_RESULT_LABELS:
+            continue
+        if store.recall(cap.key) is not None:
+            continue
+        store.remember(
+            cap.key,
+            cap.content,
+            memory_type=cap.memory_type,
+            source=f"tool:{tool_name}:{cap.source_pattern}",
+        )
+        log.info(
+            "Tool-result capture from %s: %s=%r (pattern=%s)",
+            tool_name, cap.key, cap.content, cap.source_pattern,
+        )
+        written.append(cap)
+    return written
+
+
 def apply(
     text: str, store: MemoryStore, *, overwrite: bool = False
 ) -> list[Capture]:

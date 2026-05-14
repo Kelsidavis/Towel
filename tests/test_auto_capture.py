@@ -197,6 +197,47 @@ class TestApply:
         assert store.recall("role").content == "developer"
 
 
+class TestToolResultCapture:
+    """apply_tool_result runs a tightened pattern subset over tool
+    output so structured data (file listings, command output, JSON)
+    doesn't generate noise."""
+
+    def test_explicit_remember_in_tool_output_captures(self, store):
+        from towel.memory.auto_capture import apply_tool_result
+        # A recall tool echoing back an explicit user statement — fires.
+        written = apply_tool_result(
+            "recall",
+            "Found 1 memory: remember that the prod DB lives on db-prod-1",
+            store,
+        )
+        assert written
+        # Source label carries the tool name + the pattern.
+        assert all(c.source_pattern == "explicit-remember" for c in written)
+
+    def test_first_person_prose_not_captured_via_tool(self, store):
+        # The "role" pattern WOULD fire under apply(), but
+        # apply_tool_result restricts to explicit-remember, so a tool
+        # spitting prose-shaped text doesn't accidentally re-capture
+        # the user's role.
+        from towel.memory.auto_capture import apply_tool_result
+        written = apply_tool_result(
+            "git_log",
+            "I'm a backend engineer wrote in commit log",
+            store,
+        )
+        assert written == []
+        assert store.recall("role") is None
+
+    def test_tool_source_label_distinguishes_origin(self, store):
+        from towel.memory.auto_capture import apply_tool_result
+        apply_tool_result(
+            "recall", "remember that we ship by Friday", store,
+        )
+        e = next(iter(e for e in store.recall_all() if "ship by Friday" in e.content), None)
+        assert e is not None
+        assert e.source.startswith("tool:recall:")
+
+
 class TestCaptureDataclass:
     def test_capture_is_frozen(self):
         c = Capture(key="k", content="v", memory_type="fact", source_pattern="p")

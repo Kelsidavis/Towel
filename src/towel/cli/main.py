@@ -2390,6 +2390,105 @@ def memory_tags() -> None:
         console.print(f"  {counts[tag]:4d}  {tag}")
 
 
+@memory.command(name="ingest")
+@click.option(
+    "--conversation",
+    "conv_id",
+    default=None,
+    help="Conversation ID to ingest. Mutually exclusive with --all.",
+)
+@click.option(
+    "--all",
+    "all_convs",
+    is_flag=True,
+    default=False,
+    help="Ingest every saved conversation. Skips re-ingestion of already-captured keys.",
+)
+@click.option(
+    "--scope",
+    default=None,
+    help='Scope to write captures under. Default: auto-derive from cwd; "" for global.',
+)
+@click.option(
+    "--dry-run/--apply",
+    default=True,
+    show_default=True,
+    help="Default dry-run prints what would land. --apply writes to the store.",
+)
+def memory_ingest(
+    conv_id: str | None,
+    all_convs: bool,
+    scope: str | None,
+    dry_run: bool,
+) -> None:
+    """Backfill the memory store from saved conversations.
+
+    Walks each USER message in the chosen conversation(s) and runs
+    the same auto-capture extractor used per-turn. Useful for picking
+    up facts mentioned in past sessions before auto-capture existed,
+    or after installing new patterns. Conservative: existing keys
+    are never overwritten, so this can be run repeatedly.
+    """
+    from towel.memory.auto_capture import extract
+    from towel.memory.scope import derive_scope
+    from towel.memory.store import MemoryStore
+    from towel.persistence.store import ConversationStore
+
+    if conv_id and all_convs:
+        console.print("[red]Pass either --conversation or --all, not both.[/red]")
+        raise SystemExit(1)
+    if not conv_id and not all_convs:
+        console.print("[red]Need --conversation ID or --all.[/red]")
+        raise SystemExit(1)
+
+    effective_scope = scope if scope is not None else derive_scope()
+    convs = ConversationStore()
+    store = MemoryStore(default_scope=effective_scope)
+
+    if conv_id:
+        targets = [convs.load(conv_id)] if convs.exists(conv_id) else []
+    else:
+        # ConversationStore.list_conversations returns summaries; we
+        # need the full message list, so load each.
+        targets = [convs.load(s.id) for s in convs.list_conversations(limit=10_000)]
+
+    if not targets or all(t is None for t in targets):
+        console.print("[yellow]No conversations found.[/yellow]")
+        return
+
+    captured_total = 0
+    skipped_total = 0
+    for conv in targets:
+        if conv is None:
+            continue
+        for msg in conv.messages:
+            if getattr(msg, "role", None) and msg.role.value != "user":
+                continue
+            for cap in extract(msg.content or ""):
+                if store.recall(cap.key) is not None:
+                    skipped_total += 1
+                    continue
+                if not dry_run:
+                    store.remember(
+                        cap.key, cap.content,
+                        memory_type=cap.memory_type,
+                        source=f"ingest:{cap.source_pattern}",
+                    )
+                captured_total += 1
+                pre = "would capture" if dry_run else "captured"
+                console.print(
+                    f"  [green]{pre}[/green] [{cap.memory_type}] {cap.key} = {cap.content[:60]}"
+                )
+    suffix = (
+        f"[dim]{skipped_total} skipped (key already present).[/dim]"
+        if skipped_total else ""
+    )
+    verb = "Would write" if dry_run else "Wrote"
+    console.print(f"\n[bold]{verb} {captured_total} memor(ies).[/bold] {suffix}")
+    if dry_run:
+        console.print("[dim]Re-run with --apply to commit.[/dim]")
+
+
 @memory.command(name="reembed")
 @click.option(
     "--all/--missing-only",

@@ -363,6 +363,18 @@ class AgentRuntime:
                     is_error = True
                     log.error(result_str)
 
+                # Conservative tool-result auto-capture: only fires
+                # on the explicit-remember pattern, only on success.
+                if (
+                    not is_error and self.memory
+                    and getattr(self.config, "auto_capture", True)
+                ):
+                    try:
+                        from towel.memory.auto_capture import apply_tool_result
+                        apply_tool_result(tc.name, result_str, self.memory)
+                    except Exception as exc:
+                        log.debug("Tool-result capture skipped: %s", exc)
+
                 conversation.add(
                     Role.TOOL,
                     format_tool_feedback(tc.name, result_str, is_error),
@@ -453,6 +465,16 @@ class AgentRuntime:
                     result_str = f"Error executing {tc.name}: {e}"
                     is_error = True
                     log.error(result_str)
+
+                if (
+                    not is_error and self.memory
+                    and getattr(self.config, "auto_capture", True)
+                ):
+                    try:
+                        from towel.memory.auto_capture import apply_tool_result
+                        apply_tool_result(tc.name, result_str, self.memory)
+                    except Exception as exc:
+                        log.debug("Tool-result capture skipped: %s", exc)
 
                 yield AgentEvent.tool_result(tc.name, result_str)
                 conversation.add(
