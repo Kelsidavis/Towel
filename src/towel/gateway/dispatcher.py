@@ -531,9 +531,20 @@ class Dispatcher:
 
 
 def _role_for_intent(intent: str) -> NodeRole | None:
-    """Pick the canonical NodeRole for a coordinator intent."""
+    """Pick the canonical NodeRole for a coordinator intent.
+
+    chat falls through to CLASSIFIER, not INFERENCE — chat-class
+    queries want the fastest worker, not the biggest. INFERENCE
+    sorts by descending VRAM (biggest first), which on a fleet with
+    a small + large worker silently routed every "what's 2+2?"
+    request to the heavy model. CLASSIFIER's score prefers small
+    VRAM, matching the intent.
+
+    task stays on INFERENCE because that's where the heavy work
+    actually belongs (refactor, explain, generate).
+    """
     if intent == "chat":
-        return NodeRole.INFERENCE
+        return NodeRole.CLASSIFIER
     if intent == "tool":
         return NodeRole.TOOL_WORKER
     if intent == "task":

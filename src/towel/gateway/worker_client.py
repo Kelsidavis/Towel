@@ -258,12 +258,30 @@ class RemoteWorkerClient:
             metadata = {}
             if hasattr(result, "tokens_per_second"):
                 metadata["tps"] = result.tokens_per_second
+            # Two naming conventions in the runtimes: MLX uses
+            # total_tokens / input_tokens / output_tokens; llama-server
+            # uses prompt_tokens / completion_tokens. Probe both so
+            # remote-worker responses come back with real counts
+            # regardless of which backend the worker is running.
             if hasattr(result, "total_tokens"):
                 metadata["tokens"] = result.total_tokens
             if hasattr(result, "input_tokens"):
                 metadata["input_tokens"] = result.input_tokens
             if hasattr(result, "output_tokens"):
                 metadata["output_tokens"] = result.output_tokens
+            if hasattr(result, "prompt_tokens"):
+                metadata.setdefault("input_tokens", result.prompt_tokens)
+            if hasattr(result, "completion_tokens"):
+                metadata.setdefault("output_tokens", result.completion_tokens)
+            # When the backend only reports input/output, sum them
+            # into `tokens` so /api/ask and the UI don't show 0.
+            if "tokens" not in metadata and (
+                "input_tokens" in metadata or "output_tokens" in metadata
+            ):
+                metadata["tokens"] = (
+                    metadata.get("input_tokens", 0)
+                    + metadata.get("output_tokens", 0)
+                )
             await ws.send(
                 json.dumps(
                     {

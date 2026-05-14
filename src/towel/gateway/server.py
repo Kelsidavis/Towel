@@ -784,11 +784,21 @@ class GatewayServer:
         try:
             msg = await asyncio.wait_for(queue.get(), timeout=60.0)
             if msg.get("type") == "job_done":
-                text = msg.get("result", {}).get("text", "")
+                result = msg.get("result", {}) or {}
+                text = result.get("text", "")
+                # Hoist the worker's reported tokens/tps/etc. into the
+                # Message metadata so API callers and the UI see real
+                # numbers — previously this path discarded everything
+                # but the text, leaving tokens=0 tps=0 in responses.
+                remote_meta = result.get("metadata", {}) or {}
                 response = Message(
                     role=Role.ASSISTANT,
                     content=text,
-                    metadata={"remote_worker": worker.id, "quick_infer": True},
+                    metadata={
+                        "remote_worker": worker.id,
+                        "quick_infer": True,
+                        **remote_meta,
+                    },
                 )
                 session.conversation.messages.append(response)
                 return response

@@ -327,8 +327,16 @@ def best_node_for_task(
         return None
 
     if reqs.get("prefer_fast"):
-        # Prefer cheapest: local over API, lowest pressure
-        def fast_score(n: dict[str, Any]) -> tuple[int, float, int]:
+        # Prefer cheapest: local over API, lowest pressure, session
+        # affinity, and — critically — SMALLER models. Without the
+        # vram tiebreak, a fleet with both a 2B and a 27B worker
+        # routes chat queries to whichever happened to be first in
+        # the worker dict, which observable tracing shows is the 27B.
+        # For prefer_fast tasks (CHAT, TRIAGE, LINT, etc.) a smaller
+        # model is essentially always better — the cost of being
+        # wrong is "a slightly worse 1-line answer" not "a wrong
+        # multi-step refactor".
+        def fast_score(n: dict[str, Any]) -> tuple[int, float, int, int]:
             caps = n.get("capabilities", {})
             is_api = 1 if caps.get("backend") == "claude" else 0
             pressure = n.get("context_pressure", 0.0)
@@ -337,7 +345,12 @@ def best_node_for_task(
                 slots = n.get("context_slots", [])
                 if any(s.get("session_id") == session_id for s in slots):
                     locality = -1000
-            return (is_api, pressure, locality)
+            # Smaller VRAM ≈ smaller model ≈ faster for chat-sized
+            # generations. Workers without a vram estimate sort to
+            # the end via a large default so we don't accidentally
+            # prefer "unknown size" over "known 2B".
+            vram = int(caps.get("total_vram_mb") or caps.get("vram_mb") or 1_000_000)
+            return (is_api, pressure, locality, vram)
 
         candidates.sort(key=fast_score)
     elif reqs.get("prefer_quality"):
@@ -451,6 +464,31 @@ def classify_message_intent(text: str) -> str | None:
             if stripped == starter or stripped.startswith(starter + " ") or stripped.startswith(starter + "!"):
                 return "chat"
 
+    # Short trivial questions also belong on the chat path — same
+    # signal classify_task_type uses, lifted here so callers that
+    # only care about intent don't have to call into task-type
+    # land just to find out "this is a small conversational ask".
+    # Same URL/fetch-verb exclusions as classify_task_type so an
+    # accidental "can you fetch http://..." gets the tool path.
+    has_url = "http://" in stripped or "https://" in stripped
+    fetch_verbs = any(
+        sig in stripped for sig in ("fetch ", "download ", "curl ", "get the url")
+    )
+    if len(stripped) < 60 and not has_url and not fetch_verbs:
+        trivial_question_starts = (
+            "what's", "whats", "what is",
+            "who's", "whos", "who is",
+        )
+        for sig in trivial_question_starts:
+            if stripped.startswith(sig + " ") or stripped.startswith(sig + "?"):
+                return "chat"
+        # Bare single-word yes/no heads — same shape as the task-type
+        # heuristic so intent and task-type agree on "is python typed?".
+        bare_heads = ("is", "are", "do", "does", "can", "should", "did")
+        first_word = stripped.split(" ", 1)[0].rstrip("?")
+        if first_word in bare_heads:
+            return "chat"
+
     # Obvious tool requests
     tool_signals = (
         "fetch ", "download ", "curl ", "open http", "go to http",
@@ -486,6 +524,60 @@ def classify_task_type(text: str) -> TaskType | None:
         for w in chat_words:
             if stripped == w or stripped.startswith(w + " ") or stripped.startswith(w + "!"):
                 return TaskType.CHAT
+
+    # Trivial Q&A — short conversational questions that the
+    # heaviest worker doesn't need to handle. "what's 2+2?",
+    # "is python typed?", "do you sleep?" all belong on the fast
+    # path. Length cap keeps long explanatory prompts on the
+    # quality path even when they start with these question
+    # words. The contraction "what's" is the dominant miss the
+    # original heuristic had — it only checked "what is" with
+    # the space, so "what's the time?" silently got routed as
+    # an EXPLAIN task and burned 100+ seconds on a 27B model.
+    #
+    # Exclusion: a URL anywhere in the message is a fetch
+    # signal — let the FETCH heuristic below claim it. Same for
+    # explicit "fetch"/"download" verbs which would otherwise
+    # get swallowed by "can you ...".
+    has_url = "http://" in stripped or "https://" in stripped
+    fetch_verbs = any(
+        sig in stripped for sig in ("fetch ", "download ", "curl ", "get the url")
+    )
+    if len(stripped) < 60 and not has_url and not fetch_verbs:
+        # Multi-word starters (most specific first — "what is" before
+        # "is" so a single greedy prefix match works).
+        trivial_starts = (
+            "what's", "whats", "what is",
+            "who's", "whos", "who is",
+            "are these", "are those",
+            "does it", "does this",
+            "should i", "should we",
+            "how many", "how much", "how old",
+            "when is", "when's", "where is", "where's",
+            "why is", "why's", "why does",
+        )
+        for sig in trivial_starts:
+            if stripped.startswith(sig + " ") or stripped.startswith(sig + "?"):
+                return TaskType.CHAT
+        # Bare yes/no question heads — "is python typed?", "are you
+        # sure", "do you know". Single-word triggers that miss when
+        # spelled out as "is python" but match "is it" earlier.
+        # Capture both forms by checking the single word + word boundary.
+        bare_question_heads = ("is", "are", "do", "does", "can", "should", "did")
+        first_word = stripped.split(" ", 1)[0].rstrip("?")
+        if first_word in bare_question_heads:
+            return TaskType.CHAT
+        # Pure arithmetic: "2+2", "3 * 7 = ?", "what's 5 plus 4"
+        # — these get pushed onto a heavy model out of all
+        # proportion to the cost of answering.
+        arithmetic = ("plus", "minus", "times", "divided by") + ("+", "-", "*", "/")
+        # Length already capped < 60. Require either a digit OR
+        # one of the arithmetic operator words so we don't match
+        # general prose that incidentally contains "+".
+        if any(c.isdigit() for c in stripped):
+            for sig in arithmetic:
+                if sig in stripped:
+                    return TaskType.CHAT
 
     # Fetch / URL
     if "http://" in stripped or "https://" in stripped:
