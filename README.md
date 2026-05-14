@@ -5,7 +5,7 @@
 [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-MLX-black?logo=apple)](https://ml-explore.github.io/mlx/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://docs.astral.sh/ruff/)
-[![Tests](https://img.shields.io/badge/tests-1200%2B%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-1350%2B%20passing-brightgreen)]()
 [![Skills](https://img.shields.io/badge/skills-100%2B%20built--in-blue)]()
 
 **Don't Panic.**
@@ -136,6 +136,44 @@ The agent has tools for:
 | **yaml** | parse, validate, YAML/JSON conversion |
 | **codegen** | code snippet templates (10 patterns) |
 
+
+### Persistent Memory
+
+Towel remembers things across sessions in a local SQLite store with three
+parallel retrieval tiers fused via Reciprocal Rank Fusion:
+
+- **BM25** (SQLite FTS5) for keyword precision
+- **Vector cosine** via `sentence-transformers` (optional: `pip install "towel-ai[embeddings]"`) for paraphrase recall
+- **Graph co-retrieval** — pairs of memories that show up together get linked, so a hit on one pulls its neighbors
+
+Auto-capture extracts user / preference / project / deadline facts from
+every user turn via conservative regex patterns (clause-bounded negation
+so "I'm not a data scientist, I'm a designer" only captures designer).
+Decay + auto-forget prune stale, never-recalled fact memories;
+user / preference / project entries are protected.
+
+```bash
+towel memory stats             # counts, recall fraction, by-source breakdown
+towel memory inspect <key>     # entry detail + salience + related (graph)
+towel memory tidy --dry-run    # see what would be pruned
+towel memory tidy --apply      # actually prune
+towel memory export --out backup.json
+towel memory import backup.json
+towel memory diff baseline.json  # what changed since baseline
+towel memory reembed           # backfill vectors after installing [embeddings]
+```
+
+**MCP server.** Run `towel mcp` to expose the store over stdio to any
+MCP-compatible client (Claude Code, Cursor, OpenCode, Gemini CLI):
+
+```jsonc
+// .mcp.json
+{"mcpServers": {"towel-memory": {"command": "towel", "args": ["mcp"]}}}
+```
+
+Seven tools become available to the client: `memory_search`, `memory_recall`,
+`memory_list`, `memory_remember`, `memory_forget`, `memory_related`,
+`memory_stats`.
 
 ### Web UI
 
