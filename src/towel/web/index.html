@@ -651,9 +651,27 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   function renderDispatchDecisions() {
     if (!fleetDispatchListEl) return;
     const decisions = fleetState.dispatch || [];
+    // Status strip: surfaces ring-buffer saturation + oldest-entry
+    // age so the operator knows whether they're looking at recent
+    // activity or an exhausted audit window.
+    const ls = fleetState.dispatchLogStatus || {};
+    let statusStrip = '';
+    if (ls && ls.cap) {
+      const ageS = typeof ls.oldest_age_seconds === 'number' ? ls.oldest_age_seconds : null;
+      const ageStr = ageS === null ? '' :
+        ageS < 60 ? (ageS + 's')
+        : ageS < 3600 ? (Math.round(ageS / 60) + 'm')
+        : (Math.round(ageS / 3600) + 'h');
+      const cls = ls.saturated ? 'warn' : 'ok';
+      statusStrip = '<div class="fleet-route-meta" style="margin-bottom:6px">'
+        + '<span class="fleet-badge ' + cls + '">log ' + ls.size + '/' + ls.cap + '</span>'
+        + (ageStr ? ' · oldest ' + escHtml(ageStr) + ' ago' : '')
+        + (ls.saturated ? ' · <span style="color:var(--yellow)">audit data being dropped — bump TowelConfig.dispatch_history_size</span>' : '')
+        + '</div>';
+    }
     if (!decisions.length) {
-      fleetDispatchListEl.innerHTML =
-        '<div class="fleet-empty">No dispatch decisions recorded yet.</div>';
+      fleetDispatchListEl.innerHTML = statusStrip
+        + '<div class="fleet-empty">No dispatch decisions recorded yet.</div>';
       return;
     }
     // Newest first.
@@ -691,6 +709,9 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         </div>
       `;
     }).join('');
+    // Prepend the status strip after the cards are built so it
+    // shows even on the no-decisions branch handled above.
+    fleetDispatchListEl.insertAdjacentHTML('afterbegin', statusStrip);
   }
 
   async function loadFleetState() {
@@ -716,6 +737,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         workerStats: health.workers || {},
         coordinator: health.coordinator || null,
         dispatch: dispatch.decisions || [],
+        dispatchLogStatus: dispatch.log_status || null,
         inventory: inventory.models || [],
         handoffs: handoffs.recent || [],
         handoffStats: handoffs.stats || {}
