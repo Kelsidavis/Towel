@@ -153,6 +153,49 @@ _PATTERNS: list[tuple[re.Pattern[str], str, str, str, str]] = [
         "fact",
         "explicit-remember",
     ),
+    # "we use Python 3.14", "we use Postgres", "we run TypeScript",
+    # "running on Kubernetes". Captures the named tech/stack item plus
+    # optional version. Restricted to capitalized or known-lower tokens
+    # (typescript) to avoid grabbing generic English verbs as "we use X".
+    (
+        re.compile(
+            r"\bwe (?:use|run|deploy(?:\s+on)?)\s+"
+            r"(?P<value>(?:[A-Z][A-Za-z0-9.+#-]*|python|ruby|rust|go|node|typescript|javascript)"
+            r"(?:\s+[\d.]+)?)"
+            r"\b",
+        ),
+        "stack_{slug}",
+        "{value}",
+        "fact",
+        "tech-stack",
+    ),
+    # "I'm in Pacific time", "I'm based in NYC", "I'm located in Berlin".
+    (
+        re.compile(
+            r"\bI(?:'m| am)\s+(?:in|based in|located in)\s+"
+            r"(?P<value>[A-Z][A-Za-z .'-]{2,40}?)"
+            r"(?=[.,!?\n]|\s+(?:and|but|so|working|right now)\b|$)",
+        ),
+        "location",
+        "{value}",
+        "user",
+        "location",
+    ),
+    # "my editor is neovim", "my shell is zsh", "my OS is macOS".
+    # Generic "my X is Y" pattern — narrow enough that false positives
+    # are rare because the trigger word ("my") plus "is" plus a noun
+    # phrase is unusually structured.
+    (
+        re.compile(
+            r"\bmy\s+(?P<facet>editor|shell|os|terminal|browser|language)\s+is\s+"
+            r"(?P<value>[A-Za-z][\w.+#-]{1,30})",
+            re.IGNORECASE,
+        ),
+        "{facet}",
+        "{value}",
+        "preference",
+        "tool-choice",
+    ),
 ]
 
 
@@ -182,8 +225,16 @@ def extract(text: str) -> list[Capture]:
             value = m.group("value").strip().rstrip(".,!?;:")
             if not value:
                 continue
-            key = key_tmpl.format(value=value, slug=_slug(value))
-            content = content_tmpl.format(value=value)
+            # All named groups are exposed to templates — patterns that
+            # capture both a facet ("editor") and a value ("neovim")
+            # need both. ``value`` and ``slug`` are always present.
+            fmt = {**m.groupdict(), "slug": _slug(value), "value": value}
+            try:
+                key = key_tmpl.format(**fmt).lower()
+                content = content_tmpl.format(**fmt)
+            except KeyError as exc:
+                log.debug("Pattern %s missing template var %s", label, exc)
+                continue
             out.append(
                 Capture(
                     key=key,

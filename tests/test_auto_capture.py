@@ -89,6 +89,47 @@ class TestExplicitRemember:
         assert "vim" in facts[0].content
 
 
+class TestTechStackPattern:
+    def test_we_use_named_tech(self):
+        caps = extract("we use Python 3.14 in production.")
+        assert any(
+            c.source_pattern == "tech-stack" and "Python 3.14" in c.content
+            for c in caps
+        )
+
+    def test_we_run_typescript(self):
+        caps = extract("we run TypeScript on Kubernetes.")
+        assert any(c.source_pattern == "tech-stack" for c in caps)
+
+    def test_generic_verb_not_grabbed(self):
+        # "we use" followed by a lowercase generic noun shouldn't fire
+        # — only named tech (capitalized or whitelisted lowercase).
+        caps = extract("we use those for everything.")
+        assert not any(c.source_pattern == "tech-stack" for c in caps)
+
+
+class TestLocationPattern:
+    def test_im_in_timezone(self):
+        caps = extract("I'm in Pacific time.")
+        assert any(c.key == "location" and "Pacific" in c.content for c in caps)
+
+    def test_im_based_in_city(self):
+        caps = extract("I'm based in Berlin, working remotely.")
+        assert any(c.key == "location" and c.content == "Berlin" for c in caps)
+
+
+class TestToolChoicePattern:
+    def test_my_editor_is(self):
+        caps = extract("my editor is neovim.")
+        assert any(c.key == "editor" and c.content == "neovim" for c in caps)
+
+    def test_compound_my_x_is_y(self):
+        caps = extract("my editor is neovim and my shell is zsh.")
+        keys = {c.key for c in caps if c.source_pattern == "tool-choice"}
+        assert "editor" in keys
+        assert "shell" in keys
+
+
 class TestNoiseRobustness:
     def test_empty_input(self):
         assert extract("") == []

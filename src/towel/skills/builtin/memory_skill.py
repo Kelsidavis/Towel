@@ -92,7 +92,12 @@ class MemorySkill(Skill):
                 mtype = arguments.get("type", "fact")
                 if mtype not in MEMORY_TYPES:
                     mtype = "fact"
-                entry = self._store.remember(key, content, memory_type=mtype)
+                # Tag tool-driven writes so 'memory stats' / 'memory tidy'
+                # can distinguish them from operator-CLI and auto-capture
+                # entries. Existing keys keep their original source.
+                entry = self._store.remember(
+                    key, content, memory_type=mtype, source="tool:remember"
+                )
                 return f"Remembered [{entry.memory_type}] {entry.key}: {entry.content}"
 
             case "forget":
