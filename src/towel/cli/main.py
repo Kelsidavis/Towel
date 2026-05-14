@@ -2353,6 +2353,68 @@ def memory_clear() -> None:
     console.print(f"[green]Cleared {count} memories.[/green]")
 
 
+@memory.command(name="activity")
+@click.option(
+    "--hours",
+    type=float,
+    default=24.0,
+    show_default=True,
+    help="Window size to summarize. Max 168 (1 week).",
+)
+@click.option(
+    "--bucket-hours",
+    type=float,
+    default=1.0,
+    show_default=True,
+    help="Bucket width inside the window.",
+)
+@click.option(
+    "--column",
+    type=click.Choice(["created_at", "updated_at"]),
+    default="created_at",
+    show_default=True,
+    help="created_at: only new captures. updated_at: every touch.",
+)
+def memory_activity(hours: float, bucket_hours: float, column: str) -> None:
+    """Show memory-write activity over the recent window.
+
+    Useful for verifying auto-capture is firing and for spotting
+    quiet periods or bursts. Renders an ASCII sparkline so a quick
+    eyeball read works in any terminal.
+    """
+    from towel.memory.store import MemoryStore
+
+    hours = max(0.5, min(hours, 168.0))
+    bucket_hours = max(0.1, min(bucket_hours, hours))
+    store = MemoryStore()
+    buckets = store.activity(hours=hours, bucket_hours=bucket_hours, column=column)
+    if not buckets:
+        console.print("[dim]No activity in the window.[/dim]")
+        return
+    counts = [b["count"] for b in buckets]
+    total = sum(counts)
+    if total == 0:
+        console.print(f"[dim]No writes in the last {hours}h.[/dim]")
+        return
+    # Sparkline characters — uniform-height blocks; floor(0) renders
+    # a single dot so empty buckets stay visible.
+    chars = " ▁▂▃▄▅▆▇█"
+    peak = max(counts) or 1
+    spark = "".join(chars[min(len(chars) - 1, int(c * (len(chars) - 1) / peak))] for c in counts)
+    console.print(f"[bold]Activity[/bold] (last {hours}h, {bucket_hours}h buckets, by {column})")
+    console.print(f"  {spark}  [dim]peak={peak} total={total}[/dim]")
+    # Top-3 source contributions across the window.
+    src_total: dict[str, int] = {}
+    for b in buckets:
+        for s, n in b["by_source"].items():
+            src_total[s] = src_total.get(s, 0) + n
+    if src_total:
+        console.print("[dim]top sources:[/dim]")
+        ranked = sorted(src_total.items(), key=lambda kv: -kv[1])[:5]
+        for src, n in ranked:
+            console.print(f"  {src:30s} {n}")
+
+
 @memory.command(name="nudge")
 @click.argument("key")
 def memory_nudge(key: str) -> None:

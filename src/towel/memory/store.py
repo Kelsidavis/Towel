@@ -776,6 +776,66 @@ class MemoryStore:
             )
         return True
 
+    def activity(
+        self,
+        hours: float = 24.0,
+        *,
+        column: str = "created_at",
+        bucket_hours: float = 1.0,
+    ) -> list[dict[str, Any]]:
+        """Histogram of memory writes over a recent window.
+
+        ``column`` is either ``"created_at"`` (new captures only) or
+        ``"updated_at"`` (every touch, including re-tagging). Returns
+        a list of ``{"bucket": <iso-utc-start>, "count": <int>,
+        "by_source": {...}}`` from oldest to newest bucket. Buckets
+        with zero writes are included so the result is dense enough
+        to render a sparkline without client-side gap-filling.
+        """
+        if column not in ("created_at", "updated_at"):
+            raise ValueError(f"column must be created_at or updated_at, got {column!r}")
+        if hours <= 0 or bucket_hours <= 0:
+            return []
+        now = datetime.now(UTC)
+        start = now.timestamp() - hours * 3600
+        start_iso = datetime.fromtimestamp(start, UTC).isoformat()
+        # Bucketize in Python — sqlite's strftime is awkward for
+        # arbitrary fractional-hour buckets and the corpus is small.
+        con = self._connect()
+        try:
+            rows = con.execute(
+                f"SELECT {column} AS ts, source FROM memories "
+                f"WHERE {column} >= ? "
+                f"ORDER BY {column} ASC",
+                (start_iso,),
+            ).fetchall()
+        finally:
+            con.close()
+        bucket_secs = bucket_hours * 3600
+        # Build empty buckets so a quiet period doesn't disappear.
+        # max(1, ...) ensures hours == bucket_hours still gives one
+        # bucket. Ceiling so a fractional remainder gets a trailing
+        # bucket that ends right at "now".
+        num_buckets = max(1, int((hours + 1e-9) // bucket_hours))
+        buckets: list[dict[str, Any]] = []
+        for i in range(num_buckets):
+            b_start = start + i * bucket_secs
+            buckets.append({
+                "bucket": datetime.fromtimestamp(b_start, UTC).isoformat(),
+                "count": 0,
+                "by_source": {},
+            })
+        # The last bucket covers any rows beyond its nominal end so a
+        # write at exactly "now" still lands in the most recent slot.
+        for row in rows:
+            ts = datetime.fromisoformat(row["ts"]).timestamp()
+            raw_idx = int((ts - start) / bucket_secs)
+            idx = max(0, min(num_buckets - 1, raw_idx))
+            buckets[idx]["count"] += 1
+            src = (row["source"] or "") or "operator"
+            buckets[idx]["by_source"][src] = buckets[idx]["by_source"].get(src, 0) + 1
+        return buckets
+
     def embedding_dims(self) -> dict[int, int]:
         """Histogram of embedding dimensions in the corpus.
 

@@ -246,6 +246,24 @@ class TestMemoryEndpoint:
         after = memory.recall("user_role").recall_count
         assert after == before + 1
 
+    def test_activity_returns_buckets(self, store, memory):
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+        resp = client.get("/memory/activity?hours=2&bucket_hours=1")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "buckets" in body
+        assert len(body["buckets"]) >= 2
+        # The fixture writes via remember(...) which stamps created_at
+        # at fixture-time, so at least one bucket should have count > 0.
+        assert sum(b["count"] for b in body["buckets"]) >= 3
+
+    def test_activity_rejects_bad_column(self, store, memory):
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+        resp = client.get("/memory/activity?column=evil")
+        assert resp.status_code == 400
+
     def test_nudge_unknown_key_404(self, store, memory):
         gw = _gateway(store, _FakeAgent(memory))
         client = TestClient(gw._build_http_app())

@@ -1829,6 +1829,53 @@ class GatewayServer:
                 }
             )
 
+        async def memory_activity(request: Request) -> JSONResponse:
+            """Time-bucketed counts of memory writes for the recent window.
+
+            Query params:
+              ``hours``        window size, default 24, capped at 168 (1 week)
+              ``bucket_hours`` size of each bucket, default 1
+              ``column``       created_at (default) or updated_at
+
+            Returns a list of buckets oldest→newest with count and
+            by-source breakdown so the UI can render a sparkline +
+            tooltip without further roundtrips.
+            """
+            memory = getattr(self.agent, "memory", None)
+            if memory is None:
+                return JSONResponse({"buckets": []})
+            try:
+                hours = float(request.query_params.get("hours", "24"))
+                hours = max(0.5, min(hours, 168.0))
+                bucket_hours = float(request.query_params.get("bucket_hours", "1"))
+                bucket_hours = max(0.1, min(bucket_hours, hours))
+            except ValueError:
+                return JSONResponse(
+                    {"error": "hours / bucket_hours must be numeric"},
+                    status_code=400,
+                )
+            column = request.query_params.get("column", "created_at")
+            if column not in ("created_at", "updated_at"):
+                return JSONResponse(
+                    {"error": "column must be created_at or updated_at"},
+                    status_code=400,
+                )
+            try:
+                buckets = memory.activity(
+                    hours=hours, bucket_hours=bucket_hours, column=column,
+                )
+            except Exception as exc:
+                log.exception("memory.activity failed: %s", exc)
+                return JSONResponse({"error": str(exc)}, status_code=500)
+            return JSONResponse(
+                {
+                    "buckets": buckets,
+                    "hours": hours,
+                    "bucket_hours": bucket_hours,
+                    "column": column,
+                }
+            )
+
         async def memory_inspect(request: Request) -> JSONResponse:
             """Return one memory + its salience, related entries, and freshness.
 
@@ -3057,6 +3104,7 @@ class GatewayServer:
             Route("/memory", memory_list),
             Route("/memory", memory_create, methods=["POST"]),
             Route("/memory/stats", memory_stats),
+            Route("/memory/activity", memory_activity),
             # Order matters: more-specific routes first so /memory/stats
             # and /memory/{key}/inspect don't get shadowed by /memory/{key}.
             Route("/memory/{key}/inspect", memory_inspect),

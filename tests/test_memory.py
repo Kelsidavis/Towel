@@ -532,6 +532,38 @@ class TestTags:
         assert counts == {"work": 2, "urgent": 1}
 
 
+class TestActivity:
+    def test_dense_buckets_zero_when_empty(self, store):
+        buckets = store.activity(hours=3, bucket_hours=1)
+        # 3 hours / 1 hour = 3 buckets, all zero.
+        assert len(buckets) == 3
+        assert all(b["count"] == 0 for b in buckets)
+
+    def test_recent_writes_land_in_last_bucket(self, store):
+        # remember() stamps created_at = now, so a fresh write goes
+        # into the most recent (last) bucket.
+        store.remember("k", "v", "fact")
+        buckets = store.activity(hours=2, bucket_hours=1)
+        # The last bucket should have a count; earlier buckets stay 0.
+        assert buckets[-1]["count"] == 1
+        assert sum(b["count"] for b in buckets[:-1]) == 0
+
+    def test_source_breakdown_per_bucket(self, store):
+        store.remember("a", "x", "fact", source="auto_capture:role")
+        store.remember("b", "y", "fact", source="")
+        buckets = store.activity(hours=1, bucket_hours=1)
+        # Both writes go to the most recent bucket.
+        last = buckets[-1]
+        assert last["count"] == 2
+        # by_source treats "" as "operator".
+        assert "auto_capture:role" in last["by_source"]
+        assert "operator" in last["by_source"]
+
+    def test_invalid_column_rejected(self, store):
+        with pytest.raises(ValueError):
+            store.activity(column="garbage")
+
+
 class TestMemoryGraph:
     def test_co_retrieval_creates_links(self, store):
         store.remember("a", "alpha", "fact")
