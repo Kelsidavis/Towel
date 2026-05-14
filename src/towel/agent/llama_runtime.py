@@ -366,6 +366,19 @@ class LlamaRuntime:
             resp = await client.post(
                 f"{self.llama_url}/v1/chat/completions", json=payload
             )
+            # Retry without tools when llama-server returns 400 — some
+            # builds reject the OpenAI tools field, and the resulting
+            # 400 makes every request fail silently from the operator's
+            # perspective. One retry without tools beats a totally
+            # broken chat path.
+            if resp.status_code == 400 and "tools" in payload:
+                log.warning(
+                    "llama-server rejected tools (400); retrying without tools"
+                )
+                payload.pop("tools", None)
+                resp = await client.post(
+                    f"{self.llama_url}/v1/chat/completions", json=payload
+                )
             resp.raise_for_status()
             data = resp.json()
 
@@ -431,38 +444,54 @@ class LlamaRuntime:
         # tracks {"name": str, "arguments": str} where ``arguments`` is built up
         # as a JSON-encoded string across chunks (the OpenAI streaming contract).
         tc_accum: dict[int, dict[str, str]] = {}
+
         async with httpx.AsyncClient(timeout=300.0) as client:
-            async with client.stream(
-                "POST", f"{self.llama_url}/v1/chat/completions", json=payload
-            ) as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if self._cancel_flag:
-                        break
-                    if not line:
+            # Same tools-fallback logic as generate_from_request: if
+            # llama-server rejects tools with 400, drop them and
+            # retry once. Iteration happens inside the stream's
+            # context so the connection stays alive while we yield.
+            for attempt in (1, 2):
+                async with client.stream(
+                    "POST",
+                    f"{self.llama_url}/v1/chat/completions",
+                    json=payload,
+                ) as resp:
+                    if resp.status_code == 400 and "tools" in payload and attempt == 1:
+                        log.warning(
+                            "llama-server rejected tools on stream (400); "
+                            "retrying without tools"
+                        )
+                        await resp.aread()
+                        payload.pop("tools", None)
                         continue
-                    # SSE format: "data: {...}" or "data: [DONE]"
-                    if not line.startswith("data:"):
-                        continue
-                    data_str = line[5:].strip()
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data_str)
-                    except json.JSONDecodeError:
-                        continue
-                    delta = chunk.get("choices", [{}])[0].get("delta", {})
-                    token = delta.get("content", "")
-                    if token:
-                        yield token
-                    for tc_delta in delta.get("tool_calls") or []:
-                        idx = tc_delta.get("index", 0)
-                        slot = tc_accum.setdefault(idx, {"name": "", "arguments": ""})
-                        fn = tc_delta.get("function") or {}
-                        if fn.get("name"):
-                            slot["name"] = fn["name"]
-                        if fn.get("arguments"):
-                            slot["arguments"] += fn["arguments"]
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
+                        if self._cancel_flag:
+                            break
+                        if not line:
+                            continue
+                        if not line.startswith("data:"):
+                            continue
+                        data_str = line[5:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+                        delta = chunk.get("choices", [{}])[0].get("delta", {})
+                        token = delta.get("content", "")
+                        if token:
+                            yield token
+                        for tc_delta in delta.get("tool_calls") or []:
+                            idx = tc_delta.get("index", 0)
+                            slot = tc_accum.setdefault(idx, {"name": "", "arguments": ""})
+                            fn = tc_delta.get("function") or {}
+                            if fn.get("name"):
+                                slot["name"] = fn["name"]
+                            if fn.get("arguments"):
+                                slot["arguments"] += fn["arguments"]
+                    break  # successful pass — don't loop again
         # Reassemble any accumulated tool calls into the OpenAI-format expected
         # by the shared normalizer, then publish for step_streaming to consume.
         if tc_accum:

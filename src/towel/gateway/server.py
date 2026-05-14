@@ -1475,6 +1475,67 @@ class GatewayServer:
             self._session_jobs.pop(session_id, None)
             self._workers.release(worker.id)
 
+    async def iter_remote_tokens(
+        self,
+        session_id: str,
+        session: Any,
+        worker: WorkerInfo,
+    ):
+        """Async-iterate token text from a remote worker for a session.
+
+        Used by the OpenAI-compat SSE endpoint: spins up a run job
+        with stream=True, then yields each ``event.text`` from the
+        worker's job_event token messages. Cleans up the queue +
+        session/worker assignments in a finally block so a client
+        disconnect doesn't leak state.
+        """
+        job_id = uuid.uuid4().hex[:12]
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._job_queues[job_id] = queue
+        self._session_jobs[session_id] = job_id
+        self._workers.assign(worker.id, job_id, session_id)
+        try:
+            await worker.ws.send(
+                json.dumps(
+                    {
+                        "type": "run",
+                        "job_id": job_id,
+                        "session": session_id,
+                        "stream": True,
+                        "conversation": session.conversation.to_dict(),
+                    }
+                )
+            )
+            while True:
+                msg = await queue.get()
+                msg_type = msg.get("type")
+                if msg_type == "job_event":
+                    event = msg.get("event", {})
+                    # AgentEvent.token serializes with key "content"
+                    # under EventType.TOKEN. Probe a few likely names
+                    # so future event-schema tweaks don't silently
+                    # break the stream.
+                    if event.get("type") == "token":
+                        text = (
+                            event.get("content")
+                            or event.get("text")
+                            or event.get("token")
+                            or ""
+                        )
+                        if text:
+                            yield text
+                elif msg_type == "job_done":
+                    conv = msg.get("conversation")
+                    if conv:
+                        session.conversation = session.conversation.from_dict(conv)
+                    break
+                elif msg_type == "job_error":
+                    raise RuntimeError(msg.get("message", "remote worker failed"))
+        finally:
+            self._job_queues.pop(job_id, None)
+            self._session_jobs.pop(session_id, None)
+            self._workers.release(worker.id)
+
     async def _step_remote(self, session_id: str, session: Any, worker: WorkerInfo) -> Any:
         """Run a non-streaming response on a remote worker."""
         job_id = uuid.uuid4().hex[:12]

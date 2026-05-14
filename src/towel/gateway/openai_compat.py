@@ -84,8 +84,39 @@ def build_openai_routes(
 
         try:
             if stream:
+                # When a gateway is wired in and a worker is available
+                # for this request, route the stream through the fleet
+                # so SSE clients see the same model the rest of the
+                # system uses. Falls back to the local agent's
+                # step_streaming when no gateway is available, when
+                # routing returns None (empty fleet), or when picking
+                # a worker fails for any reason.
+                generator = _stream_sse(agent, conv, request_id, created, model_name)
+                if gateway is not None and messages:
+                    last_user = next(
+                        (m.get("content", "") for m in reversed(messages)
+                         if m.get("role") == "user"),
+                        "",
+                    )
+                    session_id = f"openai-{request_id}"
+                    sess = gateway.sessions.get_or_create(session_id)
+                    sess.conversation = conv
+                    try:
+                        worker, _intent = await gateway._route_by_role(
+                            last_user, session_id,
+                        )
+                        if worker is not None:
+                            generator = _stream_sse_remote(
+                                gateway, session_id, sess, worker,
+                                request_id, created, model_name,
+                            )
+                    except Exception as exc:
+                        import logging
+                        logging.getLogger("towel.openai_compat").debug(
+                            "stream route failed, falling back: %s", exc,
+                        )
                 return StreamingResponse(
-                    _stream_sse(agent, conv, request_id, created, model_name),
+                    generator,
                     media_type="text/event-stream",
                     headers={
                         "Cache-Control": "no-cache",
@@ -156,6 +187,65 @@ def build_openai_routes(
         Route("/v1/chat/completions", chat_completions, methods=["POST"]),
         Route("/v1/models", list_models, methods=["GET"]),
     ]
+
+
+async def _stream_sse_remote(
+    gateway: Any,
+    session_id: str,
+    session: Any,
+    worker: Any,
+    request_id: str,
+    created: int,
+    model: str,
+) -> Any:
+    """SSE generator that pipes tokens from a remote worker.
+
+    Each token from gateway.iter_remote_tokens becomes an OpenAI
+    chunk; the final chunk has finish_reason="stop". Errors mid-
+    stream surface as a finish_reason="error" final chunk so the
+    client doesn't hang waiting for [DONE].
+    """
+    try:
+        async for token in gateway.iter_remote_tokens(session_id, session, worker):
+            chunk = {
+                "id": request_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"content": token},
+                        "finish_reason": None,
+                    }
+                ],
+            }
+            yield f"data: {json.dumps(chunk)}\n\n"
+    except Exception as exc:
+        err_chunk = {
+            "id": request_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [
+                {"index": 0, "delta": {}, "finish_reason": "error"},
+            ],
+            "error": {"message": str(exc)},
+        }
+        yield f"data: {json.dumps(err_chunk)}\n\n"
+        yield "data: [DONE]\n\n"
+        return
+    final_chunk = {
+        "id": request_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [
+            {"index": 0, "delta": {}, "finish_reason": "stop"},
+        ],
+    }
+    yield f"data: {json.dumps(final_chunk)}\n\n"
+    yield "data: [DONE]\n\n"
 
 
 async def _stream_sse(
