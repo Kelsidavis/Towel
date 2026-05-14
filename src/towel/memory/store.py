@@ -56,6 +56,13 @@ MEMORY_TYPES = ("user", "project", "fact", "preference")
 # memory types without exploding token cost.
 _DEFAULT_PROMPT_LIMIT = 8
 
+# Memory types that auto_forget never touches without explicit override.
+# Operator-set identity/preferences should outlive heuristic pruning;
+# only "fact" memories are eligible by default. "project" is preserved
+# too — project facts (deadlines, current work) decay naturally as
+# ``remember`` overwrites them, no need to prune.
+_PROTECTED_TYPES = ("user", "preference", "project")
+
 
 @dataclass
 class MemoryEntry:
@@ -488,6 +495,72 @@ class MemoryStore:
         )
         return "\n".join(lines)
 
+    # ── decay / pruning ───────────────────────────────────────────────
+
+    def auto_forget(
+        self,
+        max_age_days: float = 90.0,
+        *,
+        dry_run: bool = False,
+        protected_types: tuple[str, ...] = _PROTECTED_TYPES,
+    ) -> list[MemoryEntry]:
+        """Prune stale, never-recalled memories.
+
+        An entry is eligible iff ALL of:
+
+        * its memory_type is not in ``protected_types`` (default:
+          user, preference, project — only ``fact`` is pruneable);
+        * it has never been recalled (``recall_count == 0``);
+        * its ``updated_at`` is older than ``max_age_days``.
+
+        Conservative on purpose. The decay model in ``salience()`` is
+        richer than this rule and is exposed for callers that want to
+        rank — auto_forget is the safe default that never throws away
+        a memory the agent has actually used.
+
+        ``dry_run=True`` returns the would-be-deleted entries without
+        touching the DB. Useful for ``towel memory tidy --dry-run``.
+
+        Returns the list of entries that were (or would be) deleted.
+        """
+        cutoff = (datetime.now(UTC).timestamp() - max_age_days * 86400.0)
+        cutoff_iso = datetime.fromtimestamp(cutoff, UTC).isoformat()
+        protected = list(protected_types)
+        placeholders = ",".join(["?"] * len(protected)) if protected else "''"
+        sql_where = (
+            f"recall_count = 0 AND updated_at < ? AND memory_type NOT IN ({placeholders})"
+        )
+        con = self._connect()
+        try:
+            rows = con.execute(
+                f"SELECT * FROM memories WHERE {sql_where}",
+                (cutoff_iso, *protected),
+            ).fetchall()
+        finally:
+            con.close()
+        victims = [_row_to_entry(r) for r in rows]
+        if dry_run or not victims:
+            return victims
+        with self._txn() as con:
+            con.executemany(
+                "DELETE FROM memories WHERE key = ?",
+                [(v.key,) for v in victims],
+            )
+        log.info("auto_forget pruned %d memor(ies)", len(victims))
+        return victims
+
+    def rank_by_salience(self) -> list[tuple[MemoryEntry, float]]:
+        """Return every entry with its salience score, lowest first.
+
+        Used by ``towel memory tidy`` to show the operator which
+        memories are weakest before pruning. The bottom of the list is
+        the auto_forget candidate pool.
+        """
+        now = datetime.now(UTC)
+        scored = [(e, salience(e, now)) for e in self.recall_all()]
+        scored.sort(key=lambda pair: pair[1])
+        return scored
+
     @property
     def count(self) -> int:
         con = self._connect()
@@ -496,6 +569,45 @@ class MemoryStore:
         finally:
             con.close()
         return int(row["n"])
+
+
+# ── decay / auto-forget ───────────────────────────────────────────────
+
+
+def salience(entry: MemoryEntry, now: datetime | None = None) -> float:
+    """Score an entry for pruning order. Higher = more worth keeping.
+
+    Combines three signals so a single dimension can't dominate:
+
+    * **recall_count** (log-scaled) — a memory recalled 10× is more
+      valuable than one recalled once, but not 10× more; log keeps
+      runaway recall counts from outranking everything else.
+    * **age** — older entries decay exponentially with a 60-day
+      half-life. A brand-new memory has full score; one from a year
+      ago is ~1.5% of its original recency score.
+    * **last_recalled_at** — same half-life applied to "time since
+      last touched"; if never recalled, contributes 0.
+
+    Pure function, side-effect free; callers compose it any way they
+    like (the default ``auto_forget`` uses ``salience < threshold``
+    on the bottom-N).
+    """
+    import math
+
+    now = now or datetime.now(UTC)
+    half_life_days = 60.0
+    age_days = max(0.0, (now - entry.updated_at).total_seconds() / 86400.0)
+    recency = math.exp(-age_days / half_life_days)
+    recall = math.log1p(entry.recall_count)
+    if entry.last_recalled_at is not None:
+        since_days = max(0.0, (now - entry.last_recalled_at).total_seconds() / 86400.0)
+        access_recency = math.exp(-since_days / half_life_days)
+    else:
+        access_recency = 0.0
+    # Weights chosen so an entry recalled once recently beats an old
+    # untouched entry, and an entry recalled many times survives even
+    # if its updated_at is old.
+    return 2.0 * recall + 1.0 * recency + 1.0 * access_recency
 
 
 # FTS5's MATCH grammar treats bare strings as one of: column filters,

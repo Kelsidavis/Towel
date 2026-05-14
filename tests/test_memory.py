@@ -2,10 +2,11 @@
 
 import json
 import sqlite3
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from towel.memory.store import MemoryEntry, MemoryStore
+from towel.memory.store import MemoryEntry, MemoryStore, salience
 
 
 @pytest.fixture
@@ -277,6 +278,133 @@ class TestSqliteBacking:
         # Deletes also propagate.
         store.forget("alpha")
         assert store.search("lazy dogs") == []
+
+
+class TestSalience:
+    def test_recent_recalled_outranks_old_untouched(self):
+        now = datetime.now(UTC)
+        recent = MemoryEntry(
+            key="a", content="x", memory_type="fact",
+            created_at=now, updated_at=now,
+            last_recalled_at=now, recall_count=3,
+        )
+        stale = MemoryEntry(
+            key="b", content="y", memory_type="fact",
+            created_at=now - timedelta(days=180),
+            updated_at=now - timedelta(days=180),
+            last_recalled_at=None, recall_count=0,
+        )
+        assert salience(recent, now) > salience(stale, now)
+
+    def test_high_recall_beats_age(self):
+        # A heavily-recalled memory (even one older than the half-life)
+        # should outrank a fresh one that's never been used.
+        now = datetime.now(UTC)
+        veteran = MemoryEntry(
+            key="vet", content="x", memory_type="fact",
+            created_at=now - timedelta(days=120),
+            updated_at=now - timedelta(days=120),
+            last_recalled_at=now - timedelta(days=1),
+            recall_count=50,
+        )
+        rookie = MemoryEntry(
+            key="rook", content="y", memory_type="fact",
+            created_at=now, updated_at=now,
+            recall_count=0,
+        )
+        assert salience(veteran, now) > salience(rookie, now)
+
+
+class TestAutoForget:
+    def test_prunes_old_unused_facts(self, tmp_path):
+        store = MemoryStore(store_dir=tmp_path)
+        store.remember("old_fact", "stale", "fact")
+        store.remember("fresh_fact", "active", "fact")
+
+        # Manually backdate the old entry directly in SQLite — quicker
+        # than freezing time, and exercises the same code path.
+        import sqlite3
+        old = (datetime.now(UTC) - timedelta(days=120)).isoformat()
+        con = sqlite3.connect(str(tmp_path / "memory.db"))
+        con.execute(
+            "UPDATE memories SET updated_at = ? WHERE key = 'old_fact'",
+            (old,),
+        )
+        con.commit()
+        con.close()
+
+        pruned = store.auto_forget(max_age_days=90)
+        assert [p.key for p in pruned] == ["old_fact"]
+        assert store.recall("old_fact") is None
+        assert store.recall("fresh_fact") is not None
+
+    def test_protected_types_never_pruned(self, tmp_path):
+        store = MemoryStore(store_dir=tmp_path)
+        store.remember("role", "engineer", "user")
+        store.remember("style", "concise", "preference")
+        store.remember("project", "towel", "project")
+
+        # Even with extreme age, protected types survive.
+        old = (datetime.now(UTC) - timedelta(days=1000)).isoformat()
+        import sqlite3
+        con = sqlite3.connect(str(tmp_path / "memory.db"))
+        con.execute("UPDATE memories SET updated_at = ?", (old,))
+        con.commit()
+        con.close()
+
+        pruned = store.auto_forget(max_age_days=30)
+        assert pruned == []
+        assert store.count == 3
+
+    def test_recalled_fact_survives_even_when_old(self, tmp_path):
+        store = MemoryStore(store_dir=tmp_path)
+        store.remember("important", "this gets used", "fact")
+        # Touch it once via the recall-bump path so recall_count = 1.
+        store._bump_recall(["important"])
+
+        old = (datetime.now(UTC) - timedelta(days=365)).isoformat()
+        import sqlite3
+        con = sqlite3.connect(str(tmp_path / "memory.db"))
+        con.execute(
+            "UPDATE memories SET updated_at = ? WHERE key = 'important'",
+            (old,),
+        )
+        con.commit()
+        con.close()
+
+        pruned = store.auto_forget(max_age_days=30)
+        assert pruned == []
+        assert store.recall("important") is not None
+
+    def test_dry_run_does_not_delete(self, tmp_path):
+        store = MemoryStore(store_dir=tmp_path)
+        store.remember("doomed", "x", "fact")
+        old = (datetime.now(UTC) - timedelta(days=120)).isoformat()
+        import sqlite3
+        con = sqlite3.connect(str(tmp_path / "memory.db"))
+        con.execute("UPDATE memories SET updated_at = ?", (old,))
+        con.commit()
+        con.close()
+
+        pruned = store.auto_forget(max_age_days=90, dry_run=True)
+        # Returns what WOULD be deleted...
+        assert [p.key for p in pruned] == ["doomed"]
+        # ...but the row is still there.
+        assert store.recall("doomed") is not None
+
+    def test_rank_by_salience_orders_lowest_first(self, tmp_path):
+        store = MemoryStore(store_dir=tmp_path)
+        store.remember("never_used", "x", "fact")
+        store.remember("popular", "y", "fact")
+        store._bump_recall(["popular"])
+        store._bump_recall(["popular"])
+        store._bump_recall(["popular"])
+
+        ranked = store.rank_by_salience()
+        keys_by_rank = [e.key for e, _ in ranked]
+        # The unrecalled one should be at the bottom.
+        assert keys_by_rank[0] == "never_used"
+        assert keys_by_rank[-1] == "popular"
 
 
 class TestMemoryEntry:

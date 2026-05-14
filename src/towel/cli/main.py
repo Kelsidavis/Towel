@@ -2244,6 +2244,62 @@ def memory_clear() -> None:
     console.print(f"[green]Cleared {count} memories.[/green]")
 
 
+@memory.command(name="tidy")
+@click.option(
+    "--max-age-days",
+    type=float,
+    default=90.0,
+    show_default=True,
+    help=(
+        "Prune memories older than this AND never recalled. Recalled "
+        "entries are protected regardless of age."
+    ),
+)
+@click.option(
+    "--dry-run/--apply",
+    default=True,
+    show_default=True,
+    help="Default: dry-run lists candidates without deleting. Pass --apply to commit.",
+)
+@click.option(
+    "--show-scores/--no-show-scores",
+    default=False,
+    help="Also print every memory ranked by salience (lowest first).",
+)
+def memory_tidy(max_age_days: float, dry_run: bool, show_scores: bool) -> None:
+    """Prune stale memories that were never recalled.
+
+    Drops fact-type entries older than --max-age-days that have a zero
+    recall count. user / preference / project memories are protected
+    and never touched by this command. Use 'memory remove KEY' to
+    forget specific entries directly.
+    """
+    from towel.memory.store import MemoryStore
+
+    store = MemoryStore()
+    if show_scores:
+        console.print("[bold]Salience ranking (lowest first):[/bold]")
+        for entry, score in store.rank_by_salience():
+            console.print(
+                f"  [dim]{score:6.2f}[/dim] [{entry.memory_type}] "
+                f"{entry.key}: recalls={entry.recall_count} "
+                f"updated={entry.updated_at.date()}"
+            )
+        console.print()
+    victims = store.auto_forget(max_age_days=max_age_days, dry_run=dry_run)
+    if not victims:
+        console.print("[green]Nothing to prune — store is already tidy.[/green]")
+        return
+    label = "would prune" if dry_run else "pruned"
+    console.print(f"[yellow]{label} {len(victims)} memor(ies):[/yellow]")
+    for v in victims:
+        console.print(f"  - [{v.memory_type}] {v.key}: {v.content[:60]}")
+    if dry_run:
+        console.print(
+            "\n[dim]Run again with --apply to actually delete.[/dim]"
+        )
+
+
 @cli.group()
 def models() -> None:
     """Manage MLX models."""
