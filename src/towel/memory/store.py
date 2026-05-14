@@ -553,7 +553,38 @@ class MemoryStore:
         if query is None:
             entries = self.recall_all()
         else:
-            entries = self.search(query, limit=limit)
+            # Pull a slightly tighter top-K from BM25 (limit//2 + 1)
+            # and reserve the rest of the budget for graph-augmented
+            # neighbors. This is how agentmemory's BM25+Graph fusion
+            # works — the graph fills in semantically-adjacent
+            # memories that BM25 missed because the user's wording
+            # didn't share lexical tokens.
+            seed_k = max(1, limit // 2 + 1)
+            entries = self.search(query, limit=seed_k)
+            if entries:
+                seen = {e.key for e in entries}
+                # Round-robin one neighbor per seed so the result
+                # reflects the breadth of the seed set, not just the
+                # graph footprint of whichever seed had the most
+                # links.
+                neighbors_per_seed = [
+                    self.recall_related(e.key, limit=3) for e in entries
+                ]
+                ring = 0
+                while len(entries) < limit and any(neighbors_per_seed):
+                    progressed = False
+                    for ns in neighbors_per_seed:
+                        if not ns or len(entries) >= limit:
+                            continue
+                        rel, _ = ns.pop(0)
+                        if rel.key in seen:
+                            continue
+                        seen.add(rel.key)
+                        entries.append(rel)
+                        progressed = True
+                    if not progressed:
+                        break
+                    ring += 1
             if not entries:
                 # Empty FTS hit AND empty substring hit — fall back to a
                 # short recent slice so the agent still knows who it's

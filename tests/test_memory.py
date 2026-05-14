@@ -500,6 +500,43 @@ class TestMemoryGraph:
         assert keys_by_rank == ["c", "b"]
 
 
+class TestGraphAugmentedRetrieval:
+    """to_prompt_block(query=...) should pull in linked neighbors of
+    BM25 hits so the agent gets semantically-adjacent memories even
+    when the user's wording doesn't share lexical tokens with the
+    target entry."""
+
+    def test_neighbors_join_the_prompt_block(self, store):
+        # Seed a graph: 'role' is heavily linked to 'editor'. A query
+        # that hits 'role' lexically should pull 'editor' along.
+        store.remember("role", "data scientist", "user")
+        store.remember("editor", "neovim", "preference")
+        store.remember("unrelated", "cloud setup notes", "fact")
+        for _ in range(5):
+            store._bump_recall(["role", "editor"])
+
+        block = store.to_prompt_block(query="scientist", limit=8)
+        # The seed BM25 hit ('role') brings 'editor' via graph
+        # augmentation; the unrelated entry should not appear
+        # (no lexical match and no graph link).
+        assert "data scientist" in block
+        assert "neovim" in block
+        assert "cloud setup" not in block
+
+    def test_limit_respected_with_graph_augmentation(self, store):
+        # Make sure neighbor expansion doesn't blow past the limit.
+        for i in range(10):
+            store.remember(f"k{i}", f"shared word context-{i}", "fact")
+        # Link all entries to k0 so it has many neighbors.
+        for i in range(1, 10):
+            store._bump_recall(["k0", f"k{i}"])
+
+        block = store.to_prompt_block(query="shared word", limit=3)
+        # The block has at most `limit` entries — count the bullets.
+        bullets = block.count("\n- ")
+        assert bullets <= 3
+
+
 class TestMemoryEntry:
     def test_serialization_roundtrip(self):
         entry = MemoryEntry(key="test", content="value", memory_type="fact")
