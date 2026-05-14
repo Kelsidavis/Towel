@@ -151,6 +151,38 @@ class TestVectorSearch:
         assert results[1].content in {"snake handling"}
 
 
+class TestEmbeddingDims:
+    def test_empty_when_no_embeddings(self, store):
+        store.remember("k", "v")  # no extras → embedding stays NULL
+        # If a real backend stuffed in vectors anyway (CI env varies)
+        # we just assert the function returns a dict and runs cleanly.
+        assert isinstance(store.embedding_dims(), dict)
+
+    def test_uniform_dims_one_bucket(self, store, monkeypatch):
+        monkeypatch.setattr(emb, "encode", lambda t: _vec([1.0, 0.0, 0.0]))
+        monkeypatch.setattr(emb, "is_available", lambda: True)
+        store.remember("a", "x")
+        store.remember("b", "y")
+        dims = store.embedding_dims()
+        assert dims == {3: 2}
+
+    def test_mixed_dims_two_buckets(self, store, monkeypatch):
+        # First two rows at dim 3, then switch to dim 4 to simulate
+        # a model swap with no re-encode.
+        first = iter([_vec([1.0, 0.0, 0.0]), _vec([0.0, 1.0, 0.0]),
+                      _vec([1.0, 0.0, 0.0, 0.0]), _vec([0.0, 1.0, 0.0, 0.0])])
+        def fake_encode(text):
+            return next(first)
+        monkeypatch.setattr(emb, "encode", fake_encode)
+        monkeypatch.setattr(emb, "is_available", lambda: True)
+        store.remember("a", "x")
+        store.remember("b", "y")
+        store.remember("c", "z")
+        store.remember("d", "w")
+        dims = store.embedding_dims()
+        assert dims == {3: 2, 4: 2}
+
+
 class TestReembedAll:
     def test_noop_without_extra(self, store, monkeypatch):
         monkeypatch.setattr(emb, "is_available", lambda: False)

@@ -134,3 +134,26 @@ class TestScopedStore:
         store.remember("b", "y", scope="proj:b")
         results = store.recall_all(scope="proj:b")
         assert [e.key for e in results] == ["b"]
+
+
+class TestSetScope:
+    def test_promote_to_global(self, tmp_path):
+        store = MemoryStore(store_dir=tmp_path)
+        store.remember("k", "v", scope="proj:a")
+        assert store.set_scope("k", "") is True
+        assert store.recall("k").scope == ""
+
+    def test_demote_to_project(self, tmp_path):
+        store = MemoryStore(store_dir=tmp_path)
+        store.remember("k", "v")  # global
+        assert store.set_scope("k", "proj:b") is True
+        assert store.recall("k").scope == "proj:b"
+
+    def test_noop_when_already_in_target(self, tmp_path):
+        store = MemoryStore(store_dir=tmp_path)
+        store.remember("k", "v", scope="proj:a")
+        assert store.set_scope("k", "proj:a") is False
+
+    def test_unknown_key_returns_false(self, tmp_path):
+        store = MemoryStore(store_dir=tmp_path)
+        assert store.set_scope("missing", "proj:x") is False

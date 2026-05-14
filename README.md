@@ -153,7 +153,7 @@ Decay + auto-forget prune stale, never-recalled fact memories;
 user / preference / project entries are protected.
 
 ```bash
-towel memory stats             # counts, recall fraction, by-source breakdown
+towel memory stats             # counts, recall fraction, by-source/scope, pattern health
 towel memory inspect <key>     # entry detail + salience + related (graph)
 towel memory tidy --dry-run    # see what would be pruned
 towel memory tidy --apply      # actually prune
@@ -161,7 +161,21 @@ towel memory export --out backup.json
 towel memory import backup.json
 towel memory diff baseline.json  # what changed since baseline
 towel memory reembed           # backfill vectors after installing [embeddings]
+towel memory ingest --all      # backfill captures from every saved conversation
+towel memory extract --stdin   # LLM-based extraction for what regex missed
+towel memory tag KEY add work  # free-form labels for grouping
+towel memory list --scope all  # cross-project audit
 ```
+
+**Per-project scope.** Memories carry an optional `scope` string —
+empty = global (visible everywhere), non-empty = restricted to
+callers passing the same scope. When `towel chat` / `towel serve` /
+`towel mcp` is launched inside a project (one with `.towel.md`,
+`.git`, `pyproject.toml`, etc.), they auto-derive a stable scope
+from the project root path. New captures land there by default;
+retrieval ORs current-scope with global so universal facts still
+surface. Use `--scope all` on CLI commands to audit across every
+project from one terminal.
 
 **MCP server.** Run `towel mcp` to expose the store over stdio to any
 MCP-compatible client (Claude Code, Cursor, OpenCode, Gemini CLI):

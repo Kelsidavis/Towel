@@ -330,6 +330,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     </div>
     <div id="memory-body" style="padding:14px 18px;overflow:auto;flex:1">
       <div id="memory-stats" style="margin-bottom:12px;color:var(--text-dim);font-size:0.9em">Loading…</div>
+      <div id="memory-scope-filter" style="margin-bottom:6px;display:flex;align-items:center;gap:6px"></div>
       <div id="memory-tag-filter" style="margin-bottom:8px;display:flex;flex-wrap:wrap;gap:4px;align-items:center"></div>
       <div id="memory-list"></div>
     </div>
@@ -1961,6 +1962,45 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   // Single active tag filter on the panel (null = no filter). Updated
   // by chip clicks below and applied to every list refresh.
   let activeMemoryTag = null;
+  // Scope filter: null = "show everything" (no scope filter sent),
+  // "" = global only, "proj:..." = a specific project. Default to
+  // null so the panel matches the previous behavior; the dropdown
+  // gives an explicit way to narrow.
+  let activeMemoryScope = null;
+
+  async function loadMemoryScopeFilter() {
+    // The scope dropdown is built from /memory/stats by_scope so it
+    // matches whatever scopes actually exist in the corpus. Hidden
+    // when there's only one scope (no useful filter to apply).
+    const el = document.getElementById('memory-scope-filter');
+    if (!el) return;
+    try {
+      const resp = await fetch(apiBase + '/memory/stats');
+      const s = await resp.json();
+      const byScope = Object.entries(s.by_scope || {}).sort(function(a,b){return b[1]-a[1];});
+      if (byScope.length < 2) {
+        el.innerHTML = '';
+        return;
+      }
+      const opts = ['<option value="__all__">all scopes</option>']
+        .concat(byScope.map(function(pair) {
+          const sel = activeMemoryScope === pair[0] ? ' selected' : '';
+          return '<option value="' + escHtml(pair[0]) + '"' + sel + '>'
+            + escHtml(pair[0]) + ' (' + pair[1] + ')</option>';
+        }));
+      el.innerHTML = '<span style="color:var(--text-dim);font-size:0.8em">scope:</span>'
+        + '<select id="memory-scope-select" style="background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font:inherit">'
+        + opts.join('')
+        + '</select>';
+      const sel = document.getElementById('memory-scope-select');
+      if (sel) sel.addEventListener('change', function() {
+        activeMemoryScope = sel.value === '__all__' ? null : sel.value;
+        loadMemoryList(memorySearchEl ? memorySearchEl.value.trim() : '');
+      });
+    } catch (err) {
+      el.innerHTML = '';
+    }
+  }
 
   async function loadMemoryTagFilter() {
     const tagFilterEl = document.getElementById('memory-tag-filter');
@@ -2013,6 +2053,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     if (query) params.push('q=' + encodeURIComponent(query));
     else params.push('limit=200');
     if (activeMemoryTag) params.push('tag=' + encodeURIComponent(activeMemoryTag));
+    if (activeMemoryScope !== null) params.push('scope=' + encodeURIComponent(activeMemoryScope));
     const url = apiBase + '/memory' + (params.length ? '?' + params.join('&') : '');
     try {
       const resp = await fetch(url);
@@ -2057,7 +2098,9 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     memoryOverlay.style.display = 'flex';
     memorySearchEl.value = '';
     activeMemoryTag = null;
+    activeMemoryScope = null;
     loadMemoryStats();
+    loadMemoryScopeFilter();
     loadMemoryTagFilter();
     loadMemoryList('');
   }
@@ -2067,6 +2110,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   memoryCloseBtn.addEventListener('click', closeMemoryPanel);
   memoryRefreshBtn.addEventListener('click', function() {
     loadMemoryStats();
+    loadMemoryScopeFilter();
     loadMemoryTagFilter();
     loadMemoryList(memorySearchEl.value.trim());
   });

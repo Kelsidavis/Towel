@@ -749,6 +749,58 @@ class MemoryStore:
                 counts[t] = counts.get(t, 0) + 1
         return counts
 
+    def set_scope(self, key: str, scope: str) -> bool:
+        """Move a single memory to a new scope. Returns True on a real change.
+
+        Use case: an entry that landed under a project scope turns
+        out to be universal ("user is on macOS") and should be
+        promoted to global ("") — or vice versa, a global entry is
+        really specific to one project. Doesn't touch any other
+        column, so updated_at is preserved.
+        """
+        with self._txn() as con:
+            row = con.execute(
+                "SELECT scope FROM memories WHERE key = ?", (key,)
+            ).fetchone()
+            if row is None:
+                return False
+            try:
+                old = row["scope"] or ""
+            except (IndexError, KeyError):
+                old = ""
+            if old == scope:
+                return False
+            con.execute(
+                "UPDATE memories SET scope = ? WHERE key = ?",
+                (scope, key),
+            )
+        return True
+
+    def embedding_dims(self) -> dict[int, int]:
+        """Histogram of embedding dimensions in the corpus.
+
+        Returns {dim: count}. Used by the doctor check to flag
+        mixed-dimension corpora — usually a sign that
+        $TOWEL_EMBED_MODEL changed without a `memory reembed --all`
+        and the old vectors are now invisible to cosine_topk.
+        """
+        con = self._connect()
+        try:
+            rows = con.execute(
+                "SELECT embedding FROM memories WHERE embedding IS NOT NULL"
+            ).fetchall()
+        finally:
+            con.close()
+        hist: dict[int, int] = {}
+        for r in rows:
+            blob = r["embedding"]
+            if not blob:
+                continue
+            # float32 = 4 bytes per dimension.
+            dim = len(blob) // 4
+            hist[dim] = hist.get(dim, 0) + 1
+        return hist
+
     def reembed_all(self, *, only_missing: bool = True) -> int:
         """Recompute embeddings across the corpus. Returns rows touched.
 

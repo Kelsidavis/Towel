@@ -561,8 +561,11 @@ def check_memory_embeddings() -> Check:
     Pure informational: warn (not fail) when missing, since the
     memory store works fine without — retrieval just doesn't get
     paraphrase recall, and ``fused_search`` degrades to BM25 alone.
+    Also flags dimension drift across the corpus, which silently
+    breaks cosine ranking for the minority-dimension rows.
     """
     from towel.memory import embeddings
+    from towel.memory.store import MemoryStore
 
     c = Check("Memory embeddings")
     if embeddings.is_available():
@@ -575,6 +578,24 @@ def check_memory_embeddings() -> Check:
         c.suggestions.append(
             "Install the extra for paraphrase recall: "
             "pip install 'towel-ai[embeddings]'"
+        )
+
+    # Dimension consistency across stored vectors. Mixed dims usually
+    # mean $TOWEL_EMBED_MODEL changed without a re-encode pass; the
+    # old vectors then never match the new query embedding and silently
+    # contribute nothing to ranking.
+    try:
+        dims = MemoryStore().embedding_dims()
+    except Exception:
+        # If we can't read the store (locked, missing, etc.) the
+        # embeddings part of doctor is best-effort; the main store
+        # check below will fail loudly with a real error.
+        return c
+    if len(dims) > 1:
+        sizes = ", ".join(f"{d}d:{n}" for d, n in sorted(dims.items(), key=lambda kv: -kv[1]))
+        c.warn(f"Mixed embedding dimensions in corpus ({sizes})")
+        c.suggestions.append(
+            "Re-encode every row: towel memory reembed --all"
         )
     return c
 

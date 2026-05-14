@@ -2353,6 +2353,43 @@ def memory_clear() -> None:
     console.print(f"[green]Cleared {count} memories.[/green]")
 
 
+@memory.command(name="promote")
+@click.argument("key")
+@click.option(
+    "--to",
+    "target_scope",
+    required=True,
+    help=(
+        'Target scope. Pass "" or "global" for global; otherwise a '
+        'specific scope like "proj:towel:abcd1234". Use '
+        '`towel memory list --scope all` to see what exists.'
+    ),
+)
+def memory_promote(key: str, target_scope: str) -> None:
+    """Move a memory to a different scope.
+
+    Use this when an entry that landed under a project scope is
+    actually universal ("user uses vim" → global) or when a global
+    entry is really specific to one project. Operator-driven; the
+    runtime doesn't move memories around on its own.
+    """
+    from towel.memory.store import MemoryStore
+
+    # Normalize: "global" is a friendlier spelling of empty string.
+    new_scope = "" if target_scope.lower() in ("global", "") else target_scope
+    store = MemoryStore()
+    entry = store.recall(key)
+    if entry is None:
+        console.print(f"[red]No memory with key {key!r}.[/red]")
+        raise SystemExit(1)
+    old = entry.scope or "global"
+    new_display = new_scope or "global"
+    if store.set_scope(key, new_scope):
+        console.print(f"[green]Promoted {key}:[/green] {old} → {new_display}")
+    else:
+        console.print(f"[dim]No change (already in {new_display}).[/dim]")
+
+
 @memory.command(name="tag")
 @click.argument("key")
 @click.argument("action", type=click.Choice(["add", "remove", "list"]))

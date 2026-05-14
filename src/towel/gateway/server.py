@@ -1786,15 +1786,34 @@ class GatewayServer:
             mem_type = request.query_params.get("type") or None
             query = request.query_params.get("q") or None
             tag = request.query_params.get("tag") or None
+            # scope semantics on this endpoint:
+            #   absent           — honor the store's default (project + global)
+            #   "__all__"        — no filter (audit across every project)
+            #   ""               — global only
+            #   "proj:..."       — that scope only
+            scope_raw = request.query_params.get("scope")
+            # When the caller asks for "__all__" we sidestep the
+            # runtime store's default_scope by opening a fresh
+            # connection to the same file with no default. Cheaper
+            # than threading another sentinel through recall_all().
+            if scope_raw == "__all__":
+                from towel.memory.store import MemoryStore as _MS
+                view = _MS(store_dir=memory.store_dir)
+                scope_arg: str | None = None
+            else:
+                view = memory
+                scope_arg = scope_raw if scope_raw is not None else None
             try:
                 if query:
-                    entries = memory.search(query)
+                    entries = view.search(query, scope=scope_arg)
                     if mem_type:
                         entries = [e for e in entries if e.memory_type == mem_type]
                     if tag:
                         entries = [e for e in entries if tag in (e.tags or [])]
                 else:
-                    entries = memory.recall_all(memory_type=mem_type, tag=tag)
+                    entries = view.recall_all(
+                        memory_type=mem_type, tag=tag, scope=scope_arg,
+                    )
             except Exception as exc:
                 log.exception("Memory listing failed: %s", exc)
                 return JSONResponse(
