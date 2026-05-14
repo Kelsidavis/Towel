@@ -513,6 +513,13 @@ def default_worker_capabilities(
     # download. Lets the coordinator pick a model the worker already has,
     # and avoid sending a 70B request to a Pi.
     caps["available_models"] = _detect_available_models(backend, llama_url)
+    # Advertise a co-located launcher so the coordinator's replace/upgrade
+    # UI doesn't need the operator to retype the URL for every worker. The
+    # worker reports the externally-routable form (hostname + port) since
+    # 127.0.0.1 is useless from the coordinator's process.
+    launcher_url = _detect_local_launcher()
+    if launcher_url:
+        caps["launcher_url"] = launcher_url
     # Rough size cap derived from advertised VRAM + RAM. A 4-bit quant
     # needs ≈ 0.6 GB per billion params; we leave 50% headroom for the
     # KV cache and activations. RAM-only nodes can still run small CPU
@@ -527,6 +534,42 @@ def default_worker_capabilities(
         caps["max_param_b_est"] = 0.0
 
     return caps
+
+
+def _detect_local_launcher() -> str | None:
+    """Detect a co-located ``towel launcher`` daemon on this host.
+
+    Strategy:
+    1. If ``$TOWEL_LAUNCHER_URL`` is set, trust it verbatim — operator
+       knows their network topology better than we can guess.
+    2. Otherwise probe ``http://127.0.0.1:18751/health`` with a short
+       timeout. The launcher's ``/health`` endpoint is unauthenticated
+       and returns 200 instantly.
+    3. If the probe succeeds, return the externally-routable form
+       (``http://<hostname>:18751``) because 127.0.0.1 means nothing
+       to the coordinator process that ultimately calls this URL.
+
+    Returns ``None`` when no launcher is reachable so the capability key
+    stays absent rather than carrying a misleading value.
+    """
+    override = os.environ.get("TOWEL_LAUNCHER_URL", "").strip()
+    if override:
+        return override
+
+    from towel.launcher import DEFAULT_PORT
+
+    try:
+        import httpx
+
+        resp = httpx.get(
+            f"http://127.0.0.1:{DEFAULT_PORT}/health", timeout=0.5
+        )
+        if resp.status_code != 200:
+            return None
+    except Exception:
+        return None
+
+    return f"http://{socket.gethostname()}:{DEFAULT_PORT}"
 
 
 def _detect_available_models(backend: str, llama_url: str) -> list[str]:

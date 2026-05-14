@@ -814,6 +814,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
               <span class="fleet-badge">${escHtml(modes)}</span>
               <span class="fleet-badge">${escHtml(model)}</span>
               ${renderQualityBadge(worker.quality_tier)}
+              ${caps.launcher_url ? `<span class="fleet-badge ok" title="Launcher daemon advertised at ${escHtml(caps.launcher_url)} — replace/upgrade pre-fills this URL">launcher</span>` : ''}
             </div>
             <div class="fleet-meta">
               <span>roles: ${escHtml(roles)}</span>
@@ -1273,6 +1274,12 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   function rememberedLauncherUrl(workerId) {
     return localStorage.getItem('towel.launcher.' + workerId + '.url') || '';
   }
+  function advertisedLauncherUrl(workerId) {
+    // Pulled from worker.capabilities.launcher_url at the last fleet refresh.
+    // Returns '' (falsy) when the worker isn't reachable or doesn't advertise.
+    const w = (fleetState.workers || []).find(function(x){return x.id === workerId;});
+    return (w && w.capabilities && w.capabilities.launcher_url) || '';
+  }
   function rememberLauncherUrl(workerId, url) {
     if (url) localStorage.setItem('towel.launcher.' + workerId + '.url', url);
   }
@@ -1284,7 +1291,11 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   }
 
   async function replaceWorker(workerId) {
-    const defaultUrl = rememberedLauncherUrl(workerId);
+    // Prefer the URL the worker advertised in capabilities (auto-detected
+    // local launcher) and fall back to the one the operator last typed.
+    // The advertised value is fresh; localStorage may be stale.
+    const advertised = advertisedLauncherUrl(workerId);
+    const defaultUrl = advertised || rememberedLauncherUrl(workerId);
     const launcherUrl = prompt(
       `Replace worker "${workerId}" — launcher URL on its host:`,
       defaultUrl
@@ -1381,7 +1392,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   }
 
   async function upgradeWorker(workerId) {
-    const defaultUrl = rememberedLauncherUrl(workerId);
+    const advertised = advertisedLauncherUrl(workerId);
+    const defaultUrl = advertised || rememberedLauncherUrl(workerId);
     const launcherUrl = prompt(
       `Upgrade software on worker "${workerId}" — launcher URL on its host:`,
       defaultUrl
@@ -1426,18 +1438,18 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
 
   async function rollFleet() {
     // Build the target list from every connected worker that has a
-    // remembered launcher URL — operators must have replaced/upgraded
-    // that worker at least once this session for it to be eligible.
+    // launcher URL — either advertised by the worker (auto-detected) or
+    // remembered from a previous manual replace/upgrade in this session.
     const candidates = [];
     for (const w of fleetState.workers || []) {
-      const url = rememberedLauncherUrl(w.id);
+      const url = advertisedLauncherUrl(w.id) || rememberedLauncherUrl(w.id);
       if (url) candidates.push({worker_id: w.id, launcher_url: url});
     }
     if (!candidates.length) {
       alert(
-        'No workers with remembered launcher URLs. Use "replace" or ' +
-        '"upgrade" on individual workers first so the UI knows where ' +
-        'each one\'s launcher lives.'
+        'No workers expose a launcher URL. Either run "towel launcher" on ' +
+        'each host so it auto-advertises, or use "replace"/"upgrade" on a ' +
+        'worker first so the UI remembers where its launcher lives.'
       );
       return;
     }
