@@ -98,6 +98,49 @@ class TestMemoryStore:
         assert "**Fact:**" in block
 
 
+class TestCorruptionRecovery:
+    """The memory file is the agent's long-term brain — a JSON parse
+    failure shouldn't silently destroy every entry on the next save."""
+
+    def test_corrupted_file_is_backed_up_before_reset(self, tmp_path):
+        index = tmp_path / "memories.json"
+        index.write_text("{not valid json", encoding="utf-8")
+        store = MemoryStore(store_dir=tmp_path)
+        # The first read should treat the file as empty but move the bad
+        # file aside so it isn't clobbered by the next save.
+        assert store.count == 0
+        backups = list(tmp_path.glob("memories.json.corrupted-*"))
+        assert len(backups) == 1
+        assert backups[0].read_text(encoding="utf-8") == "{not valid json"
+        # And the canonical path is now absent (so the next save creates
+        # a fresh, valid file from scratch).
+        assert not index.exists()
+
+    def test_save_after_corruption_writes_fresh_file(self, tmp_path):
+        (tmp_path / "memories.json").write_text("definitely not json", encoding="utf-8")
+        store = MemoryStore(store_dir=tmp_path)
+        store.remember("survivor", "I made it", memory_type="fact")
+        # The new save produced a valid file...
+        assert (tmp_path / "memories.json").exists()
+        # ...and the corrupted backup is still there for the operator.
+        backups = list(tmp_path.glob("memories.json.corrupted-*"))
+        assert len(backups) == 1
+
+    def test_save_is_atomic(self, tmp_path):
+        """Writing to a tmp sibling and renaming means a kill mid-write
+        leaves the original file intact rather than truncated. Verify
+        the tmp file doesn't linger after a clean save."""
+        store = MemoryStore(store_dir=tmp_path)
+        store.remember("k", "v")
+        # No tmp file left lying around.
+        assert not (tmp_path / "memories.json.tmp").exists()
+        # The real file is parseable JSON.
+        import json
+
+        data = json.loads((tmp_path / "memories.json").read_text())
+        assert "k" in data
+
+
 class TestMemoryEntry:
     def test_serialization_roundtrip(self):
         entry = MemoryEntry(key="test", content="value", memory_type="fact")

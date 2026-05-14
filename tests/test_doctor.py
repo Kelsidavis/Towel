@@ -5,6 +5,7 @@ from towel.cli.doctor import (
     check_config,
     check_environment,
     check_gateway,
+    check_memory_store,
     check_mlx,
     check_persisted_worker_state,
     check_skills,
@@ -193,12 +194,40 @@ class TestPersistedWorkerStateCheck:
         assert any("code_review" in d for d in c.details)
 
 
+class TestMemoryStoreCheck:
+    def test_no_memory_file_is_ok(self, tmp_path, monkeypatch):
+        from towel.memory import store as memory_store
+
+        monkeypatch.setattr(memory_store, "DEFAULT_MEMORY_DIR", tmp_path / "memory")
+        c = check_memory_store()
+        c.finalize()
+        assert c.passed
+        assert any("No memories stored yet" in d for d in c.details)
+
+    def test_corruption_backup_is_surfaced(self, tmp_path, monkeypatch):
+        from towel.memory import store as memory_store
+
+        mem_dir = tmp_path / "memory"
+        mem_dir.mkdir()
+        (mem_dir / "memories.json").write_text("{}", encoding="utf-8")
+        (mem_dir / "memories.json.corrupted-20260101T120000").write_text(
+            "old corrupted content", encoding="utf-8"
+        )
+        monkeypatch.setattr(memory_store, "DEFAULT_MEMORY_DIR", mem_dir)
+        c = check_memory_store()
+        c.finalize()
+        # Backup is a warning so operators don't miss it.
+        assert any("corrupted-memory backup" in w for w in c.warnings)
+        # But the live file is still readable, so the check itself passes.
+        assert c.passed
+
+
 class TestRunDoctor:
     def test_run_all_checks(self):
         config = TowelConfig()
         config.gateway.port = 19997  # avoid conflicts
         checks = run_doctor(config)
-        assert len(checks) == 8
+        assert len(checks) == 9
         names = [c.name for c in checks]
         assert "Environment" in names
         assert "Configuration" in names
@@ -208,6 +237,7 @@ class TestRunDoctor:
         assert "Gateway" in names
         assert "Storage" in names
         assert "Persisted worker state" in names
+        assert "Memory store" in names
 
     def test_all_checks_finalized(self):
         checks = run_doctor(TowelConfig())

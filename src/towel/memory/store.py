@@ -84,17 +84,49 @@ class MemoryStore:
             data = json.loads(path.read_text(encoding="utf-8"))
             self._cache = {k: MemoryEntry.from_dict(v) for k, v in data.items()}
         except (json.JSONDecodeError, KeyError, ValueError) as e:
-            log.warning(f"Failed to load memories: {e}")
+            # The next remember() will _save_all() and overwrite the
+            # corrupted file with whatever's in our (empty) cache —
+            # silently destroying every memory the agent had. Move the
+            # bad file aside first so the operator can still recover it,
+            # and so doctor can detect that something went wrong.
+            backup = path.with_name(
+                f"{path.name}.corrupted-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}"
+            )
+            try:
+                path.replace(backup)
+                log.warning(
+                    "Failed to load memories: %s. Backed up the bad file "
+                    "to %s and starting fresh — recover from the backup "
+                    "if those memories mattered.",
+                    e,
+                    backup,
+                )
+            except OSError as rename_exc:
+                log.warning(
+                    "Failed to load memories: %s. Also failed to back up "
+                    "the corrupt file (%s) — memories may be lost on the "
+                    "next save.",
+                    e,
+                    rename_exc,
+                )
             self._cache = {}
         return self._cache
 
     def _save_all(self) -> None:
+        # Atomic write: dump into a sibling tmp file then rename. Without
+        # this, a process kill or disk-full event mid-write leaves the
+        # memory index half-written, which then trips the corruption path
+        # on the next load and (until the backup fix above) destroyed
+        # every memory.
         entries = self._load_all()
         data = {k: v.to_dict() for k, v in entries.items()}
-        self._index_path().write_text(
+        path = self._index_path()
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(
             json.dumps(data, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
+        tmp.replace(path)
 
     def remember(self, key: str, content: str, memory_type: str = "fact") -> MemoryEntry:
         """Store or update a memory."""

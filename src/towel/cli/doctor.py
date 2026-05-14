@@ -76,6 +76,7 @@ def run_doctor(config: TowelConfig | None = None) -> list[Check]:
     checks.append(check_gateway(config))
     checks.append(check_storage())
     checks.append(check_persisted_worker_state())
+    checks.append(check_memory_store())
 
     return checks
 
@@ -520,6 +521,49 @@ def check_persisted_worker_state() -> Check:
             "/workers/{id}/tasks"
         )
 
+    return c
+
+
+def check_memory_store() -> Check:
+    """Verify the agent's persistent memory file is readable and not stale.
+
+    Flags two failure modes:
+    - The on-disk file fails to parse (corruption). The load path now
+      backs the bad file aside, but if a backup exists, surface it so
+      the operator can recover.
+    - A previous corruption already produced a ``.corrupted-*`` sibling
+      that the operator probably wants to triage.
+    """
+    from towel.memory.store import DEFAULT_MEMORY_DIR, MemoryStore
+
+    c = Check("Memory store")
+    index = DEFAULT_MEMORY_DIR / "memories.json"
+    if not index.exists():
+        c.ok(f"No memories stored yet ({index})")
+        return c
+
+    # Check for previous corruption backups left around so operators
+    # notice them on the very next `doctor` rather than only when
+    # something else breaks.
+    backups = sorted(DEFAULT_MEMORY_DIR.glob("memories.json.corrupted-*"))
+    if backups:
+        c.warn(
+            f"Found {len(backups)} corrupted-memory backup(s) — most recent: "
+            f"{backups[-1].name}"
+        )
+        c.suggestions.append(
+            "Inspect the backup and merge anything worth keeping back into "
+            f"{index}"
+        )
+
+    try:
+        store = MemoryStore()
+        count = store.count  # property, not method
+    except Exception as exc:
+        c.fail(f"Memory store unreadable: {exc}")
+        return c
+
+    c.ok(f"Memory store: {count} entries in {index}")
     return c
 
 
