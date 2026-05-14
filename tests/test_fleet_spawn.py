@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -248,6 +249,58 @@ class TestFleetUpgrade:
             )
         assert resp.status_code == 502
         assert resp.json()["launcher_response"]["ok"] is False
+
+
+class TestWorkerSelfUpgrade:
+    """/workers/{id}/upgrade sends a self_upgrade message to the worker.
+
+    Allowlist the strategy field so a typo or hostile body doesn't get
+    relayed to the worker's command dispatch."""
+
+    def _register_worker(self, gateway, worker_id: str):
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        gateway._workers.register(worker_id, ws=ws, capabilities={})
+        return ws
+
+    def test_default_strategy_is_pip(self, gateway):
+        ws = self._register_worker(gateway, "host-a")
+        client = TestClient(gateway._build_http_app())
+        resp = client.post("/workers/host-a/upgrade")
+        assert resp.status_code == 200
+        # The worker received a self_upgrade with strategy=pip.
+        ws.send.assert_called_once()
+        sent = json.loads(ws.send.call_args.args[0])
+        assert sent == {"type": "self_upgrade", "strategy": "pip"}
+
+    def test_explicit_known_strategies_accepted(self, gateway):
+        for strategy in ("pip", "git-pull", "uv"):
+            ws = self._register_worker(gateway, f"host-{strategy}")
+            client = TestClient(gateway._build_http_app())
+            resp = client.post(
+                f"/workers/host-{strategy}/upgrade",
+                json={"strategy": strategy},
+            )
+            assert resp.status_code == 200, f"rejected known strategy {strategy}"
+            sent = json.loads(ws.send.call_args.args[0])
+            assert sent["strategy"] == strategy
+
+    def test_unknown_strategy_rejected(self, gateway):
+        """An unrecognized strategy gets sent down the wire and either
+        no-ops silently or surfaces a worker-side error well after the
+        request returned 200. Reject loud at the coordinator instead."""
+        ws = self._register_worker(gateway, "host-bad")
+        client = TestClient(gateway._build_http_app())
+        # Empty string is intentionally treated as "no strategy → pip"
+        # via the `or "pip"` default — exclude it from the bad list.
+        for bad in ("rm -rf /", "PIP", "git pull", "apt-get"):
+            resp = client.post(
+                "/workers/host-bad/upgrade", json={"strategy": bad}
+            )
+            assert resp.status_code == 400, f"accepted bad strategy {bad!r}"
+            assert "pip, git-pull, uv" in resp.json()["error"]
+        # And the worker NEVER received a self_upgrade for any of them.
+        ws.send.assert_not_called()
 
 
 class TestFleetReplaceWorker:

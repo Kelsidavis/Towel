@@ -2540,6 +2540,22 @@ class GatewayServer:
             if not isinstance(body, dict):
                 body = {}
             strategy = (body.get("strategy") or "pip").strip()
+            # Allowlist of upgrade strategies. Anything else gets
+            # rejected with a clear error — the worker side dispatches
+            # on this string and an unknown value would either no-op
+            # silently or surface a worker-side error long after the
+            # operator's request returned 200. Keeping the allowlist
+            # here means typos fail loud at the coordinator.
+            if strategy not in ("pip", "git-pull", "uv"):
+                return JSONResponse(
+                    {
+                        "error": (
+                            "strategy must be one of: pip, git-pull, uv "
+                            f"(got {strategy!r})"
+                        )
+                    },
+                    status_code=400,
+                )
 
             worker = self._workers.get(worker_id)
             if worker is None or worker.ws is None:
