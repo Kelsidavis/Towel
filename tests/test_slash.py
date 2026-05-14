@@ -92,6 +92,26 @@ class TestMemoryCommands:
     def test_forget_nonexistent(self, ctx):
         handle_slash("/forget nope", ctx)  # should not crash
 
+    def test_recall_runs_fused_search(self, ctx):
+        ctx.memory.remember("python", "user prefers python over ruby", "preference")
+        ctx.memory.remember("decoy", "unrelated content", "fact")
+        handle_slash("/recall python", ctx)
+        # Recall logs the query via the fused_search code path indirectly?
+        # The /recall command calls fused_search but does NOT call
+        # to_prompt_block — so no recall_log row yet. That's the
+        # expected scope (operator inspect tool, not retrieval).
+        assert ctx.memory.recent_recalls() == []
+
+    def test_recall_empty_query(self, ctx):
+        handle_slash("/recall", ctx)  # should not crash
+
+    def test_recalls_lists_log(self, ctx):
+        ctx.memory.remember("k", "v", "fact")
+        ctx.memory.to_prompt_block(query="v")  # populates recall_log
+        # Just verify the command dispatches without error.
+        handle_slash("/recalls", ctx)
+        handle_slash("/recalls k", ctx)
+
 
 class TestUndo:
     def test_undo_removes_exchange(self, ctx):

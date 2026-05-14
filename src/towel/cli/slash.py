@@ -6,9 +6,11 @@ Commands:
   /clear               Clear conversation history (start fresh)
   /agent [name]        Switch agent profile (or show current)
   /agents              List available agent profiles
-  /memory              Show all memories
+  /memory              Show all memories (scope + tags)
   /remember <k> <v>    Add a memory
   /forget <key>        Remove a memory
+  /recall <query>      Fused-search the memory store
+  /recalls [filter]    Inspect the per-query recall log
   /rename <title>      Set a title for this conversation
   /export [file]       Export current conversation to markdown
   /t <template> <input>  Apply a prompt template
@@ -47,9 +49,11 @@ HELP_TEXT = """[bold]Chat commands:[/bold]
   [green]/agent[/green] [name]         Switch agent / show current
   [green]/agents[/green]               List available agents
   [green]/skills[/green]                List loaded skills and their tools
-  [green]/memory[/green]               Show all memories
+  [green]/memory[/green]               Show all memories (with scope + tags)
   [green]/remember[/green] <key> <val> Save a memory
   [green]/forget[/green] <key>         Remove a memory
+  [green]/recall[/green] <query>       Fused search (BM25 + vector + graph)
+  [green]/recalls[/green] [filter]      Show recent recall events (optional key filter)
   [green]/t[/green] <template> <input>  Apply a prompt template (e.g., /t review code here)
   [green]/templates[/green]            List available templates
   [green]/compact[/green] [n]           Summarize old messages (keep last n, default 4)
@@ -157,6 +161,12 @@ def handle_slash(user_input: str, ctx: SlashContext) -> bool | None:
 
         case "/forget":
             _cmd_forget(ctx, arg)
+
+        case "/recall":
+            _cmd_recall(ctx, arg)
+
+        case "/recalls":
+            _cmd_recalls(ctx, arg)
 
         case "/t":
             return _cmd_template(ctx, arg)  # returns False to send to agent
@@ -526,7 +536,44 @@ def _cmd_memory(ctx: SlashContext) -> None:
         return
     console.print(f"[bold]Memories ({len(entries)}):[/bold]")
     for e in entries:
+        scope = f" @{e.scope}" if e.scope else ""
+        tags = f" [{', '.join(e.tags)}]" if e.tags else ""
+        console.print(
+            f"  [green]{e.key}[/green] "
+            f"[dim][{e.memory_type}]{scope}{tags}[/dim] {e.content}"
+        )
+
+
+def _cmd_recall(ctx: SlashContext, arg: str) -> None:
+    """In-chat fused search — same RRF retrieval the agent uses."""
+    query = arg.strip()
+    if not query:
+        console.print("[red]Usage:[/red] /recall <query>")
+        return
+    results = ctx.memory.fused_search(query, limit=5)
+    if not results:
+        console.print(f"[dim]No memories matching:[/dim] {query}")
+        return
+    console.print(f"[bold]Top {len(results)} for[/bold] {query!r}:")
+    for e in results:
         console.print(f"  [green]{e.key}[/green] [dim][{e.memory_type}][/dim] {e.content}")
+
+
+def _cmd_recalls(ctx: SlashContext, arg: str) -> None:
+    """Show the recall trail. Optional argument restricts by key/query."""
+    key_filter = arg.strip() or None
+    rows = ctx.memory.recent_recalls(limit=10, key_filter=key_filter)
+    if not rows:
+        msg = f"matching {key_filter!r}" if key_filter else ""
+        console.print(f"[dim]No recall events {msg}.[/dim]")
+        return
+    console.print(f"[bold]Recent recalls ({len(rows)}):[/bold]")
+    for r in rows:
+        ts = r["ts"][:19].replace("T", " ")
+        keys = ", ".join(r["keys"][:3])
+        if len(r["keys"]) > 3:
+            keys += f" (+{len(r['keys']) - 3})"
+        console.print(f"  [dim]{ts}[/dim] {r['query'][:50]} → [green]{keys}[/green]")
 
 
 def _cmd_remember(ctx: SlashContext, arg: str) -> None:
