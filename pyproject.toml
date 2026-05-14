@@ -55,7 +55,7 @@ voice = [
     "mlx-whisper>=0.4.0",
     "sounddevice>=0.5.0",
 ]
-all = ["towel[mlx,dev,voice]"]
+all = ["towel-ai[mlx,dev,voice]"]
 
 [project.scripts]
 towel = "towel.cli.main:cli"
