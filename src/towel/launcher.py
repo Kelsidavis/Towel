@@ -279,15 +279,11 @@ def run(host: str = "0.0.0.0", port: int = DEFAULT_PORT) -> None:
             "string and pass the same value in the Authorization header on "
             "every /launch request."
         )
-    # Python's root logger defaults to WARNING; the launcher's INFO-level
-    # log lines (upgrade requested, worker spawned, etc.) need to surface
-    # for operators watching the daemon's terminal. Configure here so
-    # importing the module in tests doesn't change the global logging
-    # state.
-    logging.basicConfig(
-        level=logging.INFO,
-        format="[%(asctime)s] %(levelname)s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    # Surface INFO-level events (upgrade requested, worker spawned, etc.)
+    # in the daemon's terminal. Shared helper so the format is consistent
+    # with the other Towel daemons.
+    from towel.logging_setup import configure_terminal_logging
+
+    configure_terminal_logging()
     log.info("Towel launcher listening on http://%s:%d (token from $%s)", host, port, TOKEN_ENV)
     uvicorn.run(build_app(token), host=host, port=port, log_level="warning")

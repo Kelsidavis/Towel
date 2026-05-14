@@ -282,17 +282,11 @@ def serve(
 
 
 async def _start(agent: Any, gateway: Any) -> None:
-    # Surface INFO-level events from the gateway (worker registrations,
-    # dispatch decisions, idle-result sweeps, etc.) in the terminal.
-    # Without this the root logger defaults to WARNING and the operator
-    # sees the Rich banner once then silence even as workers connect.
-    import logging as _logging
+    # Surface gateway INFO-level events (worker registrations, dispatch
+    # decisions, idle-result sweeps, etc.) in the terminal.
+    from towel.logging_setup import configure_terminal_logging
 
-    _logging.basicConfig(
-        level=_logging.INFO,
-        format="[%(asctime)s] %(levelname)s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    configure_terminal_logging()
     await agent.load_model()
     console.print("[green]Ready. Gateway starting...[/green]")
     await gateway.start()
@@ -450,18 +444,11 @@ def worker(
 
 
 async def _start_worker(agent: Any, client: Any) -> None:
-    # Same logging-visibility fix as ``towel serve`` / ``towel setup`` /
-    # ``towel launcher`` — the worker client's INFO-level events
-    # (registration confirmed, controller disconnected, reconnect attempt,
-    # shutdown requested) need to surface in the terminal so the operator
-    # can tell at a glance whether the worker is healthy and connected.
-    import logging as _logging
+    # Surface worker-client INFO-level events (registration, reconnect,
+    # shutdown) in the terminal.
+    from towel.logging_setup import configure_terminal_logging
 
-    _logging.basicConfig(
-        level=_logging.INFO,
-        format="[%(asctime)s] %(levelname)s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    configure_terminal_logging()
     await agent.load_model()
     console.print("[green]Worker ready. Waiting for controller jobs...[/green]")
     await client.run_forever()

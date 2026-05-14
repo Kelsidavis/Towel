@@ -290,15 +290,11 @@ def run_standalone(host: str = "127.0.0.1", port: int = 18749, open_browser: boo
     """Run the setup server until the user kills it."""
     import uvicorn
 
-    # Surface INFO-level events in the terminal — the "config saved" line
-    # is the operator's confirmation that the wizard actually wrote
-    # ~/.towel/config.toml. Configured here so importing the module from
-    # tests doesn't touch global logging state.
-    logging.basicConfig(
-        level=logging.INFO,
-        format="[%(asctime)s] %(levelname)s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    # Surface INFO-level events (the "config saved" line is the operator's
+    # confirmation that the wizard wrote ~/.towel/config.toml).
+    from towel.logging_setup import configure_terminal_logging
+
+    configure_terminal_logging()
 
     if open_browser:
         import threading
