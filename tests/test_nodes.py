@@ -163,6 +163,42 @@ class TestNodeCapability:
         node = NodeCapability.from_worker_capabilities("w-self", caps)
         assert node.resources.vram_total_mb == 8000
 
+    def test_ram_used_uses_live_value_not_stale_resources(self):
+        """`resources.ram_available_mb` is captured once at worker
+        startup and never updates. `live_resources.ram_available_mb`
+        refreshes every 15s heartbeat. Deriving ram_used from the
+        stale value made /cluster/nodes show "RAM used at startup"
+        for the whole session — useless for monitoring."""
+        caps = {
+            "resources": {
+                "hostname": "host",
+                "ram_total_mb": 100_000,
+                "ram_available_mb": 90_000,   # stale: register-time value
+            },
+            "live_resources": {
+                "ram_available_mb": 60_000,    # fresh: current value
+            },
+        }
+        node = NodeCapability.from_worker_capabilities("w", caps)
+        # Used = total - LIVE available = 100k - 60k = 40k.
+        # If the stale value were used we'd see 10k instead.
+        assert node.resources.ram_used_mb == 40_000
+
+    def test_ram_used_falls_back_to_resources_when_no_live(self):
+        """When live_resources doesn't carry ram_available_mb (older
+        worker without live-reporting code), fall back to the stale
+        resources value rather than reporting zero."""
+        caps = {
+            "resources": {
+                "hostname": "host",
+                "ram_total_mb": 100_000,
+                "ram_available_mb": 90_000,
+            },
+            "live_resources": {"load_avg_1min": 0.5},
+        }
+        node = NodeCapability.from_worker_capabilities("w", caps)
+        assert node.resources.ram_used_mb == 10_000
+
 
 class TestNodeTracker:
     def test_register_and_get(self):

@@ -43,15 +43,25 @@ def resources_from_worker_caps(caps: dict[str, Any]) -> "NodeResources":
                 )
         if top_vram:
             resources_data["vram_total_mb"] = int(top_vram)
+    # Prefer the fresh `live_resources.ram_available_mb` (refreshed on
+    # every 15s heartbeat) over the stale value in `resources` (set
+    # once at register). The `resources` sub-dict in caps never
+    # updates after startup, so deriving ram_used from it makes the
+    # cluster view show register-time usage for the entire session
+    # lifetime — useless for the operator question "how loaded is
+    # this node right now?".
+    live = caps.get("live_resources") or {}
+    fresh_avail = live.get("ram_available_mb")
+    if fresh_avail is None:
+        fresh_avail = resources_data.get("ram_available_mb")
     if (
         "ram_used_mb" not in resources_data
         and "ram_total_mb" in resources_data
-        and "ram_available_mb" in resources_data
+        and fresh_avail is not None
     ):
         resources_data["ram_used_mb"] = max(
             0,
-            int(resources_data["ram_total_mb"])
-            - int(resources_data["ram_available_mb"]),
+            int(resources_data["ram_total_mb"]) - int(fresh_avail),
         )
     return NodeResources.from_dict(resources_data)
 
