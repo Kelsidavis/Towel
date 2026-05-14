@@ -581,7 +581,7 @@ class MemoryStore:
         return out
 
     def fused_search(self, query: str, limit: int = 5) -> list[MemoryEntry]:
-        """BM25 + vector via Reciprocal Rank Fusion, capped at ``limit``.
+        """3-way Reciprocal Rank Fusion: BM25 + vector + graph.
 
         Standard RRF: each ranker contributes ``1 / (k + rank_i)`` to
         the score of each candidate it sees; we sum across rankers
@@ -589,22 +589,43 @@ class MemoryStore:
         the original RRF paper — empirically robust without needing
         per-query tuning.
 
-        When only BM25 is available (no embeddings extra, or empty
-        vector tier) the function degrades to BM25 alone.
+        Three rankers are blended:
+
+        * BM25 lexical match over content (always present).
+        * Vector cosine similarity (only when the embeddings extra
+          is installed and the corpus has vectors).
+        * Graph co-retrieval: the neighbors of whichever entry tops
+          the BM25 ranking become a third rank list, sorted by edge
+          weight. This is how a query that only matches one seed
+          lexically still pulls in semantically-adjacent memories
+          the graph has learned across previous turns.
+
+        When any ranker is empty (e.g. no embeddings, or no edges
+        yet), it simply contributes nothing — RRF degrades gracefully
+        rather than over-weighting the surviving signals.
         """
         rrf_k = 60
         bm25 = self.search(query, limit=limit * 2)
         vec = self.vector_search(query, limit=limit * 2)
-        if not vec:
-            return bm25[:limit]
+        # Graph ranker: seed from the top BM25 hit (most-confident
+        # lexical anchor), pull weighted neighbors. If BM25 missed
+        # too, try the top vector hit so paraphrase queries still
+        # exercise the graph.
+        graph_entries: list[MemoryEntry] = []
+        anchor = (bm25 or vec or [None])[0]
+        if anchor is not None:
+            graph_entries = [
+                rel for rel, _w in self.recall_related(anchor.key, limit=limit * 2)
+            ]
+
         scores: dict[str, float] = {}
         entries: dict[str, MemoryEntry] = {}
-        for rank, e in enumerate(bm25):
-            scores[e.key] = scores.get(e.key, 0.0) + 1.0 / (rrf_k + rank + 1)
-            entries[e.key] = e
-        for rank, e in enumerate(vec):
-            scores[e.key] = scores.get(e.key, 0.0) + 1.0 / (rrf_k + rank + 1)
-            entries[e.key] = e
+        for ranker in (bm25, vec, graph_entries):
+            for rank, e in enumerate(ranker):
+                scores[e.key] = scores.get(e.key, 0.0) + 1.0 / (rrf_k + rank + 1)
+                entries[e.key] = e
+        if not scores:
+            return []
         ordered = sorted(scores, key=lambda k: -scores[k])[:limit]
         return [entries[k] for k in ordered]
 
@@ -670,41 +691,10 @@ class MemoryStore:
         if query is None:
             entries = self.recall_all()
         else:
-            # Pull a slightly tighter top-K from BM25 (limit//2 + 1)
-            # and reserve the rest of the budget for graph-augmented
-            # neighbors. This is how agentmemory's BM25+Graph fusion
-            # works — the graph fills in semantically-adjacent
-            # memories that BM25 missed because the user's wording
-            # didn't share lexical tokens.
-            seed_k = max(1, limit // 2 + 1)
-            # Use the trio fusion (BM25 + vector via RRF) when
-            # embeddings are available; falls back to BM25 alone
-            # otherwise. Graph augmentation is layered on below.
-            entries = self.fused_search(query, limit=seed_k)
-            if entries:
-                seen = {e.key for e in entries}
-                # Round-robin one neighbor per seed so the result
-                # reflects the breadth of the seed set, not just the
-                # graph footprint of whichever seed had the most
-                # links.
-                neighbors_per_seed = [
-                    self.recall_related(e.key, limit=3) for e in entries
-                ]
-                ring = 0
-                while len(entries) < limit and any(neighbors_per_seed):
-                    progressed = False
-                    for ns in neighbors_per_seed:
-                        if not ns or len(entries) >= limit:
-                            continue
-                        rel, _ = ns.pop(0)
-                        if rel.key in seen:
-                            continue
-                        seen.add(rel.key)
-                        entries.append(rel)
-                        progressed = True
-                    if not progressed:
-                        break
-                    ring += 1
+            # fused_search runs 3-way RRF over BM25 + vector + graph
+            # in one pass — semantically-adjacent neighbors land in
+            # the result directly, no second-pass round-robin needed.
+            entries = self.fused_search(query, limit=limit)
             if not entries:
                 # Empty FTS hit AND empty substring hit — fall back to a
                 # short recent slice so the agent still knows who it's

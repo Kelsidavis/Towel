@@ -193,6 +193,21 @@ class TestFusedSearch:
         fused = store.fused_search("alpha")
         assert fused and fused[0].key == "a"
 
+    def test_three_way_rrf_uses_graph_signal(self, store, monkeypatch):
+        # No embeddings tier, no lexical overlap between query and
+        # neighbor — but the graph link from the BM25 hit should be
+        # enough to pull the neighbor into the fused result.
+        monkeypatch.setattr(emb, "is_available", lambda: False)
+        store.remember("anchor", "scientist data analysis", "fact")
+        store.remember("buddy", "completely orthogonal content", "fact")
+        # Strong graph link from anchor → buddy.
+        for _ in range(5):
+            store._bump_recall(["anchor", "buddy"])
+        fused = store.fused_search("scientist", limit=5)
+        keys = {e.key for e in fused}
+        assert "anchor" in keys
+        assert "buddy" in keys
+
     def test_combines_bm25_and_vector_via_rrf(self, store, monkeypatch):
         # Set up a corpus where BM25 ranks A first and vector ranks
         # B first; RRF should land both near the top with A slightly
