@@ -334,6 +334,38 @@ def _probe_fleet_endpoints(c: Check, host: str, http_port: int) -> None:
                 summary += f", {hot} hot"
             summary += ")"
             c.ok(summary)
+            # Coordinator/worker version drift: workers running pre-fix
+            # code silently behave differently from current. The
+            # capability advertisement now carries `towel_version` —
+            # flag any worker that doesn't match the coordinator.
+            try:
+                from towel import __version__ as _coord_version
+            except Exception:
+                _coord_version = "0.0.0"
+            mismatched: list[str] = []
+            unknown: list[str] = []
+            for w in workers:
+                wv = (w.get("capabilities") or {}).get("towel_version")
+                if not wv:
+                    unknown.append(w.get("id", "?"))
+                elif wv != _coord_version:
+                    mismatched.append(f"{w.get('id','?')}={wv}")
+            if mismatched:
+                c.warn(
+                    f"Worker version mismatch (coordinator={_coord_version}): "
+                    + ", ".join(mismatched)
+                )
+                c.suggestions.append(
+                    "Restart workers, or click 'upgrade' in the fleet panel"
+                )
+            if unknown:
+                # Workers without the field are running pre-version-
+                # advertisement code, which is itself an "update me"
+                # signal.
+                c.warn(
+                    f"{len(unknown)} worker(s) don't advertise towel_version "
+                    "— probably pre-fix code"
+                )
             # Tier distribution — quick glance at whether the fleet has the
             # capability mix the workload needs.
             tier_parts = [

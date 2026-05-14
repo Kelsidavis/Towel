@@ -13,6 +13,16 @@ def _mock_response(payload: dict) -> MagicMock:
     return resp
 
 
+def _coord_version_for_test() -> str:
+    """The version doctor will compare workers against — pulled from
+    the live package so the test fixtures don't drift on every bump."""
+    try:
+        from towel import __version__ as v
+        return v
+    except Exception:
+        return "0.0.0"
+
+
 class TestProbeFleetEndpoints:
     def test_workers_summary_when_fleet_has_idle_busy_and_hot(self):
         responses = {
@@ -24,6 +34,7 @@ class TestProbeFleetEndpoints:
                         "capabilities": {
                             "live_resources": {"cpu_pressure": 0.1},
                             "max_param_b_est": 70.0,
+                            "towel_version": _coord_version_for_test(),
                         },
                     },
                     {
@@ -32,6 +43,7 @@ class TestProbeFleetEndpoints:
                         "capabilities": {
                             "live_resources": {"cpu_pressure": 0.5},
                             "max_param_b_est": 13.0,
+                            "towel_version": _coord_version_for_test(),
                         },
                     },
                     {
@@ -40,6 +52,7 @@ class TestProbeFleetEndpoints:
                         "capabilities": {
                             "live_resources": {"cpu_pressure": 0.9},
                             "max_param_b_est": 3.0,
+                            "towel_version": _coord_version_for_test(),
                         },
                     },
                 ],

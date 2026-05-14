@@ -569,6 +569,15 @@ def default_worker_capabilities(
             if detected["n_ctx_train"] > 0 and context_window <= 0:
                 context_window = detected["n_ctx_train"]
 
+    # Advertise the worker's `towel` version so the coordinator can
+    # detect when workers are running stale code (e.g. before a
+    # routing-bug fix landed) and surface that to the operator
+    # before they have to debug "why is the chat path broken".
+    try:
+        from towel import __version__ as _towel_version
+    except Exception:
+        _towel_version = "0.0.0"
+
     caps: dict[str, Any] = {
         "hostname": socket.gethostname(),
         "backend": backend,
@@ -577,6 +586,7 @@ def default_worker_capabilities(
         "context_window": context_window,
         "max_tokens": max_tokens,
         "tools": allow_tools,
+        "towel_version": _towel_version,
     }
 
     if llama_meta:

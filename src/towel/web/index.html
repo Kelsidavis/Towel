@@ -600,6 +600,24 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
            escHtml(models.join('\n')) + '">' + shown + tail + '</div>';
   }
 
+  function renderVersionBadge(workerVersion, coordVersion) {
+    // No advertised version → the worker is running pre-version-
+    // advertisement code. Surface that as a warn so the operator
+    // knows to upgrade. Coordinator version may be undefined when
+    // the /health response doesn't include it; in that case we
+    // can only flag the "unknown worker version" case.
+    if (!workerVersion) {
+      return '<span class="fleet-badge warn" title="Worker is running pre-version-advertisement code; consider upgrading">v?</span>';
+    }
+    if (coordVersion && workerVersion !== coordVersion) {
+      return '<span class="fleet-badge warn" title="Worker version ' + escHtml(workerVersion)
+        + ' differs from coordinator ' + escHtml(coordVersion)
+        + '. Click upgrade to update.">v' + escHtml(workerVersion) + ' ≠</span>';
+    }
+    // Same as coordinator — no badge needed.
+    return '';
+  }
+
   function renderQualityBadge(tier) {
     // Coordinator-derived bucket ('high' / 'medium' / 'low') from the
     // worker's advertised VRAM + context window. Colour-coded so a fleet
@@ -977,6 +995,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
               <span class="fleet-badge">${escHtml(model)}</span>
               ${renderQualityBadge(worker.quality_tier)}
               ${caps.launcher_url ? `<span class="fleet-badge ok" title="Launcher daemon advertised at ${escHtml(caps.launcher_url)} — replace/upgrade pre-fills this URL">launcher</span>` : ''}
+              ${renderVersionBadge(caps.towel_version, fleetState.coordinator && fleetState.coordinator.version)}
               ${busyFor !== null ? `<span class="fleet-badge ${isStuck ? 'err' : 'warn'}" title="Time since this worker started its current job. Past ${STUCK_THRESHOLD_SECS}s the dispatcher considers it possibly stuck.">busy ${escHtml(formatBusyFor(busyFor))}${isStuck ? ' — possibly stuck' : ''}</span>` : ''}
             </div>
             <div class="fleet-meta">

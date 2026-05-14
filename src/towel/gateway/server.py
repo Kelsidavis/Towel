@@ -1591,6 +1591,10 @@ class GatewayServer:
                 "ollama" if "ollama" in model_name.lower() else
                 "mlx"
             )
+            try:
+                from towel import __version__ as _coord_version
+            except Exception:
+                _coord_version = "0.0.0"
             return JSONResponse(
                 {
                     "status": "hoopy",
@@ -1605,6 +1609,9 @@ class GatewayServer:
                         "backend": backend,
                         "context_window": getattr(self.config.model, "context_window", 0),
                         "max_tokens": getattr(self.config.model, "max_tokens", 0),
+                        # Real package version so worker drift detection
+                        # has something to compare against.
+                        "version": _coord_version,
                         "gateway_ws": (
                             f"ws://{self.config.gateway.host}:{self.config.gateway.port}"
                         ),
