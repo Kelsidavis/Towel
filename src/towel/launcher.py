@@ -221,6 +221,45 @@ _DEFAULT_UPGRADE_COMMANDS: dict[str, list[str]] = {
 UPGRADE_STRATEGIES = _DEFAULT_UPGRADE_COMMANDS
 
 
+# Module-state record of the most recent upgrade attempt. Read by
+# default_worker_capabilities so a failed self_upgrade surfaces in
+# the next capability heartbeat — without this, operators see only
+# "ok=true" on the dispatcher endpoint and have no way to tell
+# success from "command exited 1 silently". Reset to None on
+# successful re-exec (the new process starts fresh).
+_last_upgrade_attempt: dict[str, Any] | None = None
+
+
+def get_last_upgrade_attempt() -> dict[str, Any] | None:
+    """Return the failure record for the most recent in-process upgrade."""
+    return _last_upgrade_attempt
+
+
+def _record_upgrade_attempt(
+    strategy: str,
+    status: str,
+    *,
+    returncode: int | None = None,
+    error: str | None = None,
+    tail: str | None = None,
+) -> None:
+    """Stash an upgrade outcome where the capability advertiser can find it."""
+    global _last_upgrade_attempt
+    from datetime import datetime, UTC
+
+    _last_upgrade_attempt = {
+        "ts": datetime.now(UTC).isoformat(),
+        "strategy": strategy,
+        "status": status,  # "failed_command" / "failed_exit" / "timeout"
+    }
+    if returncode is not None:
+        _last_upgrade_attempt["returncode"] = returncode
+    if error:
+        _last_upgrade_attempt["error"] = error
+    if tail:
+        _last_upgrade_attempt["tail"] = tail
+
+
 def self_upgrade_and_reexec(strategy: str) -> bool:
     """Run the named upgrade strategy in-process, then re-exec on success.
 
@@ -238,9 +277,11 @@ def self_upgrade_and_reexec(strategy: str) -> bool:
     ``--auto-update`` startup check does not loop forever.
 
     On failure (unknown strategy, command not found, non-zero exit,
-    300 s timeout) we log a warning and return ``False``. The caller
-    keeps running with the existing code — a stale worker is more
-    useful than no worker.
+    300 s timeout) we log a warning, stash the outcome in module
+    state via :func:`_record_upgrade_attempt`, and return ``False``.
+    The caller keeps running with the existing code — a stale worker
+    is more useful than no worker — and the failure surfaces in the
+    next capability heartbeat so the operator sees what happened.
     """
     import os
     import subprocess
@@ -252,21 +293,31 @@ def self_upgrade_and_reexec(strategy: str) -> bool:
             "self-upgrade: unknown strategy %r; known: %s",
             strategy, sorted(UPGRADE_STRATEGIES),
         )
+        _record_upgrade_attempt(
+            strategy, "unknown_strategy",
+            error=f"known: {sorted(UPGRADE_STRATEGIES)}",
+        )
         return False
     log.info("self-upgrade: running %s", " ".join(cmd))
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     except FileNotFoundError as exc:
         log.warning("self-upgrade: command not found (%s); continuing.", exc)
+        _record_upgrade_attempt(strategy, "command_not_found", error=str(exc))
         return False
     except subprocess.TimeoutExpired:
         log.warning("self-upgrade: timed out after 300s; continuing.")
+        _record_upgrade_attempt(strategy, "timeout")
         return False
     if result.returncode != 0:
-        tail = (result.stderr or result.stdout or "").splitlines()[-3:]
+        tail = "\n".join((result.stderr or result.stdout or "").splitlines()[-3:])
         log.warning(
             "self-upgrade: exit %d; continuing. Last lines:\n%s",
-            result.returncode, "\n".join(tail),
+            result.returncode, tail,
+        )
+        _record_upgrade_attempt(
+            strategy, "failed_exit",
+            returncode=result.returncode, tail=tail,
         )
         return False
     log.info("self-upgrade: succeeded, re-executing with new code.")

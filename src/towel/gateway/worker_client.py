@@ -589,6 +589,20 @@ def default_worker_capabilities(
         "towel_version": _towel_version,
     }
 
+    # Surface a failed self-upgrade attempt. self_upgrade_and_reexec
+    # stashes the outcome on failure (success re-execs into a fresh
+    # process where this is naturally None). Operator sees the
+    # failure in /workers + the doctor + the fleet panel so the
+    # "ok=true on dispatch endpoint but worker stays old" gap goes
+    # away.
+    try:
+        from towel.launcher import get_last_upgrade_attempt
+        last_attempt = get_last_upgrade_attempt()
+        if last_attempt:
+            caps["last_upgrade_attempt"] = last_attempt
+    except Exception:
+        pass
+
     if llama_meta:
         caps["model_meta"] = llama_meta
 

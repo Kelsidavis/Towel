@@ -600,6 +600,22 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
            escHtml(models.join('\n')) + '">' + shown + tail + '</div>';
   }
 
+  function renderUpgradeFailureBadge(attempt) {
+    // Only render when a self-upgrade attempt is recorded — success
+    // re-execs into a fresh process where this is naturally absent,
+    // so anything we see here is a failure the operator wants to
+    // know about.
+    if (!attempt) return '';
+    const status = attempt.status || 'failed';
+    const strategy = attempt.strategy || '?';
+    const rc = (typeof attempt.returncode === 'number') ? ' rc=' + attempt.returncode : '';
+    const err = attempt.error || attempt.tail || '';
+    const ts = (attempt.ts || '').slice(0, 19).replace('T', ' ');
+    const title = 'self-upgrade ' + status + ' (' + strategy + rc + ') at ' + ts
+      + (err ? '\n' + err : '');
+    return '<span class="fleet-badge err" title="' + escHtml(title) + '">upgrade ' + escHtml(status) + '</span>';
+  }
+
   function renderVersionBadge(workerVersion, coordVersion) {
     // No advertised version → the worker is running pre-version-
     // advertisement code. Surface that as a warn so the operator
@@ -998,6 +1014,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
               ${renderQualityBadge(worker.quality_tier)}
               ${caps.launcher_url ? `<span class="fleet-badge ok" title="Launcher daemon advertised at ${escHtml(caps.launcher_url)} — replace/upgrade pre-fills this URL">launcher</span>` : ''}
               ${renderVersionBadge(caps.towel_version, fleetState.coordinator && fleetState.coordinator.version)}
+              ${renderUpgradeFailureBadge(caps.last_upgrade_attempt)}
               ${busyFor !== null ? `<span class="fleet-badge ${isStuck ? 'err' : 'warn'}" title="Time since this worker started its current job. Past ${STUCK_THRESHOLD_SECS}s the dispatcher considers it possibly stuck.">busy ${escHtml(formatBusyFor(busyFor))}${isStuck ? ' — possibly stuck' : ''}</span>` : ''}
             </div>
             <div class="fleet-meta">

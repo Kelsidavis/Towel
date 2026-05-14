@@ -366,6 +366,23 @@ def _probe_fleet_endpoints(c: Check, host: str, http_port: int) -> None:
                     f"{len(unknown)} worker(s) don't advertise towel_version "
                     "— probably pre-fix code"
                 )
+            # Surface any failed self-upgrade attempts so the operator
+            # sees WHY a worker is still on an old version after
+            # clicking the upgrade button.
+            for w in workers:
+                ua = (w.get("capabilities") or {}).get("last_upgrade_attempt")
+                if ua:
+                    status = ua.get("status", "unknown")
+                    strategy = ua.get("strategy", "?")
+                    rc = ua.get("returncode")
+                    err = ua.get("error") or ua.get("tail") or ""
+                    err = err[:80] if err else ""
+                    extra = f"rc={rc}, " if rc is not None else ""
+                    suffix = f" ({err})" if err else ""
+                    c.warn(
+                        f"Worker {w.get('id','?')} last upgrade failed "
+                        f"({strategy}, {extra}{status}){suffix}"
+                    )
             # Tier distribution — quick glance at whether the fleet has the
             # capability mix the workload needs.
             tier_parts = [

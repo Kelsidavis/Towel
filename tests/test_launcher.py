@@ -421,6 +421,66 @@ class TestUpgrade:
         assert resp.status_code == 401
 
 
+class TestSelfUpgradeFailureRecord:
+    """self_upgrade_and_reexec must stash failure details so the
+    next capability heartbeat surfaces them to the operator."""
+
+    def _reset(self):
+        from towel import launcher as _l
+        _l._last_upgrade_attempt = None
+
+    def test_unknown_strategy_records_failure(self):
+        from towel.launcher import self_upgrade_and_reexec, get_last_upgrade_attempt
+        self._reset()
+        assert self_upgrade_and_reexec("bogus") is False
+        attempt = get_last_upgrade_attempt()
+        assert attempt is not None
+        assert attempt["strategy"] == "bogus"
+        assert attempt["status"] == "unknown_strategy"
+        assert "ts" in attempt
+
+    def test_command_failure_captures_exit_and_tail(self):
+        from towel.launcher import self_upgrade_and_reexec, get_last_upgrade_attempt
+        self._reset()
+        with patch("towel.launcher.subprocess.run") as run:
+            fake = MagicMock()
+            fake.returncode = 1
+            fake.stderr = "error line\nfinal explanation"
+            fake.stdout = ""
+            run.return_value = fake
+            assert self_upgrade_and_reexec("pip") is False
+        attempt = get_last_upgrade_attempt()
+        assert attempt is not None
+        assert attempt["status"] == "failed_exit"
+        assert attempt["returncode"] == 1
+        assert "final explanation" in attempt["tail"]
+
+    def test_timeout_records_status(self):
+        from towel.launcher import self_upgrade_and_reexec, get_last_upgrade_attempt
+        import subprocess as _sp
+        self._reset()
+        with patch(
+            "towel.launcher.subprocess.run",
+            side_effect=_sp.TimeoutExpired(cmd="pip", timeout=300),
+        ):
+            assert self_upgrade_and_reexec("pip") is False
+        attempt = get_last_upgrade_attempt()
+        assert attempt is not None
+        assert attempt["status"] == "timeout"
+
+    def test_command_not_found_records(self):
+        from towel.launcher import self_upgrade_and_reexec, get_last_upgrade_attempt
+        self._reset()
+        with patch(
+            "towel.launcher.subprocess.run",
+            side_effect=FileNotFoundError("pip"),
+        ):
+            assert self_upgrade_and_reexec("pip") is False
+        attempt = get_last_upgrade_attempt()
+        assert attempt is not None
+        assert attempt["status"] == "command_not_found"
+
+
 class TestRunStartupValidation:
     def test_refuses_to_start_without_token_env(self, monkeypatch):
         # Unset the env var so the launcher's fail-secure check fires.
