@@ -115,6 +115,10 @@ class GatewayServer:
     _worker_states: dict[str, dict[str, bool]] = field(default_factory=dict)
     _node_roles: dict[str, list[NodeRole]] = field(default_factory=dict)
     _node_tasks: dict[str, list[TaskType]] = field(default_factory=dict)
+    # Operator-set overrides that survive worker reconnect. Without this, a
+    # brief network blip wipes whatever the operator configured via the
+    # fleet panel and the auto-assigned defaults take over.
+    _manual_tasks: dict[str, list[TaskType]] = field(default_factory=dict)
     _idle_manager: IdleTaskManager = field(default_factory=IdleTaskManager)
     _dispatcher: Dispatcher | None = None
 
@@ -213,7 +217,21 @@ class GatewayServer:
                         # Auto-assign roles and tasks based on hardware capabilities
                         roles = assign_roles(capabilities)
                         self._node_roles[conn_id] = roles
-                        tasks = assign_tasks(capabilities, roles)
+                        # Honour an operator-set task override if one was
+                        # configured before this worker disconnected — the
+                        # fleet panel's "save tasks" button shouldn't lose
+                        # its effect across a transient drop.
+                        manual_override = self._manual_tasks.get(conn_id)
+                        if manual_override is not None:
+                            tasks = manual_override
+                            log.info(
+                                "Worker %s reconnected — restored manual task "
+                                "override: %s",
+                                conn_id,
+                                ", ".join(str(t) for t in tasks),
+                            )
+                        else:
+                            tasks = assign_tasks(capabilities, roles)
                         self._node_tasks[conn_id] = tasks
                         log.info(
                             "Worker %s assigned roles: %s | tasks: %s",
@@ -1521,6 +1539,13 @@ class GatewayServer:
                 return JSONResponse({"error": f"Invalid task: {e}"}, status_code=400)
 
             self._node_tasks[worker_id] = tasks
+            # Stash the override so a reconnect doesn't wipe the operator's
+            # choice. An empty list explicitly removes the override and lets
+            # the auto-assigned defaults take over on the next register.
+            if tasks:
+                self._manual_tasks[worker_id] = tasks
+            else:
+                self._manual_tasks.pop(worker_id, None)
             log.info(
                 "Worker %s tasks manually set: %s",
                 worker_id,
