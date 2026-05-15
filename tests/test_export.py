@@ -110,6 +110,39 @@ class TestMarkdownExport:
         assert "verified-by:big-worker" in md
         assert "(corrected)" in md
 
+    def test_html_ensemble_metadata_surfaces(self):
+        """Parity with markdown export: HTML should also expose
+        collaboration metadata so a saved HTML transcript shows when
+        multi-worker arbitration ran."""
+        c = Conversation(id="html-ens", channel="api")
+        c.add(Role.USER, "Q?")
+        c.add(
+            Role.ASSISTANT,
+            "Answer.",
+            ensemble=True,
+            ensemble_arbitration="synthesis",
+            ensemble_contributions=[
+                {"worker_id": "a"}, {"worker_id": "b"},
+            ],
+        )
+        html = export_html(c, include_metadata=True)
+        assert "ensemble:synthesis" in html
+        assert "2 workers" in html
+
+    def test_html_verify_metadata_surfaces(self):
+        c = Conversation(id="html-ver", channel="api")
+        c.add(Role.USER, "Q?")
+        c.add(
+            Role.ASSISTANT,
+            "A",
+            verified_by="vrf",
+            verifier_corrected=False,
+        )
+        html = export_html(c, include_metadata=True)
+        assert "verified-by:vrf" in html
+        # No (corrected) tag when verifier_corrected is False.
+        assert "(corrected)" not in html
+
 
 class TestTextExport:
     def test_header(self, conv):

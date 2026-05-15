@@ -204,6 +204,25 @@ def export_html(conv: Conversation, include_metadata: bool = True) -> str:
         parts.append(f"{label.get(role, role)}")
         if include_metadata:
             parts.append(f'<span class="ts">{ts}</span>')
+        # Surface collaboration info next to the timestamp so an
+        # HTML-rendered transcript shows when multi-worker arbitration
+        # ran on a turn. Parity with the markdown export (b048b49).
+        if include_metadata and msg.role == Role.ASSISTANT and msg.metadata:
+            if msg.metadata.get("ensemble"):
+                arb = msg.metadata.get("ensemble_arbitration", "?")
+                contribs = msg.metadata.get("ensemble_contributions") or []
+                parts.append(
+                    f'<span class="ts">ensemble:{html.escape(arb)} '
+                    f'({len(contribs)} workers)</span>'
+                )
+            if msg.metadata.get("verified_by"):
+                verified_by = msg.metadata["verified_by"]
+                corrected = msg.metadata.get("verifier_corrected", False)
+                tag = (
+                    f"verified-by:{html.escape(str(verified_by))}"
+                    + (" (corrected)" if corrected else "")
+                )
+                parts.append(f'<span class="ts">{tag}</span>')
         parts.append("</div>")
 
         if msg.role == Role.TOOL:
