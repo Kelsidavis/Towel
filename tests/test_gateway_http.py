@@ -310,6 +310,31 @@ class TestWorkerPinEndpoint:
 
         assert resp.status_code == 404
 
+    def test_pin_worker_rejects_non_dict_body(self, client):
+        """A top-level array / string / null body previously crashed
+        on body.get(...) and surfaced as a misleading "Invalid JSON
+        body" (the JSON parsed fine — it was the shape that was
+        wrong). Same boundary check applied to every other POST."""
+        for raw in (b"null", b"[1,2,3]", b'"hi"'):
+            resp = client.post(
+                "/sessions/chat-1/pin-worker",
+                content=raw,
+                headers={"content-type": "application/json"},
+            )
+            assert resp.status_code == 400, f"accepted {raw!r}"
+            assert "JSON object" in resp.json()["error"]
+
+    def test_pin_worker_rejects_non_string_worker_id(self, client):
+        """worker_id=42 previously hit .strip() with AttributeError
+        and got the misleading "Invalid JSON body" message. Now a
+        clear "must be a string" 400."""
+        for bad in (42, [1, 2], {"x": 1}, True):
+            resp = client.post(
+                "/sessions/chat-1/pin-worker", json={"worker_id": bad},
+            )
+            assert resp.status_code == 400, f"accepted {bad!r}"
+            assert "string" in resp.json()["error"].lower()
+
     def test_unpin_worker_clears_session_pin(self, gateway, client):
         gateway._session_pins["chat-1"] = "desktop-1"
 

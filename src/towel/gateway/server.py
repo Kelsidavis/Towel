@@ -3908,9 +3908,25 @@ class GatewayServer:
             session_id = request.path_params["session_id"]
             try:
                 body = await request.json()
-                worker_id = body.get("worker_id", "").strip()
             except Exception:
                 return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+            # Reject non-dict bodies loud — the previous catch-all
+            # except clause turned `null` / `[1,2]` / `"foo"` into a
+            # misleading "Invalid JSON body" (the JSON parsed fine; it
+            # was the shape that was wrong).
+            if not isinstance(body, dict):
+                return JSONResponse(
+                    {"error": "body must be a JSON object"}, status_code=400,
+                )
+            raw_worker_id = body.get("worker_id", "")
+            # Non-string worker_id (int 42, list, dict) previously
+            # crashed on .strip() and surfaced as "Invalid JSON body".
+            # Fail with a clear message instead.
+            if not isinstance(raw_worker_id, str):
+                return JSONResponse(
+                    {"error": "worker_id must be a string"}, status_code=400,
+                )
+            worker_id = raw_worker_id.strip()
             if not worker_id:
                 return JSONResponse({"error": "worker_id required"}, status_code=400)
             if not self.pin_session_worker(session_id, worker_id):
