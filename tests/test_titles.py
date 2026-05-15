@@ -153,6 +153,52 @@ class TestGatewayRename:
         )
         assert resp.status_code == 400
 
+    def test_rename_updates_in_memory_session(self, tmp_path):
+        """If a session is loaded in memory (mid-conversation) when
+        a rename comes in, the in-memory conversation must also be
+        updated. Otherwise its next save() — on the next /api/ask
+        for that session — would clobber the rename with the stale
+        title."""
+        from starlette.testclient import TestClient
+
+        from towel.agent.runtime import AgentRuntime
+        from towel.config import TowelConfig
+        from towel.gateway.server import GatewayServer
+        from towel.gateway.sessions import SessionManager
+
+        store = ConversationStore(store_dir=tmp_path)
+        conv = Conversation(id="mid-chat", title="old")
+        conv.add(Role.USER, "hi")
+        store.save(conv)
+
+        config = TowelConfig()
+        agent = AgentRuntime(config)
+        sessions = SessionManager(store=store)
+        gw = GatewayServer(config=config, agent=agent, sessions=sessions)
+        client = TestClient(gw._build_http_app())
+
+        # Force the session into memory.
+        sessions.get_or_create("mid-chat")
+        in_mem = sessions.get("mid-chat")
+        assert in_mem is not None
+        assert in_mem.conversation.title == "old"
+
+        # Rename via API.
+        resp = client.post(
+            "/conversations/mid-chat/rename",
+            json={"title": "renamed-now"},
+        )
+        assert resp.status_code == 200
+
+        # In-memory conversation reflects the new title.
+        assert in_mem.conversation.title == "renamed-now"
+        # And a save from this session would persist "renamed-now",
+        # not clobber it back to "old".
+        sessions.save("mid-chat")
+        loaded = store.load("mid-chat")
+        assert loaded is not None
+        assert loaded.title == "renamed-now"
+
     def test_rename_rejects_overlong_title(self, tmp_path):
         """Titles surface in the UI sidebar and dispatch logs;
         a 10k-char title destroys layouts and bloats every list

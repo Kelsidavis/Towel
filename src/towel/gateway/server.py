@@ -3701,6 +3701,12 @@ class GatewayServer:
                     status_code=400,
                 )
             if store.rename(conv_id, title):
+                # Also patch the in-memory session if one is loaded —
+                # otherwise its next save() (on a follow-up /api/ask)
+                # would clobber the rename with its stale title.
+                in_mem = self.sessions.get(conv_id)
+                if in_mem is not None:
+                    in_mem.conversation.title = title
                 return JSONResponse({"id": conv_id, "title": title})
             return JSONResponse({"error": "Not found"}, status_code=404)
 
