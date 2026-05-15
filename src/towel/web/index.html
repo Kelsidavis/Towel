@@ -716,9 +716,17 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       const session = d.session_id || '-';
       const worker = d.worker_id || '<coordinator>';
       const reason = d.reason || 'unknown';
+      // `ensemble` skipped (no idle workers at fan-out time) is a
+      // silent degradation worth flagging — the user opted in to
+      // multi-worker arbitration but got single-worker dispatch.
+      // The notes field carries "skipped" in that case.
+      const isEnsembleSkipped = reason === 'ensemble'
+        && typeof d.notes === 'string'
+        && d.notes.indexOf('skipped') !== -1;
       const reasonCls = reason === 'no_workers_available' ? 'err' :
                         (reason === 'capability_fallback' ? 'warn' :
-                        (reason === 'retry_empty_text' ? 'warn' : 'ok'));
+                        (reason === 'retry_empty_text' ? 'warn' :
+                        (isEnsembleSkipped ? 'warn' : 'ok')));
       const flags = [];
       if (d.affinity_missed) flags.push('<span class="fleet-badge warn">affinity-miss</span>');
       if (d.preempted_idle) flags.push('<span class="fleet-badge warn">preempted-idle</span>');
