@@ -446,6 +446,26 @@ def _probe_fleet_endpoints(c: Check, host: str, http_port: int) -> None:
             )
         else:
             c.ok("Dispatch log: empty (no routing decisions yet)")
+        # Flag flaky chat workers — workers whose chat dispatches
+        # are routinely producing empty text (tool calls instead of
+        # chat) and forcing a retry on the alt. Each such turn costs
+        # the user the primary's full latency; surfacing the tally
+        # from the dispatch buffer means operators see the offender
+        # without curl-ing the dispatch log themselves.
+        retries = (data.get("log_status") or {}).get(
+            "empty_text_retries_by_worker"
+        ) or {}
+        if retries:
+            top = sorted(retries.items(), key=lambda kv: -kv[1])
+            summary = ", ".join(f"{wid}={n}" for wid, n in top)
+            c.warn(
+                f"Empty-text retries by worker (in current buffer): {summary}"
+            )
+            c.suggestions.append(
+                "A worker with many empty-text retries is emitting tool "
+                "calls instead of chat — consider pinning chat sessions "
+                "away from it or disabling it for chat intent"
+            )
     except Exception as exc:
         c.warn(f"/dispatch/recent probe failed: {exc.__class__.__name__}")
 

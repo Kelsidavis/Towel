@@ -223,6 +223,92 @@ class TestProbeFleetEndpoints:
         # No "hot" count when the only worker's pressure value is unusable.
         assert "hot" not in joined
 
+    def test_empty_text_retries_become_a_warning(self):
+        """A flaky chat worker — one that produces empty text instead
+        of real chat output — costs the user the primary's full
+        latency before the retry runs. The dispatch buffer already
+        tracks this per primary worker; doctor surfaces it as a warn
+        so operators see the offender without curl-ing the dispatch
+        endpoint themselves."""
+        responses = {
+            "/workers": {"workers": []},
+            "/skills": {"skills": [], "total_tools": 0},
+            "/fleet/inventory": {
+                "models": [], "total_unique": 0, "total_workers": 0,
+                "fleet_max_param_b": 0.0,
+            },
+            "/dispatch/recent?limit=1": {
+                "decisions": [],
+                "log_status": {
+                    "empty_text_retries_by_worker": {
+                        "small-worker": 3, "other-worker": 1,
+                    },
+                },
+            },
+            "/cluster/handoffs": {
+                "stats": {"total": 0, "failed": 0, "pending": 0}, "recent": [],
+            },
+        }
+
+        def fake_get(url, timeout=None):
+            for suffix, payload in responses.items():
+                if url.endswith(suffix):
+                    return _mock_response(payload)
+            raise AssertionError(f"unexpected url: {url}")
+
+        c = Check("test")
+        with patch("httpx.get", side_effect=fake_get):
+            _probe_fleet_endpoints(c, "localhost", 18743)
+
+        joined_warnings = " | ".join(c.warnings)
+        # Both flaky workers surface in the warning, ordered most-flaky first.
+        assert "small-worker=3" in joined_warnings
+        assert "other-worker=1" in joined_warnings
+        small_idx = joined_warnings.index("small-worker=3")
+        other_idx = joined_warnings.index("other-worker=1")
+        assert small_idx < other_idx, "most-flaky should come first"
+        # Operator guidance accompanies the warn so the surfaced
+        # signal is actionable, not just noise.
+        joined_suggestions = " | ".join(c.suggestions)
+        assert "pinning chat sessions away" in joined_suggestions
+
+    def test_empty_text_retries_silent_when_buffer_clean(self):
+        """No flaky workers in the buffer → no warning surfaced. The
+        log_status field is always present (UIs don't have to special-
+        case missing data), but an empty dict reads as "nothing to
+        flag" — doctor must not emit a noise warning when the field
+        is just empty."""
+        responses = {
+            "/workers": {"workers": []},
+            "/skills": {"skills": [], "total_tools": 0},
+            "/fleet/inventory": {
+                "models": [], "total_unique": 0, "total_workers": 0,
+                "fleet_max_param_b": 0.0,
+            },
+            "/dispatch/recent?limit=1": {
+                "decisions": [],
+                "log_status": {"empty_text_retries_by_worker": {}},
+            },
+            "/cluster/handoffs": {
+                "stats": {"total": 0, "failed": 0, "pending": 0}, "recent": [],
+            },
+        }
+
+        def fake_get(url, timeout=None):
+            for suffix, payload in responses.items():
+                if url.endswith(suffix):
+                    return _mock_response(payload)
+            raise AssertionError(f"unexpected url: {url}")
+
+        c = Check("test")
+        with patch("httpx.get", side_effect=fake_get):
+            _probe_fleet_endpoints(c, "localhost", 18743)
+
+        # No flakiness warning — only the "Dispatch log: empty" line
+        # exists on this clean-buffer path.
+        joined_warnings = " | ".join(c.warnings)
+        assert "Empty-text retries" not in joined_warnings
+
     def test_handoff_failures_become_a_warning(self):
         """A nonzero failed-handoff count is exactly the kind of thing
         operators don't notice until something breaks. Doctor surfaces it
