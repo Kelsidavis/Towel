@@ -1727,6 +1727,11 @@ class GatewayServer:
         chunk_timeout = float(
             getattr(self.config, "worker_inference_timeout", 300.0) or 300.0
         )
+        # Track whether we exited via the worker's own terminal event.
+        # On any other exit (client disconnect, timeout, cancellation)
+        # we send `cancel_job` so the worker stops emitting tokens
+        # that nobody is reading.
+        completed_normally = False
         try:
             while True:
                 try:
@@ -1753,6 +1758,7 @@ class GatewayServer:
                     conversation = msg.get("conversation")
                     if conversation:
                         session.conversation = session.conversation.from_dict(conversation)
+                    completed_normally = True
                     break
                 elif msg_type == "job_error":
                     await ws.send(
@@ -1764,8 +1770,23 @@ class GatewayServer:
                             }
                         )
                     )
+                    # Worker already finished (with an error). No
+                    # cancel needed.
+                    completed_normally = True
                     break
         finally:
+            if not completed_normally:
+                try:
+                    await worker.ws.send(
+                        json.dumps(
+                            {"type": "cancel_job", "job_id": job_id, "session": session_id}
+                        )
+                    )
+                except Exception as exc:
+                    log.debug(
+                        "Failed to send cancel_job to %s for %s: %s",
+                        worker.id, job_id, exc,
+                    )
             self._job_queues.pop(job_id, None)
             self._session_jobs.pop(session_id, None)
             self._workers.release(worker.id)
@@ -1789,6 +1810,12 @@ class GatewayServer:
         self._job_queues[job_id] = queue
         self._session_jobs[session_id] = job_id
         self._workers.assign(worker.id, job_id, session_id)
+        # Track whether we exited via the worker's own job_done — if
+        # we did, no need to send a cancel. If we exit any other way
+        # (SSE client disconnect, asyncio cancellation, timeout), the
+        # finally block sends a cancel_job so the worker stops
+        # generating tokens nobody will read.
+        completed_normally = False
         try:
             await worker.ws.send(
                 json.dumps(
@@ -1838,10 +1865,30 @@ class GatewayServer:
                     conv = msg.get("conversation")
                     if conv:
                         session.conversation = session.conversation.from_dict(conv)
+                    completed_normally = True
                     break
                 elif msg_type == "job_error":
+                    # Worker reported failure — it's done generating
+                    # on its own; no cancel needed.
+                    completed_normally = True
                     raise RuntimeError(msg.get("message", "remote worker failed"))
         finally:
+            if not completed_normally:
+                # Client gave up (SSE disconnect, asyncio cancel) or we
+                # hit a coordinator-side timeout. Tell the worker to
+                # stop so it doesn't burn cycles generating tokens
+                # nobody will read.
+                try:
+                    await worker.ws.send(
+                        json.dumps(
+                            {"type": "cancel_job", "job_id": job_id, "session": session_id}
+                        )
+                    )
+                except Exception as exc:
+                    log.debug(
+                        "Failed to send cancel_job to %s for %s: %s",
+                        worker.id, job_id, exc,
+                    )
             self._job_queues.pop(job_id, None)
             self._session_jobs.pop(session_id, None)
             self._workers.release(worker.id)

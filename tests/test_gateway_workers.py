@@ -521,6 +521,71 @@ class TestRemoteExecution:
         await task
 
     @pytest.mark.asyncio
+    async def test_iter_remote_tokens_sends_cancel_on_early_exit(self, gateway):
+        """When the SSE client disconnects (or the generator is
+        otherwise cancelled), the coordinator must tell the worker
+        to stop generating — otherwise the worker burns cycles
+        producing tokens that nobody is reading."""
+        session = gateway.sessions.get_or_create("cancel-sess")
+        session.conversation.add(Role.USER, "say hi")
+        worker_ws = DummyWS()
+        worker = gateway._workers.register("worker-c", worker_ws, {"tools": False})
+
+        gen = gateway.iter_remote_tokens("cancel-sess", session, worker)
+        # Drive the generator one step so it actually issues the
+        # `run` to the worker and suspends on `queue.get()`.
+        gen_task = asyncio.create_task(gen.__anext__())
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)  # second yield so the send hits the WS
+
+        # Worker received the "run" message.
+        assert worker_ws.sent, "worker received no messages"
+        assert worker_ws.sent[0]["type"] == "run"
+        job_id = worker_ws.sent[0]["job_id"]
+
+        # Cancel the suspended task — finally block should fire.
+        gen_task.cancel()
+        try:
+            await gen_task
+        except (asyncio.CancelledError, StopAsyncIteration):
+            pass
+        # Let the cancel propagate through any pending awaitables.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        # Worker must have received a cancel_job for that job_id.
+        cancel_msgs = [m for m in worker_ws.sent if m.get("type") == "cancel_job"]
+        assert cancel_msgs, (
+            f"expected a cancel_job after early task cancel, got: "
+            f"{[m.get('type') for m in worker_ws.sent]}"
+        )
+        assert cancel_msgs[0]["job_id"] == job_id
+
+    @pytest.mark.asyncio
+    async def test_iter_remote_tokens_no_cancel_on_normal_completion(self, gateway):
+        """When the worker emits job_done normally, we should NOT
+        send a redundant cancel_job."""
+        session = gateway.sessions.get_or_create("clean-sess")
+        session.conversation.add(Role.USER, "hi")
+        worker_ws = DummyWS()
+        worker = gateway._workers.register("worker-d", worker_ws, {"tools": False})
+
+        gen = gateway.iter_remote_tokens("clean-sess", session, worker)
+        gen_task = asyncio.create_task(gen.__anext__())
+        await asyncio.sleep(0)
+
+        job_id = worker_ws.sent[0]["job_id"]
+        # Send job_done to trigger clean exit.
+        await gateway._job_queues[job_id].put({"type": "job_done", "job_id": job_id})
+        try:
+            await gen_task
+        except StopAsyncIteration:
+            pass
+
+        # No cancel_job sent.
+        assert not any(m.get("type") == "cancel_job" for m in worker_ws.sent)
+
+    @pytest.mark.asyncio
     async def test_iter_remote_tokens_also_injects_memory(self, gateway):
         """The SSE streaming path used by /v1/chat/completions has the
         same memory-blindness gap — make sure the injection covers it
