@@ -1787,6 +1787,63 @@ class TestSimpleAskAPI:
         assert body["response"] == "42"
         assert body["ensemble_arbitration"] == "consensus"
 
+    def test_ask_ensemble_trivial_agreement_strips_trailing_punctuation(
+        self, gateway, client,
+    ):
+        """Trailing-punctuation differences ("42." vs "42", "Berlin!"
+        vs "Berlin") should still hit the trivial-agreement short-
+        circuit. Without this, Jaccard sees empty token sets (3-char
+        filter dropped both) and the run wasted ~30s on synthesis to
+        reconcile cosmetically-different but factually-identical
+        answers."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "a", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "b", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            # One worker punctuates, the other doesn't. Same factual
+            # answer — synthesis must be skipped.
+            answers = {"a": "42.", "b": "42"}
+            return Message(
+                role=Role.ASSISTANT, content=answers[worker.id],
+                metadata={"remote_worker": worker.id, "tokens": 1, "tps": 5.0},
+            )
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        synth_called = []
+        async def fake_gen(conv):
+            synth_called.append(True)
+            from towel.agent.runtime import GenerationResult
+            return GenerationResult(text="should not appear")
+        gateway.agent.generate = fake_gen  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={
+                "message": "q", "session_id": "ens-trivial-punct",
+                "ensemble": True,
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert synth_called == [], (
+            "synthesis ran on punctuation-only diff"
+        )
+        assert body["ensemble_arbitration"] == "consensus"
+        # The returned answer is one of the workers' raw answers
+        # (whichever was first in the real_answers list). Both are
+        # acceptable since they're factually identical.
+        assert body["response"] in {"42.", "42"}
+
     def test_ask_ensemble_consensus_skips_synthesis(self, gateway, client):
         """When workers basically agree (Jaccard ≥ 0.7 on
         lowercased word tokens), skip the ~30s local-agent synthesis
