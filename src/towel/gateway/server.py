@@ -2523,9 +2523,6 @@ class GatewayServer:
         self, session_id: str, session: Any, worker: WorkerInfo
     ) -> Any:
         """Run the local tool loop while outsourcing each generation pass."""
-        total_tokens = 0
-        last_metadata: dict[str, Any] = {"remote_worker": worker.id}
-        remaining_text = ""
         # Coordinator-measured start, used as a fallback when the
         # worker reports no total_ms (same rationale as _quick_remote_infer).
         coord_start = time.monotonic()
@@ -4782,7 +4779,6 @@ class GatewayServer:
                     # small loss because editing tags wholesale is
                     # rare. Operators who want additive tag changes
                     # already have memory.add_tag / remove_tag.
-                    saved_links_warning = False  # placeholder for telemetry
                     memory.forget(key)
                     updated = memory.remember(
                         key, content, memory_type=new_type,
@@ -5944,7 +5940,6 @@ class GatewayServer:
                 # - the response is a placeholder from dual-empty
                 #   (verifying an "I couldn't respond" doesn't help)
                 # - no alternate worker exists
-                verified_by: str | None = None
                 if verify and worker is not None:
                     primary_meta = response.metadata or {}
                     has_real_answer = bool(
@@ -5958,7 +5953,6 @@ class GatewayServer:
                                 response.content, worker.id,
                             )
                         )
-                        verified_by = verifier_id
                         # Aggregate dispatch entry — see record_ensemble
                         # comment for the same pattern. Always record
                         # when the user opted in: a `verifier_id=None`
