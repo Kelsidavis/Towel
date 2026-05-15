@@ -212,6 +212,37 @@ def build_openai_routes(
                 status_code=400,
             )
 
+        # OpenAI's `tools` / `tool_choice` parameters describe
+        # CLIENT-supplied function schemas for function calling.
+        # Towel uses its own tool system (skills loaded server-side)
+        # and doesn't implement function-call passthrough yet. Many
+        # OpenAI clients (langchain, openai-python with structured
+        # output) pass `tools` defensively — rejecting with 400
+        # would break those integrations even when the tools wouldn't
+        # have been called. Log a server-side warning AND surface
+        # an explicit ``tools_ignored`` flag in the towel-namespaced
+        # response block so the caller knows their schema wasn't
+        # honored, even though the request still produces a text
+        # answer from the normal generation path.
+        client_tools = body.get("tools")
+        tools_ignored = False
+        if client_tools is not None:
+            if not isinstance(client_tools, list) or not client_tools:
+                # An explicit empty list or null is fine — the client
+                # said "no tools". Treat as not present.
+                tools_ignored = False
+            else:
+                tools_ignored = True
+                import logging as _tools_log
+                _tools_log.getLogger("towel.openai_compat").warning(
+                    "Request supplied %d tool definition(s); towel "
+                    "doesn't implement OpenAI function-calling "
+                    "passthrough — generating text response without "
+                    "tool access. Surface this to clients via the "
+                    "towel.tools_ignored response field.",
+                    len(client_tools),
+                )
+
         if not messages:
             return JSONResponse(
                 {"error": {"message": "messages is required", "type": "invalid_request_error"}},
@@ -765,6 +796,16 @@ def build_openai_routes(
                         towel_meta["dual_empty_text"] = True
                         if meta.get("alt_worker"):
                             towel_meta["alt_worker"] = meta["alt_worker"]
+                    if tools_ignored:
+                        # OpenAI clients sending `tools` schemas got a
+                        # text response without their tools being
+                        # invoked — surface this so the caller can
+                        # detect the unsupported-feature path and
+                        # either retry differently or render a
+                        # warning. Pairs with the server-side log
+                        # warning so the operator AND the API client
+                        # see the same signal.
+                        towel_meta["tools_ignored"] = True
                     if towel_meta:
                         completion["towel"] = towel_meta
                     return JSONResponse(completion)

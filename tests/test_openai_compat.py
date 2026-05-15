@@ -960,6 +960,75 @@ class TestCollaborationOnOpenAICompat:
         assert towel_meta.get("verify_skipped") is True
         assert "no alternate worker" in towel_meta.get("verify_skip_reason", "")
 
+    def test_tools_param_surfaces_tools_ignored_flag(self, tmp_path):
+        """OpenAI's ``tools`` parameter is for client-supplied
+        function schemas. Towel doesn't implement function-call
+        passthrough yet — but rejecting with 400 would break
+        clients (langchain, openai-python with structured output)
+        that pass ``tools`` defensively even when not needed. Log
+        a server warning AND surface ``towel.tools_ignored: true``
+        so callers can detect the unsupported-feature path."""
+        from towel.agent.conversation import Message, Role
+
+        store = ConversationStore(store_dir=tmp_path)
+        config = TowelConfig()
+        agent = AgentRuntime(config)
+        sessions = SessionManager(store=store)
+        gw = GatewayServer(config=config, agent=agent, sessions=sessions)
+        client = TestClient(gw._build_http_app())
+
+        async def fake_step(_conv, **_kwargs):
+            return Message(role=Role.ASSISTANT, content="text answer")
+        agent.step = fake_step  # type: ignore[method-assign]
+
+        async def fake_route(_msg, _sid):
+            return None, "chat"
+        gw._route_by_role = fake_route  # type: ignore[method-assign]
+
+        # tools param present → flag surfaces.
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "default",
+                "messages": [{"role": "user", "content": "hi"}],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "lookup_weather",
+                            "description": "Get current weather",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    }
+                ],
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json().get("towel", {}).get("tools_ignored") is True
+
+        # Empty tools list → no flag (client said "no tools").
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "default",
+                "messages": [{"role": "user", "content": "hi"}],
+                "tools": [],
+            },
+        )
+        assert resp.status_code == 200
+        assert "tools_ignored" not in resp.json().get("towel", {})
+
+        # No tools key at all → no flag.
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "default",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+        assert resp.status_code == 200
+        assert "tools_ignored" not in resp.json().get("towel", {})
+
     def test_ensemble_skipped_surfaces_in_towel_field(self, tmp_path):
         """When ensemble=true is requested but no idle inference
         workers exist, the request falls through to the local agent
