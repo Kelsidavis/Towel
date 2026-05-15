@@ -669,17 +669,24 @@ class TestHttpSkill:
         # well-formed" — not "the upstream service is currently 200".
         # Tightening the assertion to `"200" in result` made the test
         # flake whenever httpbin returned 503 (observed in CI when the
-        # service was throttled). Accept any HTTP <status> response
-        # or the local error/timeout paths.
+        # service was throttled) or whenever the request timed out
+        # ("Timeout after 5s: ..."). Match case-insensitively against
+        # all three local error-shape strings.
+        lowered = result.lower()
         assert (
-            "HTTP " in result or "TIMEOUT" in result or "Error" in result
+            "http " in lowered or "timeout" in lowered or "error" in lowered
         ), result
 
     @pytest.mark.asyncio
     async def test_head(self, http):
         result = await http.execute("http_head", {"url": "https://httpbin.org/get"})
-        # Same flakiness rationale as test_get above.
-        assert "HTTP " in result or "Error" in result, result
+        # Same flakiness rationale as test_get above. Match case-
+        # insensitively so "Timeout after Ns" / "HTTP 503" / "Error:"
+        # all qualify as "skill returned something well-formed".
+        lowered = result.lower()
+        assert (
+            "http " in lowered or "timeout" in lowered or "error" in lowered
+        ), result
 
 
 class TestHeartbeat:

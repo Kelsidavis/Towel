@@ -3410,6 +3410,7 @@ class GatewayServer:
               ``?only_affinity_missed=1`` — only affinity_missed decisions
               ``?only_pin_missed=1``   — only pin_missed decisions
               ``?min_total_ms=N``      — only decisions with total_ms ≥ N
+              ``?intent=chat|tool|task`` — only decisions of this intent class
               ``?limit=N``             — cap the response (default 20)
 
             Filters apply *before* the limit so a tight limit doesn't hide
@@ -3422,6 +3423,21 @@ class GatewayServer:
             reason = request.query_params.get("reason")
             worker_filter = request.query_params.get("worker")
             session_filter = request.query_params.get("session")
+            # `intent` filter: chat | tool | task. Matches the intent
+            # field on each decision so operators can ask "show me
+            # only chat traffic" or "only tool dispatches". Bogus
+            # values reject with 400 — a typo like `?intent=tools`
+            # would otherwise silently match nothing and look like
+            # an empty log (same defensive shape /dispatch/explain
+            # used since 2026-04).
+            intent_filter = request.query_params.get("intent")
+            if intent_filter is not None and intent_filter not in (
+                "chat", "tool", "task",
+            ):
+                return JSONResponse(
+                    {"error": "intent must be one of: chat, tool, task"},
+                    status_code=400,
+                )
             only_degraded = request.query_params.get("only_degraded") in {"1", "true"}
             only_affinity_missed = request.query_params.get("only_affinity_missed") in {"1", "true"}
             # `only_pin_missed=1` surfaces decisions where the
@@ -3478,6 +3494,8 @@ class GatewayServer:
                 entries = [e for e in entries if e.get("worker_id") == worker_filter]
             if session_filter:
                 entries = [e for e in entries if e.get("session_id") == session_filter]
+            if intent_filter:
+                entries = [e for e in entries if e.get("intent") == intent_filter]
             if only_degraded:
                 entries = [e for e in entries if e.get("quality_degraded")]
             if only_affinity_missed:

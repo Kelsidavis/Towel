@@ -249,6 +249,40 @@ class TestDispatchRecentFilters:
         resp = client.get("/dispatch/recent?limit=abc")
         assert resp.status_code == 400
 
+    def test_intent_filter(self, gateway):
+        """Filter dispatch decisions by intent class so operators can
+        ask "show me only chat traffic" or "only tool dispatches"
+        without grepping the response client-side. Matches the
+        existing chat/tool/task split used by /dispatch/explain."""
+        assert gateway._dispatcher is not None
+        for sid, intent in (
+            ("chat-1", "chat"), ("chat-2", "chat"),
+            ("task-1", "task"), ("tool-1", "tool"),
+        ):
+            gateway._dispatcher._record(
+                DispatchDecision(
+                    worker=_stub_worker("w"),
+                    intent=intent,
+                    reason="role_match",
+                    session_id=sid,
+                    candidates_considered=1,
+                )
+            )
+        client = TestClient(gateway._build_http_app())
+
+        chat = client.get("/dispatch/recent?intent=chat").json()
+        assert {d["session_id"] for d in chat["decisions"]} == {"chat-1", "chat-2"}
+
+        tool = client.get("/dispatch/recent?intent=tool").json()
+        assert {d["session_id"] for d in tool["decisions"]} == {"tool-1"}
+
+    def test_intent_filter_rejects_unknown(self, gateway):
+        """A typo like ?intent=tools would otherwise silently match
+        nothing and look like an empty log — fail fast with 400."""
+        client = TestClient(gateway._build_http_app())
+        resp = client.get("/dispatch/recent?intent=tools")
+        assert resp.status_code == 400
+
     def test_log_status_includes_oldest_age_seconds(self, gateway):
         """`log_status.oldest_age_seconds` is meant to drive the UI's
         log-freshness indicator, but the original code looked for an
