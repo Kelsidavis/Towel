@@ -69,6 +69,28 @@ def build_openai_routes(
                 {"error": {"message": "messages is required", "type": "invalid_request_error"}},
                 status_code=400,
             )
+        if not isinstance(messages, list) or not all(
+            isinstance(m, dict) for m in messages
+        ):
+            return JSONResponse(
+                {"error": {"message": "messages must be a list of objects", "type": "invalid_request_error"}},
+                status_code=400,
+            )
+        # The OpenAI contract requires at least one message to carry
+        # non-empty content. A request whose every message has empty
+        # content silently sent the worker an unanswerable prompt and
+        # then the caller waited the full chat-fast timeout (60s)
+        # before getting `{"error": "worker ... did not respond ..."}`.
+        # Fail loud at the coordinator instead.
+        has_content = any(
+            isinstance(m.get("content"), str) and m.get("content", "").strip()
+            for m in messages
+        )
+        if not has_content:
+            return JSONResponse(
+                {"error": {"message": "at least one message must have non-empty content", "type": "invalid_request_error"}},
+                status_code=400,
+            )
 
         # Build a temporary conversation from the messages
         from towel.agent.conversation import Conversation, Role

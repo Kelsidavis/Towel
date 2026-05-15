@@ -67,6 +67,31 @@ class TestChatCompletionsEndpoint:
         resp = client.post("/v1/chat/completions", json={"model": "default", "messages": []})
         assert resp.status_code == 400
 
+    def test_rejects_all_empty_content(self, client):
+        """A request whose every message has empty content used to
+        sit through the full chat-fast 60s timeout and then surface
+        a useless `worker ... did not respond`. Fail loud at the
+        coordinator instead."""
+        for body in (
+            {"model": "x", "messages": [{"role": "user", "content": ""}]},
+            {"model": "x", "messages": [{"role": "user"}]},
+            {"model": "x", "messages": [{"role": "user", "content": "   "}]},
+        ):
+            resp = client.post("/v1/chat/completions", json=body)
+            assert resp.status_code == 400, f"accepted {body}"
+            assert "non-empty content" in resp.json()["error"]["message"]
+
+    def test_rejects_non_dict_message_items(self, client):
+        """A `messages` list of strings (e.g. someone forgot to wrap
+        in a dict) would crash inside the role lookup with a vague
+        AttributeError. Reject at the boundary."""
+        resp = client.post(
+            "/v1/chat/completions",
+            json={"model": "x", "messages": ["hi", "there"]},
+        )
+        assert resp.status_code == 400
+        assert "list of objects" in resp.json()["error"]["message"]
+
     def test_validates_messages_field(self):
         """Verify messages are required and validated."""
         # No messages field -> 400
