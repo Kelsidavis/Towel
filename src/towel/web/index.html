@@ -706,8 +706,20 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         + '</div>';
     }
     if (!decisions.length) {
+      // Distinguish "log is genuinely empty" from "filter matched
+      // nothing in a non-empty log". The old message conflated them
+      // and an operator who checked "only slow (≥60s)" on a quiet
+      // window thought the dispatcher wasn't running at all.
+      const logSize = (ls && typeof ls.size === 'number') ? ls.size : 0;
+      const filtered = dispatchFilterQuery() !== '';
+      let emptyMsg;
+      if (logSize > 0 && filtered) {
+        emptyMsg = 'No dispatch decisions match the current filters.';
+      } else {
+        emptyMsg = 'No dispatch decisions recorded yet.';
+      }
       fleetDispatchListEl.innerHTML = statusStrip
-        + '<div class="fleet-empty">No dispatch decisions recorded yet.</div>';
+        + '<div class="fleet-empty">' + emptyMsg + '</div>';
       return;
     }
     // Newest first.
