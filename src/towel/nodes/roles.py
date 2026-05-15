@@ -137,16 +137,36 @@ def assign_roles(capabilities: dict[str, Any]) -> list[NodeRole]:
 
     The coordinator calls this when a worker registers or updates its
     heartbeat. Roles are additive — a node gets every role it qualifies for.
+
+    Defensive coercion at the field level: a worker registering with
+    a non-list ``gpus`` (string, dict, None) would otherwise crash
+    inside the ``sum(g.get(...) ...)`` reduction with AttributeError,
+    propagating up through the WS register handler and tearing down
+    the connection — the worker reconnects, hits the same crash, and
+    loops forever. Same defensive shape the WS handler applies to
+    ``capabilities`` itself (non-dict → empty dict) extended down to
+    the specific fields that get iterated / dereferenced here.
     """
     roles: list[NodeRole] = []
 
     backend = capabilities.get("backend", "")
+    if not isinstance(backend, str):
+        backend = ""
     has_tools = bool(capabilities.get("tools", False))
     context_window = capabilities.get("context_window", 0)
+    if not isinstance(context_window, (int, float)):
+        context_window = 0
 
     # GPU info
     gpus = capabilities.get("gpus", [])
+    if not isinstance(gpus, list):
+        gpus = []
+    # Each entry should be a dict with vram_mb; non-dicts (string,
+    # int) would crash on `.get()`. Filter at the iteration boundary.
+    gpus = [g for g in gpus if isinstance(g, dict)]
     total_vram = capabilities.get("total_vram_mb", 0)
+    if not isinstance(total_vram, (int, float)):
+        total_vram = 0
     if not total_vram and gpus:
         total_vram = sum(g.get("vram_mb", 0) for g in gpus)
 
@@ -190,16 +210,30 @@ def assign_tasks(
 
     Called when a worker registers. Returns tasks the worker is well-suited
     for given its hardware, model, and tool support.
+
+    Same defensive coercion as ``assign_roles`` — a malformed
+    capabilities field would otherwise crash and tear down the
+    worker's WS connection from the coordinator side. See the
+    ``assign_roles`` docstring for the full reconnect-loop scenario.
     """
     tasks: list[TaskType] = []
 
     has_tools = bool(capabilities.get("tools", False))
     context_window = capabilities.get("context_window", 0)
+    if not isinstance(context_window, (int, float)):
+        context_window = 0
     total_vram = capabilities.get("total_vram_mb", 0)
+    if not isinstance(total_vram, (int, float)):
+        total_vram = 0
     gpus = capabilities.get("gpus", [])
+    if not isinstance(gpus, list):
+        gpus = []
+    gpus = [g for g in gpus if isinstance(g, dict)]
     if not total_vram and gpus:
         total_vram = sum(g.get("vram_mb", 0) for g in gpus)
     backend = capabilities.get("backend", "")
+    if not isinstance(backend, str):
+        backend = ""
 
     for task_type, reqs in TASK_REQUIREMENTS.items():
         # Check role match — worker must have at least one required role
