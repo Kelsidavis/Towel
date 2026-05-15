@@ -539,7 +539,7 @@ class GatewayServer:
                         # single-worker path — synthesis can't be
                         # streamed.
                         if ensemble_flag and not stream:
-                            arbitrated, _contribs = await self._ensemble_dispatch(
+                            arbitrated, _contribs, arb_mode = await self._ensemble_dispatch(
                                 session_id, content, user_session=session,
                             )
                             if arbitrated:
@@ -549,6 +549,7 @@ class GatewayServer:
                                     content=arbitrated,
                                     metadata={
                                         "ensemble": True,
+                                        "ensemble_arbitration": arb_mode,
                                         "remote_worker": "ensemble",
                                     },
                                 )
@@ -1159,7 +1160,7 @@ class GatewayServer:
         session_id: str,
         question: str,
         user_session: Any = None,
-    ) -> tuple[str, list[dict[str, Any]]]:
+    ) -> tuple[str, list[dict[str, Any]], str]:
         """Fan the same prompt to every idle capable worker in parallel.
 
         When ``user_session`` is provided, each fan-out worker sees
@@ -1330,23 +1331,23 @@ class GatewayServer:
         #   independent attempt, the coordinator reconciles them.
         real_answers = [c for c in contributions if c["answer"]]
         if not real_answers:
-            return "", contributions
+            return "", contributions, "none"
         if len(real_answers) == 1:
-            return real_answers[0]["answer"], contributions
+            return real_answers[0]["answer"], contributions, "single"
         if _answers_in_near_consensus(real_answers):
             # Workers basically agreed — skip the synthesis call.
             # The longest answer usually has the most detail; pick it.
             best = max(real_answers, key=lambda c: len(c["answer"]))
-            return best["answer"], contributions
+            return best["answer"], contributions, "consensus"
 
         synthesized = await self._synthesize_ensemble(question, real_answers)
         if synthesized:
-            return synthesized, contributions
+            return synthesized, contributions, "synthesis"
         # Synthesis fell through (local agent unavailable, error, or
         # empty output). Don't lose the run — surface the longest
         # contribution as a deterministic fallback.
         best = max(real_answers, key=lambda c: len(c["answer"]))
-        return best["answer"], contributions
+        return best["answer"], contributions, "longest_fallback"
 
     async def _synthesize_ensemble(
         self,
@@ -5009,8 +5010,9 @@ class GatewayServer:
                 # we got at least one real answer; falls through to
                 # the normal single-worker path otherwise.
                 ensemble_contributions: list[dict[str, Any]] = []
+                ensemble_arb_mode: str = ""
                 if ensemble:
-                    arbitrated, ensemble_contributions = (
+                    arbitrated, ensemble_contributions, ensemble_arb_mode = (
                         await self._ensemble_dispatch(
                             session_id, message, user_session=session,
                         )
@@ -5022,11 +5024,8 @@ class GatewayServer:
                             content=arbitrated,
                             metadata={
                                 "ensemble": True,
+                                "ensemble_arbitration": ensemble_arb_mode,
                                 "ensemble_contributions": ensemble_contributions,
-                                "ensemble_winners": [
-                                    c["worker_id"] for c in ensemble_contributions
-                                    if c["answer"] == arbitrated
-                                ],
                                 "remote_worker": "ensemble",
                             },
                         )
@@ -5046,6 +5045,12 @@ class GatewayServer:
                             "tps": 0,
                             "worker": "ensemble",
                             "ensemble": True,
+                            # How the arbitration decided: "synthesis"
+                            # (LLM-as-judge), "consensus" (workers
+                            # agreed), "single" (only one
+                            # contribution), "longest_fallback"
+                            # (synthesis failed, picked longest).
+                            "ensemble_arbitration": ensemble_arb_mode,
                             "ensemble_contributions": ensemble_contributions,
                             "request_total_ms": request_total_ms,
                         }

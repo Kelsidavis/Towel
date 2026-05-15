@@ -316,7 +316,7 @@ def build_openai_routes(
                     # the fan-out produces a real answer; otherwise
                     # falls through to the normal single-worker route.
                     if ensemble_raw:
-                        arbitrated, _contribs = await gateway._ensemble_dispatch(
+                        arbitrated, _contribs, arb_mode = await gateway._ensemble_dispatch(
                             session_id, last_user, user_session=sess,
                         )
                         if arbitrated:
@@ -324,7 +324,11 @@ def build_openai_routes(
                             from towel.agent.conversation import Role as _R
                             response = _M(
                                 role=_R.ASSISTANT, content=arbitrated,
-                                metadata={"ensemble": True, "remote_worker": "ensemble"},
+                                metadata={
+                                    "ensemble": True,
+                                    "ensemble_arbitration": arb_mode,
+                                    "remote_worker": "ensemble",
+                                },
                             )
                             sess.conversation.messages.append(response)
 

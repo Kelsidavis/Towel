@@ -1199,6 +1199,49 @@ class TestSimpleAskAPI:
                 f"worker {wid} missing latest turn: {hist}"
             )
 
+    def test_ask_ensemble_arbitration_mode_surfaces_in_response(
+        self, gateway, client,
+    ):
+        """The response body should expose WHICH arbitration path
+        fired (synthesis / consensus / single / longest_fallback /
+        none) so callers can tell whether their answer came from a
+        real merge or a deterministic fallback. Operators
+        investigating quality regressions need this signal."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "a", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "b", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        # Near-identical answers → consensus path.
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            answers = {
+                "a": "Paris is the capital of France and largest city.",
+                "b": "Paris is the capital of France and its largest city.",
+            }
+            return Message(
+                role=Role.ASSISTANT, content=answers[worker.id],
+                metadata={"remote_worker": worker.id, "tokens": 10, "tps": 5.0},
+            )
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "q", "session_id": "ens-arbmode", "ensemble": True},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # Consensus path fired (no synthesis).
+        assert body.get("ensemble_arbitration") == "consensus"
+
     def test_ask_ensemble_consensus_skips_synthesis(self, gateway, client):
         """When workers basically agree (Jaccard ≥ 0.7 on
         lowercased word tokens), skip the ~30s local-agent synthesis
