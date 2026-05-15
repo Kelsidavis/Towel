@@ -59,6 +59,15 @@ def build_openai_routes(
                 {"error": {"message": "Invalid JSON", "type": "invalid_request_error"}},
                 status_code=400,
             )
+        # Top-level body must be an object — an array / string / null
+        # body crashed on `body.get(...)` and surfaced as plaintext
+        # "Internal Server Error" HTTP 500, breaking OpenAI clients
+        # that expect a structured 400.
+        if not isinstance(body, dict):
+            return JSONResponse(
+                {"error": {"message": "body must be a JSON object", "type": "invalid_request_error"}},
+                status_code=400,
+            )
 
         messages = body.get("messages", [])
         stream = body.get("stream", False)

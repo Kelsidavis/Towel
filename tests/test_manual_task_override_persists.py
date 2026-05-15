@@ -139,6 +139,22 @@ class TestManualTaskOverride:
         # And the worker's task list MUST still be unchanged.
         assert worker_id not in gateway._manual_tasks
 
+    def test_rejects_non_dict_body(self, gateway):
+        """Top-level array/string body crashed on `body.get(...)`."""
+        worker_id = "raw-body-host"
+        gateway._workers.register(worker_id, ws=MagicMock(), capabilities={})
+        from starlette.testclient import TestClient
+
+        client = TestClient(gateway._build_http_app())
+        for raw in (b"[1,2]", b'"hi"', b"42"):
+            resp = client.post(
+                f"/workers/{worker_id}/tasks",
+                content=raw,
+                headers={"content-type": "application/json"},
+            )
+            assert resp.status_code == 400, f"accepted {raw!r}"
+            assert "JSON object" in resp.json()["error"]
+
     def test_rejects_list_of_non_strings(self, gateway):
         worker_id = "wronglist-host"
         gateway._workers.register(worker_id, ws=MagicMock(), capabilities={})

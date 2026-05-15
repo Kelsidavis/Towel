@@ -1950,6 +1950,10 @@ class GatewayServer:
                 body = await request.json()
             except Exception:
                 return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+            if not isinstance(body, dict):
+                return JSONResponse(
+                    {"error": "body must be a JSON object"}, status_code=400,
+                )
 
             task_names = body.get("tasks")
             if task_names is None:
@@ -3255,6 +3259,10 @@ class GatewayServer:
                 body = await request.json()
             except Exception:
                 return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+            if not isinstance(body, dict):
+                return JSONResponse(
+                    {"error": "body must be a JSON object"}, status_code=400,
+                )
 
             worker = self._workers.get(worker_id)
             if not worker:

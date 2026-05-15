@@ -92,6 +92,20 @@ class TestChatCompletionsEndpoint:
         assert resp.status_code == 400
         assert "list of objects" in resp.json()["error"]["message"]
 
+    def test_rejects_non_object_top_level_body(self, client):
+        """Top-level array/string/number body would crash on
+        `body.get(...)` and surface as plaintext "Internal Server
+        Error" HTTP 500 — breaking OpenAI clients that expect a
+        structured 400."""
+        for raw in (b"[1,2,3]", b'"hi"', b"42", b"true", b"null"):
+            resp = client.post(
+                "/v1/chat/completions",
+                content=raw,
+                headers={"content-type": "application/json"},
+            )
+            assert resp.status_code == 400, f"accepted {raw!r}"
+            assert "JSON object" in resp.json()["error"]["message"]
+
     def test_validates_messages_field(self):
         """Verify messages are required and validated."""
         # No messages field -> 400

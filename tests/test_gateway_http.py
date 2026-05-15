@@ -137,6 +137,21 @@ class TestWorkerStateEndpoint:
 
         assert resp.status_code == 404
 
+    def test_worker_state_rejects_non_dict_body(self, gateway, client):
+        """An array / string / number top-level body crashed on
+        `body.get(...)` and surfaced as plaintext HTTP 500."""
+        gateway._workers.register(
+            "desktop-1", object(), {"backend": "mlx", "modes": ["mlx_prompt"]}
+        )
+        for raw in (b"[1,2]", b'"hi"', b"42"):
+            resp = client.post(
+                "/workers/desktop-1/state",
+                content=raw,
+                headers={"content-type": "application/json"},
+            )
+            assert resp.status_code == 400, f"accepted {raw!r}"
+            assert "JSON object" in resp.json()["error"]
+
     def test_worker_state_rejects_non_bool_values(self, gateway, client):
         """Previously the handler did `bool(value)` which made any
         non-empty string truthy: `{"draining": "yes"}` drained the
