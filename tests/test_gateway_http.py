@@ -1092,6 +1092,63 @@ class TestSearch:
             assert resp.status_code == 400, f"accepted q={encoded!r}"
             assert "control" in resp.json()["error"].lower()
 
+    def test_search_role_filter(self, store, client):
+        """`?role=user` narrows results to messages from a single
+        role. Without this, an operator searching for "hello" got
+        every hit including the assistant's friendly greetings —
+        which is rarely what they wanted."""
+        conv = Conversation(id="role-search")
+        conv.add(Role.USER, "hello towel")
+        conv.add(Role.ASSISTANT, "hello back")
+        store.save(conv)
+
+        # No filter: both hits.
+        resp = client.get("/search?q=hello")
+        assert resp.status_code == 200
+        results = resp.json()["results"]
+        if results:
+            matches = results[0]["matches"]
+            roles = {m["role"] for m in matches}
+            assert {"user", "assistant"}.issubset(roles)
+
+        # User-only filter: just the user line.
+        resp = client.get("/search?q=hello&role=user")
+        assert resp.status_code == 200
+        roles = {
+            m["role"] for r in resp.json()["results"] for m in r["matches"]
+        }
+        assert roles == {"user"}, roles
+
+    def test_search_role_filter_rejects_unknown(self, client):
+        """A typo like ?role=usr should fail fast with 400 rather
+        than silently match nothing — the empty-result state is
+        indistinguishable from the user genuinely finding zero hits."""
+        resp = client.get("/search?q=hi&role=usr")
+        assert resp.status_code == 400
+        assert "role" in resp.json()["error"].lower()
+
+    def test_search_regex_mode(self, store, client):
+        """`?regex=1` lets operators use a real regex when substring
+        match isn't expressive enough — e.g. "deploy(ed|ing)" to
+        catch tense variations. Without it they had to file a
+        separate hit per spelling."""
+        conv = Conversation(id="regex-search")
+        conv.add(Role.USER, "deployed yesterday and deploying again now")
+        store.save(conv)
+
+        resp = client.get("/search?q=deploy%28ed%7Cing%29&regex=1")
+        assert resp.status_code == 200
+        assert len(resp.json()["results"]) >= 1
+
+    def test_search_regex_invalid_pattern_rejected(self, store, client):
+        """A malformed regex previously silently returned [] from
+        the store — operators couldn't tell apart "no results" from
+        "your pattern is broken". Validate at the gateway."""
+        # Unclosed group.
+        resp = client.get("/search?q=%28unclosed&regex=1")
+        assert resp.status_code == 400
+        assert "regex" in resp.json()["error"].lower()
+
     def test_search_surfaces_conversation_title(self, store, client):
         """Search results previously omitted `title` — UIs fell back
         to the conversation_id (e.g. "openai-chatcmpl-abc123") in the

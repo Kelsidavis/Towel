@@ -4959,10 +4959,51 @@ class GatewayServer:
                     {"error": "limit must be an integer"}, status_code=400
                 )
             limit = max(1, min(limit, 200))
+            # Optional `?role=user|assistant|tool|system` — narrows
+            # results to messages from that role. The store already
+            # supports the filter; the gateway just wasn't exposing
+            # it. Useful for "show me what the user asked about X"
+            # vs "show me everywhere the assistant mentioned X".
+            role_raw = request.query_params.get("role")
+            role_filter: Role | None = None
+            if role_raw is not None:
+                try:
+                    role_filter = Role(role_raw)
+                except ValueError:
+                    return JSONResponse(
+                        {
+                            "error": (
+                                "role must be one of: "
+                                f"{', '.join(r.value for r in Role)}"
+                            ),
+                        },
+                        status_code=400,
+                    )
+            # Optional `?regex=1` — treat the query as a regex
+            # pattern. Defaults to substring (re.escape'd) which is
+            # what most users want; opt-in to regex when the operator
+            # actually needs it. Invalid patterns return [] from the
+            # store; surface as 400 here so the caller can fix the
+            # typo instead of staring at empty results.
+            regex_raw = request.query_params.get("regex")
+            use_regex = regex_raw in {"1", "true"}
             store = self.sessions.store
             if not store:
                 return JSONResponse({"results": []})
-            results = store.search(query, limit=limit)
+            if use_regex:
+                # Pre-validate the pattern at the gateway so a bad
+                # regex fails fast and loud rather than the store's
+                # silent "return [] on re.error" path.
+                import re as _re
+                try:
+                    _re.compile(query)
+                except _re.error as exc:
+                    return JSONResponse(
+                        {"error": f"invalid regex: {exc}"}, status_code=400,
+                    )
+            results = store.search(
+                query, limit=limit, role_filter=role_filter, regex=use_regex,
+            )
             return JSONResponse(
                 {
                     "query": query,
