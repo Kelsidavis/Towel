@@ -432,6 +432,83 @@ class TestProbeFleetEndpoints:
         joined_suggestions = " | ".join(c.suggestions)
         assert "bigger worker" in joined_suggestions
 
+    def test_timeout_count_becomes_a_warning(self):
+        """Recurring worker_inference_timeout hits in the dispatch
+        buffer mean real model-quality or routing issues — workers
+        are giving up on requests. Doctor surfaces this signal
+        alongside flaky retries and quality_degraded so operators
+        see all three failure modes at the CLI level."""
+        responses = {
+            "/workers": {"workers": []},
+            "/skills": {"skills": [], "total_tools": 0},
+            "/fleet/inventory": {
+                "models": [], "total_unique": 0, "total_workers": 0,
+                "fleet_max_param_b": 0.0,
+            },
+            "/dispatch/recent?limit=1": {
+                "decisions": [],
+                "log_status": {
+                    "empty_text_retries_by_worker": {},
+                    "quality_degraded_count": 0,
+                    "timeout_count": 8,
+                },
+            },
+            "/cluster/handoffs": {
+                "stats": {"total": 0, "failed": 0, "pending": 0}, "recent": [],
+            },
+        }
+
+        def fake_get(url, timeout=None):
+            for suffix, payload in responses.items():
+                if url.endswith(suffix):
+                    return _mock_response(payload)
+            raise AssertionError(f"unexpected url: {url}")
+
+        c = Check("test")
+        with patch("httpx.get", side_effect=fake_get):
+            _probe_fleet_endpoints(c, "localhost", 18743)
+
+        joined_warnings = " | ".join(c.warnings)
+        assert "8 dispatch(es) hit worker_inference_timeout" in joined_warnings
+        joined_suggestions = " | ".join(c.suggestions)
+        assert "min_total_ms=300000" in joined_suggestions
+
+    def test_timeout_below_threshold_is_silent(self):
+        """A handful of timeouts is below noise — only ≥5 in the
+        buffer trips the warn so the signal stays meaningful."""
+        responses = {
+            "/workers": {"workers": []},
+            "/skills": {"skills": [], "total_tools": 0},
+            "/fleet/inventory": {
+                "models": [], "total_unique": 0, "total_workers": 0,
+                "fleet_max_param_b": 0.0,
+            },
+            "/dispatch/recent?limit=1": {
+                "decisions": [],
+                "log_status": {
+                    "empty_text_retries_by_worker": {},
+                    "quality_degraded_count": 0,
+                    "timeout_count": 2,
+                },
+            },
+            "/cluster/handoffs": {
+                "stats": {"total": 0, "failed": 0, "pending": 0}, "recent": [],
+            },
+        }
+
+        def fake_get(url, timeout=None):
+            for suffix, payload in responses.items():
+                if url.endswith(suffix):
+                    return _mock_response(payload)
+            raise AssertionError(f"unexpected url: {url}")
+
+        c = Check("test")
+        with patch("httpx.get", side_effect=fake_get):
+            _probe_fleet_endpoints(c, "localhost", 18743)
+
+        joined_warnings = " | ".join(c.warnings)
+        assert "worker_inference_timeout" not in joined_warnings
+
     def test_quality_degraded_below_threshold_is_silent(self):
         """A small number of degraded dispatches is a transient
         condition (the big worker briefly busy) — only ≥5 in the

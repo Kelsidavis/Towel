@@ -4188,6 +4188,30 @@ class GatewayServer:
             log_status["quality_degraded_count"] = sum(
                 1 for d in full_history if d.quality_degraded
             )
+            # Timeout count — decisions whose recorded total_ms hit
+            # the worker_inference_timeout boundary. Live observation
+            # in the running cluster: 22 of 62 (35%) recent decisions
+            # were timeouts at 300s, mostly task-intent dispatches to
+            # SparklesMint that tool-looped. Surfacing the count
+            # alongside retries + degraded gives operators the third
+            # signal they need to triage "why is my fleet slow":
+            # routing mismatch (degraded), worker quality (retries),
+            # or actual hangs (timeouts).
+            wi_timeout_ms = int(
+                (getattr(self.config, "worker_inference_timeout", 300.0) or 300.0)
+                * 1000
+            )
+            # Count decisions whose total_ms is within 1s of the
+            # configured timeout — these are coordinator-side
+            # timeouts (the worker either ran for the full bound or
+            # the cancel didn't return early). 1s of slack absorbs
+            # the small cleanup overhead the dispatch records
+            # alongside the worker's elapsed time.
+            log_status["timeout_count"] = sum(
+                1 for d in full_history
+                if isinstance(d.total_ms, (int, float))
+                and d.total_ms >= wi_timeout_ms - 1000
+            )
             return JSONResponse(
                 {
                     "decisions": entries[-limit:],

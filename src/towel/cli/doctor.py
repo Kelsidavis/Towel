@@ -495,6 +495,28 @@ def _probe_fleet_endpoints(c: Check, host: str, http_port: int) -> None:
                 "(commit 881031c) reroutes quality tasks onto the big "
                 "worker when idle tasks are running there"
             )
+        # Timeout count: decisions that hit worker_inference_timeout.
+        # Different signal from "stuck workers" (busy_for >= 5min):
+        # stuck means a worker is currently wedged; this means past
+        # requests gave up at the timeout boundary. Threshold ≥5
+        # mirrors the degraded-count threshold — recurring timeouts
+        # in the buffer means real model-quality or routing issues,
+        # not a one-off slow request.
+        timeout_count = int(
+            (data.get("log_status") or {}).get("timeout_count", 0) or 0
+        )
+        if timeout_count >= 5:
+            c.warn(
+                f"{timeout_count} dispatch(es) hit worker_inference_timeout "
+                "in the current buffer — workers are giving up on requests"
+            )
+            c.suggestions.append(
+                "Check /dispatch/recent?min_total_ms=300000 for the "
+                "specific sessions. Common causes: tool-loop on a "
+                "small worker (use enable-worker / disable-worker to "
+                "restrict capable workers), prompt too long for the "
+                "model context, or genuine model hang"
+            )
     except Exception as exc:
         c.warn(f"/dispatch/recent probe failed: {exc.__class__.__name__}")
 
