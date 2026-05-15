@@ -1713,7 +1713,13 @@ class GatewayServer:
                 timing_sink["synthesis_ms"] = round(
                     (_time.monotonic() - t0) * 1000.0, 1,
                 )
-            _tool_calls, remaining_text = parse_tool_calls(result.text)
+            # GenerationResult.text is typed `str` but a buggy backend
+            # (or a partial return path) can still produce None — and
+            # parse_tool_calls(None) crashes on re.finditer. Coerce
+            # to "" at the boundary so a bad return value just falls
+            # back to the longest-fallback path instead of raising.
+            result_text = result.text if isinstance(result.text, str) else ""
+            _tool_calls, remaining_text = parse_tool_calls(result_text)
             return (remaining_text or "").strip()
         except asyncio.TimeoutError:
             log.warning(
