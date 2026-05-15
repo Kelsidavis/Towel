@@ -174,6 +174,28 @@ class TestConversationStore:
         summaries = store.list_conversations()
         assert len(summaries) == 0
 
+    def test_delete_all_cleans_up_orphan_tmp_files(self, store, tmp_path):
+        """Atomic saves can leak `*.json.tmp` files when the rename
+        fails (kill / disk-full). They're invisible to
+        list_conversations because the glob is `*.json`, so they
+        accumulate forever. delete_all must sweep them too —
+        otherwise the operator's "clear all" leaves orphan disk
+        usage behind."""
+        # Set up a normal conversation + leaked tmp file.
+        store.save(_make_conversation("normal"))
+        (tmp_path / "leaked.json.tmp").write_text("half-written")
+
+        # Sanity check: list_conversations doesn't see the tmp.
+        assert len(store.list_conversations()) == 1
+
+        deleted = store.delete_all()
+        # Only the real conversation counts; the tmp was never a
+        # readable conversation.
+        assert deleted == 1
+        # Both files are gone from disk.
+        assert not (tmp_path / "leaked.json.tmp").exists()
+        assert store.count == 0
+
 
 class TestImportExportRoundtrip:
     """Test that export → import produces identical conversations."""

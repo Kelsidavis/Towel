@@ -74,11 +74,20 @@ class ConversationStore:
         return False
 
     def delete_all(self) -> int:
-        """Delete all conversations. Returns count deleted."""
+        """Delete all conversations. Returns count deleted.
+
+        Also cleans up any leaked ``*.json.tmp`` files from interrupted
+        atomic saves — those are otherwise invisible to the
+        conversation list (the glob excludes them) and accumulate
+        forever after a kill/disk-full event. Not counted in the
+        returned total since they were never readable conversations.
+        """
         count = 0
         for path in self.store_dir.glob("*.json"):
             path.unlink()
             count += 1
+        for tmp in self.store_dir.glob("*.json.tmp"):
+            tmp.unlink()
         return count
 
     def list_conversations(self, limit: int = 50) -> list[ConversationSummary]:
