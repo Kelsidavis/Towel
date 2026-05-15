@@ -3,12 +3,29 @@
 Makes Towel a drop-in replacement for any OpenAI client.
 Supports both streaming (SSE) and non-streaming responses.
 
+Standard OpenAI params honored: model, messages, max_tokens (1..4096),
+temperature (0..2), stream. Response objects include ``created``,
+``system_fingerprint`` (per-process stable, derived from the towel
+package version), and the usual ``usage`` block.
+
+Towel-specific extensions (OpenAI's spec allows extra body fields,
+so the official Python SDK passes these via ``extra_body=``):
+
+    verify: bool   — opt-in to a second-worker review pass after
+                     the primary answer lands. Mutually exclusive
+                     with ``ensemble``. Requires ``stream=false``.
+    ensemble: bool — opt-in to parallel fan-out across every idle
+                     inference worker, with the coordinator
+                     synthesizing the final answer. Same stream and
+                     mutex constraints as verify.
+
 Usage with the openai Python SDK:
     from openai import OpenAI
     client = OpenAI(base_url="http://127.0.0.1:18743/v1", api_key="towel")
     resp = client.chat.completions.create(
         model="default",
         messages=[{"role": "user", "content": "Hello!"}],
+        extra_body={"verify": True},
     )
 
 Usage with curl:
