@@ -3815,6 +3815,14 @@ class TestSimpleAskAPI:
         assert body.get("verified_by") == "verifier"
         assert body.get("verifier_corrected") is True
         assert body.get("primary_worker") == "primary"
+        # The primary's original (pre-correction) answer is surfaced
+        # in the response body so the caller can render a diff or
+        # judge whether the verifier made a meaningful change. The
+        # final `response` field still carries the corrected version
+        # — only metadata gets both.
+        assert body.get("primary_original_answer") == "They are the same."
+        # Sanity: the original and the final are distinct.
+        assert body["primary_original_answer"] != body["response"]
 
     def test_ask_verify_accepts_lenient_verified_forms(self, gateway, client):
         """Models routinely add casing / punctuation / brief

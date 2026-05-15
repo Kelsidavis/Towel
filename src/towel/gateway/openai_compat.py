@@ -655,11 +655,18 @@ def build_openai_routes(
                             except Exception:
                                 pass
                         if was_corrected and final != response.content:
+                            # Preserve the primary's original answer
+                            # in metadata so the caller can see WHAT
+                            # the verifier changed, not just that
+                            # something was changed. Same shape as
+                            # /api/ask's verify metadata.
+                            primary_original = response.content
                             response.content = final
                             response.metadata = (response.metadata or {}) | {
                                 "verified_by": verifier_id,
                                 "verifier_corrected": True,
                                 "primary_worker": primary_id,
+                                "primary_original_answer": primary_original,
                             }
                         elif verifier_id is not None:
                             response.metadata = (response.metadata or {}) | {
@@ -734,6 +741,13 @@ def build_openai_routes(
                         towel_meta["primary_worker"] = meta.get(
                             "primary_worker", meta.get("remote_worker", "")
                         )
+                        # Surface the pre-correction primary answer so
+                        # OpenAI clients can diff what the verifier
+                        # actually changed. Same shape /api/ask carries.
+                        if meta.get("primary_original_answer") is not None:
+                            towel_meta["primary_original_answer"] = meta[
+                                "primary_original_answer"
+                            ]
                     elif verify_raw:
                         # verify=true was requested but no verifier
                         # ran. Mirror the /api/ask response shape so

@@ -823,6 +823,10 @@ class GatewayServer:
                                         "WS verifier %s corrected %s answer for session %s",
                                         verifier_id, worker.id, session_id,
                                     )
+                                    # Preserve the primary's original
+                                    # answer in metadata — see the
+                                    # /api/ask path for rationale.
+                                    primary_original = response.content
                                     if (
                                         session.conversation.messages
                                         and session.conversation.messages[-1].role
@@ -834,6 +838,7 @@ class GatewayServer:
                                         "verified_by": verifier_id,
                                         "verifier_corrected": True,
                                         "primary_worker": worker.id,
+                                        "primary_original_answer": primary_original,
                                     }
                                 elif verifier_id is not None:
                                     response.metadata = (response.metadata or {}) | {
@@ -6488,6 +6493,17 @@ class GatewayServer:
                                 "Verifier %s corrected primary %s answer for session %s",
                                 verifier_id, worker.id, session_id,
                             )
+                            # Save the original primary answer before
+                            # overwriting — without this the user (and
+                            # operators auditing) only see the
+                            # corrected version, with no way to spot
+                            # whether the verifier made a meaningful
+                            # change or just lightly reworded. Stash
+                            # in metadata so /api/ask response carries
+                            # both versions; the persisted transcript
+                            # still ships the corrected one (that's
+                            # what the user actually got).
+                            primary_original = response.content
                             # Replace the last assistant message with
                             # the corrected version so the persisted
                             # transcript reflects what the user
@@ -6503,6 +6519,7 @@ class GatewayServer:
                                 "verified_by": verifier_id,
                                 "verifier_corrected": True,
                                 "primary_worker": worker.id,
+                                "primary_original_answer": primary_original,
                             }
                         elif verifier_id is not None:
                             response.metadata = (response.metadata or {}) | {
@@ -6596,6 +6613,16 @@ class GatewayServer:
                     body["primary_worker"] = meta.get(
                         "primary_worker", body.get("worker", ""),
                     )
+                    # When the verifier corrected the primary, surface
+                    # the original answer too so the caller can render
+                    # a diff (or just spot whether the correction was
+                    # meaningful vs cosmetic). Only present on the
+                    # corrected branch since uncorrected runs have no
+                    # "original vs final" distinction.
+                    if meta.get("primary_original_answer") is not None:
+                        body["primary_original_answer"] = meta[
+                            "primary_original_answer"
+                        ]
                 # When verify was requested but couldn't run (no
                 # alternate worker), tell the client. Without this,
                 # a `verify=true` request that fell through to
