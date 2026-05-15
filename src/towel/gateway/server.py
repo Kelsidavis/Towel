@@ -2227,6 +2227,13 @@ class GatewayServer:
                     worker,
                 )
             else:
+                # Orchestrator subtasks ask for more tokens than a chat
+                # greeting (default 2048) and target the chat-fast path
+                # only because they don't need tools. Raise the wait
+                # window from chat_fast_timeout (60s) to the same 300s
+                # chunk_timeout the tool-loop path uses — without this,
+                # a 2048-token plan from a 27B model trips the 60s
+                # default before generation even completes.
                 response = await self._quick_remote_infer(
                     session_id,
                     session,
@@ -2234,6 +2241,10 @@ class GatewayServer:
                     max_tokens=max_tokens,
                     temperature=temperature,
                     identity_override=role_system,
+                    timeout_override=float(
+                        getattr(self.config, "worker_inference_timeout", 300.0)
+                        or 300.0
+                    ),
                 )
             text = getattr(response, "content", "") or ""
             if not text:
@@ -2258,11 +2269,17 @@ class GatewayServer:
         max_tokens: int = 256,
         temperature: float = 0.7,
         identity_override: str | None = None,
+        timeout_override: float | None = None,
     ) -> Any:
         """Lightweight inference on a worker — no tool loop, capped tokens.
 
         Used for chat/greetings where we want a fast, short response without
-        the overhead of the full agent tool loop.
+        the overhead of the full agent tool loop. ``timeout_override`` lets
+        callers that ask for larger ``max_tokens`` (orchestrator subtasks,
+        anything generating substantial JSON or code) raise the wait window
+        above the chat_fast_timeout default — without it, a 2048-token plan
+        from a 27B model on a Quadro hits the 60s wall before the worker
+        even finishes prefill.
         """
         from towel.agent.conversation import Message
 
@@ -2368,7 +2385,9 @@ class GatewayServer:
         )
 
         chat_fast_timeout = float(
-            getattr(self.config, "chat_fast_timeout", 60.0) or 60.0
+            timeout_override
+            if timeout_override is not None
+            else (getattr(self.config, "chat_fast_timeout", 60.0) or 60.0)
         )
         # Track whether the worker reached a terminal state on its own.
         # If we exit any other way (timeout, asyncio cancel, Starlette
