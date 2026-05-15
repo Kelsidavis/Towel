@@ -136,6 +136,20 @@ class TestStandaloneApp:
         assert resp.status_code == 200
         assert isinstance(resp.json().get("models"), list)
 
+    def test_unknown_backend_rejected(self):
+        """A typo like /api/setup/backends/olllama/models used to
+        silently return `{"models": []}` — operators wiring the
+        wizard against a custom backend handle saw "no models
+        installed" instead of "you typo'd the backend name."
+        Fail loud with the list of supported values."""
+        with TestClient(build_app()) as client:
+            resp = client.get("/api/setup/backends/olllama/models")
+        assert resp.status_code == 400
+        body = resp.json()
+        assert "supported" in body
+        assert "mlx" in body["supported"]
+        assert "ollama" in body["supported"]
+
     def test_setup_page_served_at_root(self):
         with TestClient(build_app()) as client:
             resp = client.get("/")
