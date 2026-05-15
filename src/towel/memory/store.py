@@ -1441,13 +1441,24 @@ class MemoryStore:
         by_type: dict[str, list[MemoryEntry]] = {}
         for e in entries:
             by_type.setdefault(e.memory_type, []).append(e)
+        # Cap per-entry content in the prompt block. Operators can store
+        # arbitrarily long memories (a TODO list, a code snippet) but
+        # dumping a 100KB entry into the system prompt blows past the
+        # worker's context window — and `to_prompt_block` is called on
+        # EVERY turn, so the bloat compounds. 2KB per entry preserves
+        # plenty of signal for the model; CLI / /memory readers still
+        # see the full body.
+        _PROMPT_CONTENT_CAP = 2000
         for mtype in ["user", "preference", "project", "fact"]:
             group = by_type.get(mtype, [])
             if not group:
                 continue
             lines.append(f"\n**{mtype.title()}:**")
             for e in group:
-                lines.append(f"- {e.key}: {e.content}")
+                content = e.content
+                if len(content) > _PROMPT_CONTENT_CAP:
+                    content = content[:_PROMPT_CONTENT_CAP] + "… [truncated]"
+                lines.append(f"- {e.key}: {content}")
         lines.append(
             "\nYou can use the `remember` and `forget` tools to update your memory. "
             "Proactively remember useful facts about the user and their work."

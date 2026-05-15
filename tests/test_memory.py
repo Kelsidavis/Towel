@@ -104,6 +104,27 @@ class TestMemoryStore:
         assert "**User:**" in block
         assert "**Fact:**" in block
 
+    def test_to_prompt_block_truncates_huge_entries(self, store):
+        """An operator can legitimately store a long memory (a TODO
+        list, a code snippet). But dumping a 100KB entry into the
+        system prompt every turn blows past the worker's context
+        window — to_prompt_block must cap per-entry content. CLI /
+        /memory readers still see the full body."""
+        big_content = "a" * 100_000
+        store.remember("huge", big_content, memory_type="fact")
+        store.remember("small", "short note", memory_type="fact")
+        block = store.to_prompt_block()
+        # The block must be small enough for a real prompt — well under
+        # 100KB.
+        assert len(block) < 10_000
+        # The truncation marker must be present so the model can see
+        # the entry was cut.
+        assert "truncated" in block.lower()
+        # The small entry must NOT be truncated.
+        assert "short note" in block
+        # The full recall path still exposes the un-truncated content.
+        assert store.recall("huge").content == big_content
+
 
 class TestBM25Ranking:
     """FTS5 BM25 ranking is the headline upgrade — search() must rank
