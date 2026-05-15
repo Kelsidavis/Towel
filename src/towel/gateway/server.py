@@ -4959,10 +4959,10 @@ class GatewayServer:
             # worker, and `{"draining": "false"}` did too (the string
             # "false" is truthy in Python). Dangerous for an operator-
             # facing endpoint.
-            for field, value in (("enabled", enabled), ("draining", draining)):
+            for field_name, value in (("enabled", enabled), ("draining", draining)):
                 if value is not None and not isinstance(value, bool):
                     return JSONResponse(
-                        {"error": f"{field} must be true or false (got {type(value).__name__})"},
+                        {"error": f"{field_name} must be true or false (got {type(value).__name__})"},
                         status_code=400,
                     )
 

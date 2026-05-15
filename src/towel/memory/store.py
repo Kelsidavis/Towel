@@ -697,8 +697,8 @@ class MemoryStore:
         # 500. Cap the LIKE-bound query at well under the SQLite limit;
         # the BM25/FTS5 path handles long queries fine and gets the full
         # text via its tokenization.
-        _MAX_LIKE_QUERY = 2000
-        like_query = query if len(query) <= _MAX_LIKE_QUERY else query[:_MAX_LIKE_QUERY]
+        max_like_query = 2000
+        like_query = query if len(query) <= max_like_query else query[:max_like_query]
         con = self._connect()
         try:
             fts_query = _fts5_query(query)
@@ -1301,9 +1301,9 @@ class MemoryStore:
         # couple hundred chars, and /memory/recalls renders this
         # column in a list view that's unreadable past one line
         # anyway. Same conceptual cap the search path uses (eb86631).
-        _MAX_LOGGED_QUERY = 500
-        logged_query = query if len(query) <= _MAX_LOGGED_QUERY else (
-            query[:_MAX_LOGGED_QUERY] + "…"
+        max_logged_query = 500
+        logged_query = query if len(query) <= max_logged_query else (
+            query[:max_logged_query] + "…"
         )
         effective_cap = cap if cap is not None else self.RECALL_LOG_CAP
         now_iso = datetime.now(UTC).isoformat()
@@ -1414,7 +1414,7 @@ class MemoryStore:
                 # bare "hi" should remind the agent who it's talking
                 # to — not dump the operator's longest scratch note.
                 # Within each type bucket, newer entries win.
-                _PRIORITY = {"user": 0, "preference": 1, "project": 2, "fact": 3}
+                priority_rank = {"user": 0, "preference": 1, "project": 2, "fact": 3}
                 con = self._connect()
                 try:
                     rows = con.execute(
@@ -1424,7 +1424,7 @@ class MemoryStore:
                     con.close()
                 ranked = sorted(
                     rows,
-                    key=lambda r: _PRIORITY.get(r["memory_type"], 4),
+                    key=lambda r: priority_rank.get(r["memory_type"], 4),
                 )
                 entries = [_row_to_entry(r) for r in ranked[:limit]]
                 used_fallback = True
@@ -1458,7 +1458,7 @@ class MemoryStore:
         # EVERY turn, so the bloat compounds. 2KB per entry preserves
         # plenty of signal for the model; CLI / /memory readers still
         # see the full body.
-        _PROMPT_CONTENT_CAP = 2000
+        prompt_content_cap = 2000
         for mtype in ["user", "preference", "project", "fact"]:
             group = by_type.get(mtype, [])
             if not group:
@@ -1466,8 +1466,8 @@ class MemoryStore:
             lines.append(f"\n**{mtype.title()}:**")
             for e in group:
                 content = e.content
-                if len(content) > _PROMPT_CONTENT_CAP:
-                    content = content[:_PROMPT_CONTENT_CAP] + "… [truncated]"
+                if len(content) > prompt_content_cap:
+                    content = content[:prompt_content_cap] + "… [truncated]"
                 lines.append(f"- {e.key}: {content}")
         lines.append(
             "\nYou can use the `remember` and `forget` tools to update your memory. "
