@@ -48,6 +48,36 @@ class TestModelsEndpoint:
         assert model["object"] == "model"
         assert model["owned_by"] == "towel"
 
+    def test_model_includes_created_timestamp(self, client):
+        """OpenAI's /v1/models response includes a `created` Unix
+        timestamp per model. Older versions of the official OpenAI
+        Python SDK raised a validation error when this field was
+        missing. Some downstream clients (LangChain, llm CLI) also
+        read it. Without this, a Towel-backed OpenAI client that
+        listed models couldn't tell what model registry version it
+        was looking at."""
+        import time
+
+        resp = client.get("/v1/models")
+        data = resp.json()
+        for model in data["data"]:
+            assert "created" in model, model
+            assert isinstance(model["created"], int)
+            # Plausible bounds: 2020-01-01 .. 1 hour in the future.
+            # The coordinator-start constant should be well within
+            # this window for any sane test run.
+            assert 1577836800 <= model["created"] <= int(time.time()) + 3600
+
+    def test_models_share_created_timestamp(self, client):
+        """OpenAI returns the same `created` across all official
+        models in a single response — it's a per-process constant,
+        not "now". Match that shape so clients caching by created
+        don't see thrash on every request."""
+        resp = client.get("/v1/models")
+        data = resp.json()
+        created_values = {m["created"] for m in data["data"]}
+        assert len(created_values) == 1, created_values
+
 
 class TestChatCompletionsEndpoint:
     def test_missing_messages(self, client):

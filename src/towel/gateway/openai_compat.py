@@ -34,6 +34,16 @@ if TYPE_CHECKING:
     from towel.config import TowelConfig
 
 
+# Stable Unix timestamp returned in every /v1/models `created`
+# field — captured at module-import time so all models in the
+# response (and across repeated calls within a process lifetime)
+# share the same value. OpenAI's response uses a per-model
+# train-cutoff constant; we have nothing meaningful per-model so
+# pin to coordinator startup, which is at least deterministic and
+# monotonically older than now() for any consumer who validates.
+_OPENAI_MODELS_CREATED = int(time.time())
+
+
 def build_openai_routes(
     agent: AgentRuntime,
     config: TowelConfig,
@@ -637,9 +647,31 @@ def build_openai_routes(
 
     async def list_models(request: Request) -> JSONResponse:
         """GET /v1/models — list available models."""
-        models = [{"id": config.model.name, "object": "model", "owned_by": "towel"}]
+        # OpenAI's /v1/models response includes a `created` Unix
+        # timestamp on every model entry. The official OpenAI Python
+        # SDK and some downstream clients (LangChain, llm CLI) read
+        # the field — older SDK versions actually raise a validation
+        # error if it's missing. Stamp the coordinator's startup
+        # time so the timestamp is stable per process (and consistent
+        # across all models in the response, matching OpenAI's
+        # behaviour where every "their" model shares its train-cutoff
+        # constant).
+        created = int(_OPENAI_MODELS_CREATED)
+        models = [
+            {
+                "id": config.model.name,
+                "object": "model",
+                "created": created,
+                "owned_by": "towel",
+            }
+        ]
         for name, profile in config.list_agents().items():
-            models.append({"id": name, "object": "model", "owned_by": "towel"})
+            models.append({
+                "id": name,
+                "object": "model",
+                "created": created,
+                "owned_by": "towel",
+            })
         return JSONResponse({"object": "list", "data": models})
 
     return [
