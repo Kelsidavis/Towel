@@ -946,7 +946,86 @@ class TestCollaborationOnOpenAICompat:
         # Local-agent fallback answered; ensemble didn't actually run.
         assert "local fallback" in data["choices"][0]["message"]["content"]
         # Towel-namespaced field surfaces the silent degradation.
-        assert data.get("towel", {}).get("ensemble_skipped") is True
+        towel = data.get("towel", {})
+        assert towel.get("ensemble_skipped") is True
+        # No-candidates case carries the matching skip_reason.
+        assert "no idle workers" in towel.get("ensemble_skip_reason", "")
+        # Empty contributions list still surfaced — parity with
+        # /api/ask, where the field is always present so clients
+        # don't special-case the missing-field path.
+        assert towel.get("ensemble_contributions") == []
+
+    def test_ensemble_skipped_reasons_surface_for_each_failure_mode(
+        self, tmp_path,
+    ):
+        """OpenAI-compat parity with /api/ask: when ensemble fan-out
+        returns contributions but no usable answer, the towel-
+        namespaced block must distinguish empty_text vs timeout vs
+        mixed failures and surface the per-worker contributions list
+        so OpenAI-aware clients diagnose without curl-ing the
+        dispatch log."""
+        from towel.agent.conversation import Message, Role
+
+        store = ConversationStore(store_dir=tmp_path)
+        config = TowelConfig()
+        agent = AgentRuntime(config)
+        sessions = SessionManager(store=store)
+        gw = GatewayServer(config=config, agent=agent, sessions=sessions)
+        client = TestClient(gw._build_http_app())
+
+        async def fake_step(_conv, **_kwargs):
+            return Message(role=Role.ASSISTANT, content="local fallback answer")
+        agent.step = fake_step  # type: ignore[method-assign]
+
+        async def fake_route(_msg, _sid):
+            return None, "chat"
+        gw._route_by_role = fake_route  # type: ignore[method-assign]
+
+        scenarios = [
+            (
+                [
+                    {"worker_id": "x", "answer": "", "ms": 10.0, "error": "empty_text"},
+                    {"worker_id": "y", "answer": "", "ms": 10.0, "error": "empty_text"},
+                ],
+                "tool-looped",
+            ),
+            (
+                [
+                    {"worker_id": "x", "answer": "", "ms": 90.0, "error": "ensemble_timeout"},
+                    {"worker_id": "y", "answer": "", "ms": 90.0, "error": "ensemble_timeout"},
+                ],
+                "timed out",
+            ),
+            (
+                [
+                    {"worker_id": "x", "answer": "", "ms": 10.0, "error": "empty_text"},
+                    {"worker_id": "y", "answer": "", "ms": 90.0, "error": "ensemble_timeout"},
+                ],
+                "mixed failures",
+            ),
+        ]
+
+        for contributions, expected_phrase in scenarios:
+            async def fake_ensemble(*_args, **_kwargs):
+                return "", contributions, "none"
+            gw._ensemble_dispatch = fake_ensemble  # type: ignore[method-assign]
+
+            resp = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "default",
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "ensemble": True,
+                },
+            )
+            assert resp.status_code == 200
+            towel = resp.json().get("towel", {})
+            assert towel.get("ensemble_skipped") is True, towel
+            assert expected_phrase in towel.get("ensemble_skip_reason", ""), (
+                f"expected {expected_phrase!r}; got "
+                f"{towel.get('ensemble_skip_reason')!r}"
+            )
+            assert towel.get("ensemble_contributions") == contributions
 
     def test_verify_corrects_through_openai_compat(self, tmp_path):
         """End-to-end verify through /v1/chat/completions: the

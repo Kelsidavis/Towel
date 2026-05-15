@@ -376,6 +376,13 @@ def build_openai_routes(
                     # c81f481, 7614e9f, b396319). Short-circuits when
                     # the fan-out produces a real answer; otherwise
                     # falls through to the normal single-worker route.
+                    # Initialize the captured contributions + arb_mode
+                    # at function scope (not just inside `if ensemble_raw`)
+                    # so the response-building block downstream can
+                    # surface them even on the fall-through path — parity
+                    # with /api/ask's ensemble_contributions field.
+                    _contribs: list[dict[str, Any]] = []
+                    arb_mode = ""
                     if ensemble_raw:
                         arbitrated, _contribs, arb_mode = await gateway._ensemble_dispatch(
                             session_id, last_user, user_session=sess,
@@ -718,10 +725,35 @@ def build_openai_routes(
                         # ensemble=true requested but fell through —
                         # the response metadata won't have `ensemble`
                         # unless arbitration produced a real answer.
-                        # The skip-reason detail isn't reachable from
-                        # this scope (the inner contributions list
-                        # was thrown away), so emit the bare flag.
+                        # The captured _contribs lets us mirror
+                        # /api/ask's three-bucket skip-reason +
+                        # surface the per-worker contributions so
+                        # OpenAI-compat clients diagnose the failure
+                        # the same way HTTP callers do.
                         towel_meta["ensemble_skipped"] = True
+                        if not _contribs:
+                            towel_meta["ensemble_skip_reason"] = (
+                                "no idle workers available"
+                            )
+                        else:
+                            errors = [c.get("error") for c in _contribs]
+                            if all(e == "empty_text" for e in errors):
+                                towel_meta["ensemble_skip_reason"] = (
+                                    "all workers tool-looped "
+                                    "(returned empty text)"
+                                )
+                            elif all(e == "ensemble_timeout" for e in errors):
+                                towel_meta["ensemble_skip_reason"] = (
+                                    "all workers timed out before "
+                                    "producing a response"
+                                )
+                            else:
+                                towel_meta["ensemble_skip_reason"] = (
+                                    "mixed failures across the "
+                                    "fan-out — see ensemble_"
+                                    "contributions for details"
+                                )
+                        towel_meta["ensemble_contributions"] = _contribs
                     if meta.get("fallback_from_worker"):
                         towel_meta["fallback_from_worker"] = (
                             meta["fallback_from_worker"]
