@@ -3433,6 +3433,21 @@ class GatewayServer:
                 return JSONResponse({"error": "No store"}, status_code=500)
             deleted = store.delete(conv_id)
             self.sessions.remove(conv_id)
+            # Clean up in-memory routing state for this session too.
+            # `conversations_delete_all` already does this; the single
+            # delete handler missed it and leaked an entry per
+            # delete-then-recreate cycle. Not catastrophic — these
+            # dicts hold small entries — but the operator-visible
+            # symptom was /sessions showing a stale `worker_id` for
+            # a deleted-and-recreated session_id.
+            self._session_workers.pop(conv_id, None)
+            self._session_jobs.pop(conv_id, None)
+            # Also drop a worker pin if one was set — a pin on a
+            # deleted conversation can't be honored and would leak
+            # into the persisted SessionPinStore on the next save.
+            if conv_id in self._session_pins:
+                self._session_pins.pop(conv_id, None)
+                self.pin_store.save(self._session_pins)
             return JSONResponse({"deleted": deleted})
 
         async def conversations_delete_all(request: Request) -> JSONResponse:

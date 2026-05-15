@@ -317,6 +317,39 @@ class TestConversationsAPI:
         assert resp.status_code == 200
         assert resp.json()["deleted"] is False
 
+    def test_delete_clears_session_affinity(self, gateway, store, client):
+        """Singular conversation_delete previously left a stale
+        _session_workers entry behind. A delete-then-recreate of the
+        same session_id (common in scripted /api/ask usage) would
+        show the OLD worker_id in /sessions for the new session
+        until the new session got dispatched."""
+        conv = Conversation(id="affinity-leak")
+        conv.add(Role.USER, "test")
+        store.save(conv)
+        gateway._session_workers["affinity-leak"] = "ghost-worker"
+
+        resp = client.request("DELETE", "/conversations/affinity-leak")
+        assert resp.status_code == 200
+        # And the affinity dict must NOT carry the deleted session's entry.
+        assert "affinity-leak" not in gateway._session_workers
+
+    def test_delete_clears_session_worker_pin(self, gateway, store, client):
+        """A pin set on a soon-deleted conversation would otherwise
+        persist into the SessionPinStore on next save — a phantom pin
+        that the dispatcher honors for the deleted session_id if it
+        ever reappears."""
+        conv = Conversation(id="pin-leak")
+        conv.add(Role.USER, "test")
+        store.save(conv)
+        gateway._session_pins["pin-leak"] = "some-worker"
+        gateway.pin_store.save(gateway._session_pins)
+
+        resp = client.request("DELETE", "/conversations/pin-leak")
+        assert resp.status_code == 200
+        assert "pin-leak" not in gateway._session_pins
+        # And the persisted pin store must have been re-saved without it.
+        assert "pin-leak" not in gateway.pin_store.load()
+
     def test_delete_all_requires_confirmation(self, store, client):
         """DELETE /conversations is a "wipe everything" footgun. Without
         ?confirm=yes a stale curl in shell history or a misclicked UI
