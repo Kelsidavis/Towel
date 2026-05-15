@@ -590,6 +590,37 @@ class TestSnippets:
         result = handle_slash("/s nonexistent", ctx)
         assert result is True  # consumed as error
 
+    def test_non_dict_snippets_file_does_not_crash_caller(self, tmp_path, monkeypatch):
+        """A hand-edited snippets.json containing a list (or any
+        non-dict top-level shape) used to slip through ``_load``'s
+        JSONDecodeError catch — ``json.loads`` succeeded but
+        returned a list, and the caller's ``.get(name)`` /
+        ``.items()`` then crashed with AttributeError. Operators
+        running ``/snippets`` saw a stack trace instead of their
+        existing snippets being preserved or replaced. Defensive
+        isinstance check backs up the bad file the same way a
+        JSONDecodeError would, and returns ``{}`` so callers see
+        an empty snippet store and can re-add."""
+        snippets_path = tmp_path / "snippets.json"
+        # Hand-edited to a list — valid JSON but wrong shape.
+        snippets_path.write_text('[1, 2, 3]', encoding="utf-8")
+        monkeypatch.setattr("towel.cli.snippets.SNIPPETS_FILE", snippets_path)
+
+        from towel.cli.snippets import _load, get_snippet, set_snippet
+
+        # _load returns {} without crashing, even though the file
+        # parses to a list.
+        assert _load() == {}
+        # The bad file got renamed aside so the next save can't
+        # silently overwrite the original bytes.
+        assert any(
+            tmp_path.iterdir()
+        ), "expected the corrupted file to be renamed aside"
+        # Callers that used to crash with AttributeError now work.
+        assert get_snippet("anything") is None
+        set_snippet("recovered", "back in business")
+        assert get_snippet("recovered") == "back in business"
+
 
 class TestAliases:
     def test_create_alias(self, ctx, tmp_path, monkeypatch):

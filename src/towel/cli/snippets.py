@@ -22,22 +22,41 @@ def _load() -> dict[str, str]:
     if not SNIPPETS_FILE.exists():
         return {}
     try:
-        return json.loads(SNIPPETS_FILE.read_text(encoding="utf-8"))
+        data = json.loads(SNIPPETS_FILE.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as e:
         log.warning(f"Failed to load snippets: {e}")
         # Rename the corrupt file aside so the next _save can't
         # overwrite the bytes with a fresh (probably empty) snippet
         # dict. Same pattern the persistence stores got
         # (5512834, 98d1c68, 8a86987).
-        from datetime import UTC, datetime
-        backup = SNIPPETS_FILE.with_name(
-            f"{SNIPPETS_FILE.name}.corrupted-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}"
-        )
-        try:
-            SNIPPETS_FILE.replace(backup)
-        except OSError:
-            pass
+        _back_up_corrupt(e)
         return {}
+    if not isinstance(data, dict):
+        # JSON parsed cleanly but the top-level shape is wrong
+        # (operator hand-edited to a list, a Python script wrote
+        # `json.dump([...])`, etc.). Callers expect a dict and
+        # would crash on .get() / .items(); back up the bad file
+        # and start fresh so the next /snippets set doesn't get
+        # rejected by the same caller-side AttributeError.
+        log.warning(
+            f"Snippets file shape is {type(data).__name__}, expected dict"
+        )
+        _back_up_corrupt(
+            ValueError(f"top-level shape is {type(data).__name__}, expected dict")
+        )
+        return {}
+    return data
+
+
+def _back_up_corrupt(reason: Exception) -> None:
+    from datetime import UTC, datetime
+    backup = SNIPPETS_FILE.with_name(
+        f"{SNIPPETS_FILE.name}.corrupted-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}"
+    )
+    try:
+        SNIPPETS_FILE.replace(backup)
+    except OSError:
+        pass
 
 
 def _save(snippets: dict[str, str]) -> None:
