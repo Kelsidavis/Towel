@@ -678,11 +678,21 @@ class Dispatcher:
         # failed" (which is `0/N answered`).
         if not contributions:
             notes = "ensemble: skipped (no idle workers available)"
-        else:
+        elif contributing:
             notes = (
                 f"ensemble: {arbitration_mode} "
                 f"({len(contributing)}/{len(contributions)} answered: "
                 f"{', '.join(contributing)})"
+            )
+        else:
+            # Every worker tried but none returned a real answer
+            # (errors, empty text, or timeouts). Drop the trailing
+            # ":" + empty list — operators read this in /dispatch/recent
+            # and the dangling colon kept making people ask whether
+            # the entry was truncated.
+            notes = (
+                f"ensemble: {arbitration_mode} "
+                f"(0/{len(contributions)} answered)"
             )
         decision = DispatchDecision(
             worker=None,

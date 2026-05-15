@@ -987,6 +987,26 @@ class TestDispatchRecentEphemeralFilter:
         # "candidates ran but failed" in the operator UI.
         assert entry["candidates_considered"] == 0
 
+    def test_ensemble_all_workers_failed_notes_have_no_dangling_colon(
+        self, gateway,
+    ):
+        """When every fan-out worker errors out, contributions is
+        non-empty but `contributing` is empty. The earlier formatter
+        produced "ensemble: none (0/2 answered: )" with a trailing
+        colon and empty list — operators kept asking whether the
+        notes were truncated. Now the empty trailing list is dropped."""
+        decision = gateway._dispatcher.record_ensemble(
+            session_id="all-failed",
+            contributions=[
+                {"worker_id": "a", "answer": "", "ms": 100.0, "error": "boom"},
+                {"worker_id": "b", "answer": "", "ms": 100.0, "error": "boom"},
+            ],
+            arbitration_mode="none",
+        )
+        # The notes should report "0/2 answered" without a trailing
+        # ":" or empty worker list.
+        assert decision.notes == "ensemble: none (0/2 answered)"
+
     def test_verify_records_aggregate_dispatch_entry(self, gateway, client):
         """Symmetric to the ensemble case — verify pass records an
         aggregate 'verify' entry under the user's session_id."""
