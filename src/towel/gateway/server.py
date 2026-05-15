@@ -755,7 +755,15 @@ class GatewayServer:
         the best shot at a real response. Returns None if no
         qualified alternate exists (all enabled non-draining workers
         are in `exclude`).
+
+        Skips workers that are stuck (busy for more than 5 minutes).
+        A stuck worker is by definition not making progress, so
+        queuing the retry behind it would just inherit the wedge.
         """
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC)
+        stuck_threshold_secs = 300.0
         candidates: list[WorkerInfo] = []
         busy_candidates: list[WorkerInfo] = []
         for w in self._workers.list():
@@ -764,6 +772,13 @@ class GatewayServer:
             if not w.enabled or w.draining:
                 continue
             if w.busy:
+                # Filter out stuck workers — a worker that's been busy
+                # for 5+ minutes is wedged on a previous request and
+                # won't service the retry any faster than the primary.
+                if w.busy_since is not None and (
+                    (now - w.busy_since).total_seconds() >= stuck_threshold_secs
+                ):
+                    continue
                 busy_candidates.append(w)
             else:
                 candidates.append(w)

@@ -674,3 +674,48 @@ class TestAlternateChatWorker:
         gateway._workers.set_draining("draining", True)
         alt = gateway._pick_alternate_chat_worker(exclude={"small"})
         assert alt is None
+
+    def test_skips_stuck_busy_workers(self, gateway):
+        """A worker that's been busy for 5+ minutes is wedged on a
+        previous request. Queuing the retry behind it would inherit
+        the wedge — turning a "slow but eventually correct" retry
+        into a hung HTTP call. Prefer no retry over a stuck one."""
+        from datetime import UTC, datetime, timedelta
+
+        gateway._workers.register(
+            "small", object(),
+            {"backend": "llama", "modes": ["llama_chat"], "total_vram_mb": 4096},
+        )
+        gateway._workers.register(
+            "stuck-big", object(),
+            {"backend": "llama", "modes": ["llama_chat"], "total_vram_mb": 16000},
+        )
+        gateway._workers.assign("stuck-big", "stuck-job", "stuck-session")
+        # Force busy_since to be 10 minutes ago.
+        worker = gateway._workers.get("stuck-big")
+        worker.busy_since = datetime.now(UTC) - timedelta(minutes=10)
+
+        alt = gateway._pick_alternate_chat_worker(exclude={"small"})
+        assert alt is None
+
+    def test_keeps_recently_busy_worker_as_fallback(self, gateway):
+        """A worker that just started a job (busy_since < 5 minutes)
+        is normal — its queue will serve the retry shortly. Don't
+        confuse it with stuck."""
+        from datetime import UTC, datetime, timedelta
+
+        gateway._workers.register(
+            "small", object(),
+            {"backend": "llama", "modes": ["llama_chat"], "total_vram_mb": 4096},
+        )
+        gateway._workers.register(
+            "busy-big", object(),
+            {"backend": "llama", "modes": ["llama_chat"], "total_vram_mb": 16000},
+        )
+        gateway._workers.assign("busy-big", "job", "session")
+        worker = gateway._workers.get("busy-big")
+        worker.busy_since = datetime.now(UTC) - timedelta(seconds=30)
+
+        alt = gateway._pick_alternate_chat_worker(exclude={"small"})
+        assert alt is not None
+        assert alt.id == "busy-big"
