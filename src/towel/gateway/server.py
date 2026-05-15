@@ -76,6 +76,19 @@ def _stripped_str(value: Any, default: str = "") -> str:
     return default
 
 
+def _err_str(exc: BaseException) -> str:
+    """Return a non-empty error string for any exception.
+
+    Several stdlib exceptions stringify to empty: ``asyncio.TimeoutError``,
+    ``asyncio.CancelledError``, ``KeyError("")``, etc. Returning
+    ``{"error": ""}`` from a 500 handler gives the caller nothing to
+    work with. This helper falls back to the type name when ``str(exc)``
+    is empty.
+    """
+    s = str(exc)
+    return s if s else type(exc).__name__
+
+
 def _guess_model_param_b(name: str) -> float | None:
     """Pull a rough parameter count out of a model name.
 
@@ -2482,7 +2495,7 @@ class GatewayServer:
                 )
             except Exception as exc:
                 log.exception("memory.recent_recalls failed: %s", exc)
-                return JSONResponse({"error": str(exc)}, status_code=500)
+                return JSONResponse({"error": _err_str(exc)}, status_code=500)
             return JSONResponse({"recalls": rows, "count": len(rows)})
 
         async def memory_activity(request: Request) -> JSONResponse:
@@ -2522,7 +2535,7 @@ class GatewayServer:
                 )
             except Exception as exc:
                 log.exception("memory.activity failed: %s", exc)
-                return JSONResponse({"error": str(exc)}, status_code=500)
+                return JSONResponse({"error": _err_str(exc)}, status_code=500)
             return JSONResponse(
                 {
                     "buckets": buckets,
@@ -3307,7 +3320,7 @@ class GatewayServer:
                 )
             except Exception as exc:
                 log.exception("memory.create(%r) failed: %s", key, exc)
-                return JSONResponse({"error": str(exc)}, status_code=500)
+                return JSONResponse({"error": _err_str(exc)}, status_code=500)
             return JSONResponse(entry.to_dict(), status_code=201)
 
         async def memory_nudge(request: Request) -> JSONResponse:
@@ -3331,7 +3344,7 @@ class GatewayServer:
                 memory._bump_recall([key])
             except Exception as exc:
                 log.exception("memory.nudge(%r) failed: %s", key, exc)
-                return JSONResponse({"error": str(exc)}, status_code=500)
+                return JSONResponse({"error": _err_str(exc)}, status_code=500)
             entry = memory.recall(key)
             return JSONResponse(entry.to_dict())
 
@@ -3428,7 +3441,7 @@ class GatewayServer:
                     )
             except Exception as exc:
                 log.exception("memory.edit(%r) failed: %s", key, exc)
-                return JSONResponse({"error": str(exc)}, status_code=500)
+                return JSONResponse({"error": _err_str(exc)}, status_code=500)
             return JSONResponse(updated.to_dict())
 
         async def memory_forget(request: Request) -> JSONResponse:
@@ -3447,7 +3460,7 @@ class GatewayServer:
                 removed = memory.forget(key)
             except Exception as exc:
                 log.exception("memory.forget(%r) failed: %s", key, exc)
-                return JSONResponse({"error": str(exc)}, status_code=500)
+                return JSONResponse({"error": _err_str(exc)}, status_code=500)
             if not removed:
                 return JSONResponse({"error": f"no memory with key {key!r}"}, status_code=404)
             return JSONResponse({"ok": True, "key": key})
@@ -4125,7 +4138,7 @@ class GatewayServer:
                     body["fallback_reason"] = meta.get("fallback_reason", "")
                 return JSONResponse(body)
             except Exception as e:
-                return JSONResponse({"error": str(e)}, status_code=500)
+                return JSONResponse({"error": _err_str(e)}, status_code=500)
 
         async def api_sessions(request: Request) -> JSONResponse:
             """GET /api/sessions — list active and stored sessions with tags."""

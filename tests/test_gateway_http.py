@@ -825,6 +825,45 @@ class TestSimpleAskAPI:
         assert body["fallback_from_worker"] == "primary-fail"
         assert body["fallback_reason"] == "primary_failed"
 
+    def test_error_response_carries_type_name_when_str_is_empty(self, gateway, client):
+        """Several stdlib exceptions (asyncio.CancelledError,
+        asyncio.TimeoutError, etc.) stringify to "". The handler used
+        to return `{"error": ""}` HTTP 500 — unhelpful for any client
+        trying to log or surface the failure. Now falls back to the
+        type name when `str(exc)` is empty."""
+        from unittest.mock import AsyncMock
+        from towel.gateway.workers import WorkerInfo
+
+        only_worker = WorkerInfo(id="w-empty-err", ws=AsyncMock(), capabilities={})
+        gateway._workers._workers["w-empty-err"] = only_worker
+
+        async def fake_route(message, session_id):
+            return only_worker, "chat"
+
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        async def fake_quick(session_id, session, worker, **kwargs):
+            # `asyncio.TimeoutError` is the canonical empty-str
+            # exception that motivated the helper. It's also what
+            # bare `_quick_remote_infer` would convert via my earlier
+            # fix, but we want to test the catch-all path here.
+            raise TimeoutError()
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "hi", "session_id": "empty-err"},
+        )
+        assert resp.status_code == 500
+        # Critically the error field is non-empty. With str(TimeoutError())
+        # being "", the helper falls back to the type name.
+        body = resp.json()
+        assert body["error"]
+        assert body["error"] != ""
+        # And it carries a useful identifier.
+        assert "TimeoutError" in body["error"]
+
     def test_primary_failure_no_alt_re_raises(self, gateway, client):
         """If primary fails and there's no alt worker, the API
         caller should see the primary's exception bubble up as a
