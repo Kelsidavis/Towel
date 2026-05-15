@@ -2721,6 +2721,62 @@ class TestSimpleAskAPI:
             assert isinstance(c["synthesis_ms"], (int, float))
             assert c["synthesis_ms"] >= 0
 
+    def test_ensemble_synthesis_handles_none_text_gracefully(
+        self, gateway, client,
+    ):
+        """A buggy local agent could return GenerationResult(text=None)
+        even though the field is typed `str`. Before the defensive
+        coerce, parse_tool_calls(None) crashed and the outer except
+        caught it ~90s later (full synth_timeout). Now the coerce
+        treats None as empty text → falls through to
+        longest_fallback immediately."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+        from towel.agent.runtime import GenerationResult
+
+        gateway._workers.register(
+            "a", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "b", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            # Divergent answers to force the synthesis path.
+            answers = {
+                "a": "Apple is a fruit.",
+                "b": "Cars use gasoline as fuel.",
+            }
+            return Message(
+                role=Role.ASSISTANT, content=answers[worker.id],
+                metadata={"remote_worker": worker.id, "tokens": 5, "tps": 5.0},
+            )
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        # Synthesizer returns a result with None text (simulates a
+        # buggy backend).
+        async def fake_generate_none(conv):
+            return GenerationResult(text=None, tokens_per_second=0.0, total_tokens=0)  # type: ignore[arg-type]
+        gateway.agent.generate = fake_generate_none  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "q", "session_id": "ens-none", "ensemble": True},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # Synthesis returned no usable text → longest_fallback path.
+        # The response is one of the two real answers (whichever was
+        # longer, in this case b).
+        assert body["ensemble_arbitration"] == "longest_fallback"
+        assert body["response"] in (
+            "Apple is a fruit.",
+            "Cars use gasoline as fuel.",
+        )
+
     def test_ask_ensemble_arbitration_mode_surfaces_in_response(
         self, gateway, client,
     ):
