@@ -1386,6 +1386,29 @@ class TestDispatchRecentEphemeralFilter:
         # "candidates ran but failed" in the operator UI.
         assert entry["candidates_considered"] == 0
 
+    def test_ws_stream_with_collab_logs_warning(self):
+        """WS doesn't have an HTTP-style 400 path, so the openai-
+        compat-equivalent 'verify/ensemble with stream=true is
+        rejected' error becomes a server-side log warning instead.
+        Operators see the degradation in the coordinator log instead
+        of wondering why a WS client's `ensemble=true` did nothing.
+
+        Source-inspection test — confirms the warning string exists
+        in the WS handler. A full WS round-trip would need a
+        websocket harness."""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._handle_ws)
+        # The warning fires when stream=true is set alongside
+        # ensemble_flag or verify_flag.
+        assert (
+            "stream and (ensemble_flag or verify_flag)" in src
+        ), "WS handler must log when collab flags are silently ignored on streaming"
+        # The log message points operators at the fix (stream=false).
+        assert "stream=false" in src
+
     def test_ws_ensemble_response_includes_contributions_for_parity(self):
         """The WS ensemble response previously sent only `ensemble`,
         `ensemble_arbitration`, and `remote_worker` in the metadata —

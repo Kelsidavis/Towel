@@ -520,6 +520,23 @@ class GatewayServer:
                     # the WS layer too — if both are set, ensemble
                     # wins (the more thorough mode).
                     verify_flag = bool(msg.get("verify", False)) and not ensemble_flag
+                    # The openai-compat path rejects stream+collab
+                    # with 400, but the WS protocol has no error
+                    # code path that fits cleanly — log a warning
+                    # so operators can see the degradation in
+                    # coordinator logs instead of wondering why a
+                    # WS client's `ensemble=true` did nothing. The
+                    # client still gets a streaming single-worker
+                    # response; this just makes the silent fall-
+                    # through visible server-side.
+                    if stream and (ensemble_flag or verify_flag):
+                        log.warning(
+                            "WS session %s requested %s with stream=true; "
+                            "ignoring collaboration flag (synthesis/review "
+                            "is non-streaming). Send stream=false to opt in.",
+                            session_id,
+                            "ensemble" if ensemble_flag else "verify",
+                        )
 
                     session = self.sessions.get_or_create(session_id)
                     session.conversation.add(Role.USER, content, channel=channel)
