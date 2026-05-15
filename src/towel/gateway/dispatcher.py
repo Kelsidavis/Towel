@@ -696,9 +696,11 @@ class Dispatcher:
         """Log a verify pass as an aggregate dispatch decision.
 
         Symmetric to record_ensemble for the sequential mode. The
-        primary's own dispatch decision was recorded normally; this
-        adds an entry showing the verifier ran and whether it
-        corrected the primary.
+        primary's own dispatch decision was recorded normally
+        (under the user's session_id), and the verifier's call has
+        its own decision under the ephemeral _verify_<...> session
+        (accessible via /dispatch/recent?include_ephemeral=1). This
+        entry is the operator-visible marker that links them.
         """
         decision = DispatchDecision(
             worker=None,
