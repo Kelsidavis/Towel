@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 from towel.memory.scope import derive_scope, find_project_root
 from towel.memory.store import MemoryStore
 
@@ -45,7 +44,8 @@ class TestDeriveScope:
     def test_different_paths_yield_different_scopes(self, tmp_path):
         root1 = tmp_path / "a"
         root2 = tmp_path / "b"
-        root1.mkdir(); root2.mkdir()
+        root1.mkdir()
+        root2.mkdir()
         (root1 / ".towel.md").write_text("", encoding="utf-8")
         (root2 / ".towel.md").write_text("", encoding="utf-8")
         assert derive_scope(root1) != derive_scope(root2)
