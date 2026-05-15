@@ -717,7 +717,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       const worker = d.worker_id || '<coordinator>';
       const reason = d.reason || 'unknown';
       const reasonCls = reason === 'no_workers_available' ? 'err' :
-                        (reason === 'capability_fallback' ? 'warn' : 'ok');
+                        (reason === 'capability_fallback' ? 'warn' :
+                        (reason === 'retry_empty_text' ? 'warn' : 'ok'));
       const flags = [];
       if (d.affinity_missed) flags.push('<span class="fleet-badge warn">affinity-miss</span>');
       if (d.preempted_idle) flags.push('<span class="fleet-badge warn">preempted-idle</span>');
