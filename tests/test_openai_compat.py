@@ -68,6 +68,26 @@ class TestModelsEndpoint:
             # this window for any sane test run.
             assert 1577836800 <= model["created"] <= int(time.time()) + 3600
 
+    def test_models_sorted_by_id(self, client):
+        """Model entries returned in alphabetical order by id —
+        clients caching by index need stable ordering, and the
+        insertion-order semantics of config.list_agents() left them
+        at the mercy of however the agents dict happened to be
+        built. Alphabetical is deterministic and matches what most
+        clients sort to anyway."""
+        resp = client.get("/v1/models")
+        ids = [m["id"] for m in resp.json()["data"]]
+        assert ids == sorted(ids), ids
+
+    def test_models_deduped_by_id(self, client):
+        """If the primary model name collides with an agent profile
+        name, the response previously emitted two entries with the
+        same id — clients keyed by id saw one shadow the other
+        unpredictably. With de-dup, every id appears at most once."""
+        resp = client.get("/v1/models")
+        ids = [m["id"] for m in resp.json()["data"]]
+        assert len(ids) == len(set(ids)), ids
+
     def test_models_share_created_timestamp(self, client):
         """OpenAI returns the same `created` across all official
         models in a single response — it's a per-process constant,

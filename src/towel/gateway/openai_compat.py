@@ -679,21 +679,27 @@ def build_openai_routes(
         # behaviour where every "their" model shares its train-cutoff
         # constant).
         created = int(_OPENAI_MODELS_CREATED)
-        models = [
-            {
-                "id": config.model.name,
-                "object": "model",
-                "created": created,
-                "owned_by": "towel",
-            }
-        ]
-        for name, profile in config.list_agents().items():
+        # De-dup ids: if the primary model.name happens to match an
+        # agent profile name, the response previously contained two
+        # entries with the same id. Clients keyed by id would see
+        # one entry shadow the other unpredictably.
+        seen_ids: set[str] = set()
+        models: list[dict[str, Any]] = []
+        for mid in [config.model.name, *config.list_agents().keys()]:
+            if mid in seen_ids:
+                continue
+            seen_ids.add(mid)
             models.append({
-                "id": name,
+                "id": mid,
                 "object": "model",
                 "created": created,
                 "owned_by": "towel",
             })
+        # Sort by id for stable order. Clients caching by index were
+        # at the mercy of config.list_agents()'s insertion order;
+        # alphabetical order is deterministic and matches what
+        # OpenAI's response is for clients that sort anyway.
+        models.sort(key=lambda m: m["id"])
         return JSONResponse({"object": "list", "data": models})
 
     return [
