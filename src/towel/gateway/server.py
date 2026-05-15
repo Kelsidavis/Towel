@@ -1709,6 +1709,16 @@ class GatewayServer:
         total_tokens = 0
         last_metadata: dict[str, Any] = {"remote_worker": worker.id}
         remaining_text = ""
+        # Loop-detection state. Track the last few tool-call fingerprints;
+        # if the same (name, args) repeats too many times consecutively
+        # the worker is stuck — break out before we hit the
+        # MAX_TOOL_ITERATIONS cap, which on a 20s-per-call worker would
+        # take ~5 hours to reach. 3 identical calls in a row is a
+        # generous threshold (real tool loops occasionally repeat a
+        # lookup) without being so loose it lets the loop run wild.
+        last_call_fingerprints: list[str] = []
+        LOOP_REPEAT_LIMIT = 3
+        loop_detected = False
 
         for _ in range(MAX_TOOL_ITERATIONS):
             result = await self._remote_generate(
@@ -1758,6 +1768,30 @@ class GatewayServer:
             if remaining_text:
                 session.conversation.add(Role.ASSISTANT, remaining_text)
 
+            # Loop-detection: compute a fingerprint for this iteration's
+            # tool calls. When the same fingerprint appears LOOP_REPEAT_LIMIT
+            # times consecutively, the worker is stuck — break the loop
+            # so we don't burn hours of inference on a request a real
+            # model would have given up on in 2 iterations.
+            iter_fingerprint = json.dumps(
+                [(tc.name, tc.arguments) for tc in tool_calls],
+                sort_keys=True, default=str,
+            )
+            last_call_fingerprints.append(iter_fingerprint)
+            if len(last_call_fingerprints) > LOOP_REPEAT_LIMIT:
+                last_call_fingerprints.pop(0)
+            if (
+                len(last_call_fingerprints) == LOOP_REPEAT_LIMIT
+                and len(set(last_call_fingerprints)) == 1
+            ):
+                log.warning(
+                    "Tool-call loop detected on session %s (same call %r "
+                    "repeated %d times); breaking out",
+                    session_id, tool_calls[0].name, LOOP_REPEAT_LIMIT,
+                )
+                loop_detected = True
+                break
+
             for tc in tool_calls:
                 try:
                     tool_result = await self.agent.skills.execute_tool(tc.name, tc.arguments)
@@ -1776,6 +1810,19 @@ class GatewayServer:
                 )
 
         from towel.agent.conversation import Message
+
+        if loop_detected:
+            stuck_msg = (
+                f"I got stuck calling {tool_calls[0].name!r} repeatedly. "
+                "Stopping to avoid burning more time on this turn."
+            )
+            response = Message(
+                role=Role.ASSISTANT,
+                content=remaining_text + ("\n\n" + stuck_msg if remaining_text else stuck_msg),
+                metadata=last_metadata | {"tokens": total_tokens, "loop_detected": True},
+            )
+            session.conversation.messages.append(response)
+            return response
 
         response = Message(
             role=Role.ASSISTANT,

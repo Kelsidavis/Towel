@@ -362,6 +362,25 @@ class TestInferenceTimeoutConfig:
 
 
 class TestRemoteExecution:
+    def test_step_remote_inference_has_loop_detection(self):
+        """Source-level check that the agent-loop body contains the
+        loop-detection logic — a worker stuck calling the same tool
+        repeatedly would otherwise loop until MAX_TOOL_ITERATIONS =
+        999 (~5h on a 20s-per-call worker). Full end-to-end test
+        would need a real fake-worker process; this source check is
+        sufficient to guard against accidental removal."""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._step_remote_inference_inner)
+        # Loop-detection fingerprint, threshold, and break path.
+        assert "last_call_fingerprints" in src
+        assert "LOOP_REPEAT_LIMIT" in src
+        assert "loop_detected" in src
+        # The message returned on loop detection should explain itself.
+        assert "stuck" in src.lower() or "stopping" in src.lower()
+
     @pytest.mark.asyncio
     async def test_step_remote_inference_updates_session_from_worker_result(self, gateway):
         session = gateway.sessions.get_or_create("remote-step")
