@@ -594,6 +594,55 @@ class TestSimpleAskAPI:
             assert resp.status_code == 400, f"accepted bad session_id {bad!r}"
             assert "control" in resp.json()["error"].lower()
 
+    def test_ask_system_override_does_not_mutate_shared_config(self, gateway, client):
+        """The `system` field per request must NOT mutate
+        `self.config.identity` — that's shared mutable state and
+        concurrent /api/ask calls with different overrides would
+        race (req A's worker would see req B's identity). The
+        identity_override flows as a per-call kwarg now."""
+        from unittest.mock import AsyncMock
+        from towel.agent.conversation import Message, Role
+        from towel.gateway.workers import WorkerInfo
+
+        baseline_identity = gateway.config.identity
+
+        fake_worker = WorkerInfo(id="w1", ws=AsyncMock(), capabilities={})
+        gateway._workers._workers["w1"] = fake_worker
+
+        async def fake_route(message, session_id):
+            return fake_worker, "chat"
+
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        captured: dict = {}
+
+        async def fake_quick(
+            session_id, session, worker, max_tokens=256, **kwargs,
+        ):
+            captured["identity_override"] = kwargs.get("identity_override")
+            # Mid-call, the shared config.identity must still be the
+            # baseline — if it had been mutated, a parallel request
+            # would see the override.
+            captured["mid_call_config_identity"] = gateway.config.identity
+            return Message(
+                role=Role.ASSISTANT,
+                content="ok",
+                metadata={"remote_worker": "w1"},
+            )
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "hi", "session_id": "x", "system": "be terse"},
+        )
+        assert resp.status_code == 200
+        # Override was passed as a kwarg.
+        assert captured["identity_override"] == "be terse"
+        # Shared config was never touched.
+        assert captured["mid_call_config_identity"] == baseline_identity
+        assert gateway.config.identity == baseline_identity
+
     def test_ask_rejects_non_string_system(self, gateway, client):
         """`system` flows into `self.config.identity` for the
         request's lifetime. A non-string would either crash deeper
@@ -673,7 +722,9 @@ class TestSimpleAskAPI:
         # Second call: raises to simulate a crashed retry.
         call_log = []
 
-        async def fake_quick(session_id, session, worker, max_tokens=256):
+        async def fake_quick(
+            session_id, session, worker, max_tokens=256, **kwargs,
+        ):
             call_log.append(worker.id)
             if worker.id == "primary":
                 placeholder = Message(

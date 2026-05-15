@@ -891,6 +891,7 @@ class GatewayServer:
         worker: WorkerInfo,
         max_tokens: int = 256,
         temperature: float = 0.7,
+        identity_override: str | None = None,
     ) -> Any:
         """Lightweight inference on a worker — no tool loop, capped tokens.
 
@@ -926,8 +927,14 @@ class GatewayServer:
         # a bare yes/no question with no system instruction at all.
         # A one-line directive is plenty to unblock them without
         # adding meaningful tokens to the prompt.
+        # Per-request `identity_override` (e.g. /api/ask `system` field)
+        # wins over the coordinator's default. Without this parameter
+        # the override had to be applied by mutating self.config.identity
+        # before the call — which raced badly with concurrent /api/ask
+        # requests using different overrides.
         identity = (
-            getattr(self.config, "identity", "")
+            identity_override
+            or getattr(self.config, "identity", "")
             or "You are a helpful assistant. Answer concisely."
         )
         # Inject coordinator memory into the worker's system prompt
@@ -3721,18 +3728,21 @@ class GatewayServer:
             session.conversation.channel = "api"
             session.conversation.add(Role.USER, message)
 
-            # Temporary system prompt override
-            old_identity = self.config.identity
-            if system_override:
-                self.config.identity = system_override
-                self.agent.config = self.config
+            # Per-request identity override. Passed straight through
+            # to `_quick_remote_infer` rather than mutating
+            # `self.config.identity` — that approach raced badly with
+            # concurrent /api/ask calls using different overrides
+            # (req A's worker would see req B's `system` because the
+            # config field is shared mutable state).
+            identity_override = system_override or None
 
             try:
                 # Route through cluster workers when available
                 worker, intent = await self._route_by_role(message, session_id)
                 if worker and intent == "chat":
                     response = await self._quick_remote_infer(
-                        session_id, session, worker, max_tokens=256
+                        session_id, session, worker, max_tokens=256,
+                        identity_override=identity_override,
                     )
                     # When the chosen worker emitted no real text (small
                     # models like gemma-4-E2B routinely produce tool
@@ -3778,7 +3788,8 @@ class GatewayServer:
                                 popped = session.conversation.messages.pop()
                             try:
                                 retry_response = await self._quick_remote_infer(
-                                    session_id, session, alt, max_tokens=256
+                                    session_id, session, alt, max_tokens=256,
+                                    identity_override=identity_override,
                                 )
                             except Exception as retry_exc:
                                 # Retry crashed (timeout, worker DC, etc.).
@@ -3851,10 +3862,6 @@ class GatewayServer:
                 return JSONResponse(body)
             except Exception as e:
                 return JSONResponse({"error": str(e)}, status_code=500)
-            finally:
-                if system_override:
-                    self.config.identity = old_identity
-                    self.agent.config = self.config
 
         async def api_sessions(request: Request) -> JSONResponse:
             """GET /api/sessions — list active and stored sessions with tags."""
