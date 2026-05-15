@@ -987,6 +987,29 @@ class TestDispatchRecentEphemeralFilter:
         # "candidates ran but failed" in the operator UI.
         assert entry["candidates_considered"] == 0
 
+    def test_ws_ensemble_response_includes_contributions_for_parity(self):
+        """The WS ensemble response previously sent only `ensemble`,
+        `ensemble_arbitration`, and `remote_worker` in the metadata —
+        but /api/ask has carried `ensemble_contributions` since the
+        ensemble feature shipped. WS clients had no way to render
+        "Workers: A, B, C" the way HTTP-side UIs do.
+
+        Source-inspection test: the WS message handler must thread
+        `_contribs` into the response metadata under the
+        `ensemble_contributions` key. (A full WS round-trip would
+        need a websocket harness; this is the lighter equivalent.)"""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._handle_ws)
+        # The relevant metadata block builds in the ensemble short-
+        # circuit (search around the `if arbitrated:` branch).
+        assert '"ensemble_contributions": _contribs' in src, (
+            "WS ensemble path must include ensemble_contributions in "
+            "the response metadata (parity with /api/ask)."
+        )
+
     def test_verify_skipped_when_no_alternate_records_dispatch(
         self, gateway, client,
     ):

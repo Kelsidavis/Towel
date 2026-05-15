@@ -568,6 +568,18 @@ class GatewayServer:
                                     metadata={
                                         "ensemble": True,
                                         "ensemble_arbitration": arb_mode,
+                                        # Surface the per-worker
+                                        # contributions so WS clients
+                                        # can show which workers
+                                        # answered — parity with
+                                        # /api/ask, which has carried
+                                        # this field since the
+                                        # ensemble feature landed.
+                                        # Without it, WS UIs couldn't
+                                        # build the same "Workers:
+                                        # A, B, C" badge that the
+                                        # HTTP path supported.
+                                        "ensemble_contributions": _contribs,
                                         "remote_worker": "ensemble",
                                     },
                                 )
