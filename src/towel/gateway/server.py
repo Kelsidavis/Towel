@@ -1088,12 +1088,21 @@ class GatewayServer:
         if alt is None:
             return primary_answer, False, None
 
+        # uuid suffix so concurrent verify passes on the same
+        # user-facing session_id don't collide on the ephemeral
+        # `_verify_{session_id}` key. Same collision class fixed for
+        # ensemble. Without this, two concurrent /api/ask?verify=true
+        # requests on one session_id would share the verifier's
+        # session and corrupt each other's prompts.
+        import uuid as _uuid
+        verify_sess_id = f"_verify_{session_id}_{_uuid.uuid4().hex[:8]}"
+
         # Build a short conversation that's just the verification
         # prompt. We don't reuse the user's session — the verifier
         # gets a focused, single-turn ask.
         from towel.agent.conversation import Conversation, Role as _Role
 
-        verify_conv = Conversation(id=f"_verify_{session_id}")
+        verify_conv = Conversation(id=verify_sess_id)
         verify_conv.add(
             _Role.USER,
             (
@@ -1111,11 +1120,11 @@ class GatewayServer:
         from towel.gateway.sessions import Session as _Session
 
         verify_session = _Session(
-            id=f"_verify_{session_id}", conversation=verify_conv,
+            id=verify_sess_id, conversation=verify_conv,
         )
         try:
             verify_response = await self._quick_remote_infer(
-                f"_verify_{session_id}", verify_session, alt,
+                verify_sess_id, verify_session, alt,
                 max_tokens=512,
             )
         except Exception as exc:
@@ -1127,7 +1136,7 @@ class GatewayServer:
         # Clean up the ephemeral verifier session state — same
         # leak class fixed for OpenAI-compat in fffdc1e.
         try:
-            self.cleanup_ephemeral_session(f"_verify_{session_id}")
+            self.cleanup_ephemeral_session(verify_sess_id)
         except Exception:
             pass
 
@@ -1230,10 +1239,20 @@ class GatewayServer:
         if not candidates:
             return "", []
 
+        # uuid suffix so concurrent ensemble runs on the same
+        # user-facing session_id don't collide on the ephemeral
+        # `_ens_{session_id}_{worker_id}` key. Without this, two
+        # concurrent /api/ask?ensemble=true requests on the same
+        # session_id would both try to use the same per-worker
+        # ephemeral session, interleave their conversations, and
+        # corrupt each other's prompts.
+        import uuid as _uuid
+        run_id = _uuid.uuid4().hex[:8]
+
         async def _ask_one(worker: WorkerInfo) -> dict[str, Any]:
             """One-shot inference on a fresh ephemeral session."""
             import time as _time
-            sess_id = f"_ens_{session_id}_{worker.id}"
+            sess_id = f"_ens_{session_id}_{worker.id}_{run_id}"
             conv = Conversation(id=sess_id)
             # Clone the user's conversation so each worker sees prior
             # turns. Without this, multi-turn questions ("but make it

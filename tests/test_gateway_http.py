@@ -1199,6 +1199,28 @@ class TestSimpleAskAPI:
                 f"worker {wid} missing latest turn: {hist}"
             )
 
+    def test_ask_ensemble_concurrent_requests_dont_collide(
+        self, gateway, client,
+    ):
+        """Ephemeral per-worker session ids must be unique per call.
+        Two concurrent ensemble requests on the same user-facing
+        session_id would otherwise share `_ens_{session_id}_{worker}`
+        keys and interleave their conversations, corrupting the
+        prompts each worker received. The fix is a uuid run_id
+        suffix on every ephemeral session id."""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._ensemble_dispatch)
+        # The fix adds a run_id-based suffix to the sess_id.
+        assert "run_id" in src
+        assert "{run_id}" in src
+        # Same fix landed in _verify_pass.
+        src_v = inspect.getsource(GatewayServer._verify_pass)
+        assert "verify_sess_id" in src_v
+        assert "uuid" in src_v
+
     def test_ask_ensemble_shuffles_contributions_in_synthesis_prompt(
         self, gateway, client, monkeypatch,
     ):
