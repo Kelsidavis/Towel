@@ -594,6 +594,23 @@ class TestSimpleAskAPI:
             assert resp.status_code == 400, f"accepted bad session_id {bad!r}"
             assert "control" in resp.json()["error"].lower()
 
+    def test_ask_rejects_non_string_system(self, gateway, client):
+        """`system` flows into `self.config.identity` for the
+        request's lifetime. A non-string would either crash deeper
+        in the dispatch path or corrupt the identity until the
+        `finally` block restored it. Reject early."""
+        for bad in (42, [1, 2], {"x": 1}, True):
+            resp = client.post(
+                "/api/ask",
+                json={"message": "hi", "system": bad},
+            )
+            assert resp.status_code == 400, f"accepted system={bad!r}"
+            assert "system" in resp.json()["error"]
+        # Config identity must not have been touched.
+        # (No assertion on the value — it was whatever config initialized with —
+        # but it must still be a string.)
+        assert isinstance(gateway.config.identity, str)
+
     def test_ask_strips_session_id_whitespace(self, gateway, client):
         """`"  sid  "` and `"sid"` previously created two different
         in-memory sessions even though the on-disk filename sanitizer

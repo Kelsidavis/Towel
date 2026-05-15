@@ -3655,6 +3655,15 @@ class GatewayServer:
                     status_code=400,
                 )
             system_override = body.get("system")
+            # `system` is concatenated into the worker's system prompt
+            # via `self.config.identity = system_override`. A non-string
+            # value (number, list, dict) would either crash deeper in
+            # the dispatch path or corrupt the identity field until
+            # the `finally` restored it. Reject early.
+            if system_override is not None and not isinstance(system_override, str):
+                return JSONResponse(
+                    {"error": "system must be a string"}, status_code=400,
+                )
 
             session = self.sessions.get_or_create(session_id)
             session.conversation.channel = "api"
