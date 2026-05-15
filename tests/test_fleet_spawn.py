@@ -285,6 +285,22 @@ class TestWorkerSelfUpgrade:
             sent = json.loads(ws.send.call_args.args[0])
             assert sent["strategy"] == strategy
 
+    def test_non_string_strategy_no_longer_500s(self, gateway):
+        """A truthy non-string field (e.g. integer launcher_token,
+        list strategy) previously hit `(body.get(X) or "").strip()`
+        — `.strip()` on a non-str raised AttributeError, which
+        leaked as plaintext "Internal Server Error" HTTP 500. The
+        `_stripped_str` helper makes those coerce to default."""
+        self._register_worker(gateway, "host-z")
+        client = TestClient(gateway._build_http_app())
+        # strategy=42 → coerced to default "pip", then validated
+        resp = client.post(
+            "/workers/host-z/upgrade",
+            json={"strategy": 42},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["strategy"] == "pip"
+
     def test_non_dict_body_rejected(self, gateway):
         """A list/string body previously got silently coerced to `{}`
         and the upgrade proceeded with default strategy=pip. An

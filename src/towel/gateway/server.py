@@ -62,6 +62,20 @@ from towel.persistence.worker_state import WorkerStateStore
 log = logging.getLogger("towel.gateway")
 
 
+def _stripped_str(value: Any, default: str = "") -> str:
+    """Return ``value.strip()`` when ``value`` is a string, else ``default``.
+
+    Used by request handlers to defensively coerce a body field that's
+    supposed to be a string — the previous
+    ``(body.get(X) or "").strip()`` pattern crashed on a truthy
+    non-string (e.g. an integer or list), surfacing as
+    "Internal Server Error" HTTP 500 instead of a clean 400.
+    """
+    if isinstance(value, str):
+        return value.strip()
+    return default
+
+
 def _guess_model_param_b(name: str) -> float | None:
     """Pull a rough parameter count out of a model name.
 
@@ -2552,7 +2566,7 @@ class GatewayServer:
                 return JSONResponse(
                     {"error": "payload must be a JSON object"}, status_code=400
                 )
-            model = (body.get("model") or "").strip()
+            model = _stripped_str(body.get("model"))
             if not model:
                 return JSONResponse(
                     {"error": "model is required"}, status_code=400
@@ -2665,7 +2679,7 @@ class GatewayServer:
                 return JSONResponse(
                     {"error": "payload must be a JSON object"}, status_code=400
                 )
-            launcher_url = (body.get("launcher_url") or "").strip()
+            launcher_url = _stripped_str(body.get("launcher_url"))
             if not launcher_url:
                 return JSONResponse(
                     {"error": "launcher_url is required"}, status_code=400
@@ -2756,7 +2770,7 @@ class GatewayServer:
                 return JSONResponse(
                     {"error": "body must be a JSON object"}, status_code=400,
                 )
-            strategy = (body.get("strategy") or "pip").strip()
+            strategy = _stripped_str(body.get("strategy"), "pip")
             # Allowlist of upgrade strategies. Anything else gets
             # rejected with a clear error — the worker side dispatches
             # on this string and an unknown value would either no-op
@@ -2823,12 +2837,12 @@ class GatewayServer:
                 return JSONResponse(
                     {"error": "payload must be a JSON object"}, status_code=400
                 )
-            target_id = (body.get("target_worker_id") or "").strip()
+            target_id = _stripped_str(body.get("target_worker_id"))
             if not target_id:
                 return JSONResponse(
                     {"error": "target_worker_id is required"}, status_code=400
                 )
-            launcher_url = (body.get("launcher_url") or "").strip()
+            launcher_url = _stripped_str(body.get("launcher_url"))
             if not launcher_url:
                 return JSONResponse(
                     {"error": "launcher_url is required"}, status_code=400
@@ -2915,8 +2929,8 @@ class GatewayServer:
                         {"index": idx, "ok": False, "error": "target must be an object"}
                     )
                     continue
-                tid = (target.get("target_worker_id") or "").strip()
-                lurl = (target.get("launcher_url") or "").strip()
+                tid = _stripped_str(target.get("target_worker_id"))
+                lurl = _stripped_str(target.get("launcher_url"))
                 if not tid or not lurl:
                     results.append(
                         {
@@ -2993,7 +3007,7 @@ class GatewayServer:
                 return JSONResponse(
                     {"error": "payload must be a JSON object"}, status_code=400
                 )
-            launcher_url = (body.get("launcher_url") or "").strip()
+            launcher_url = _stripped_str(body.get("launcher_url"))
             if not launcher_url:
                 return JSONResponse(
                     {"error": "launcher_url is required"}, status_code=400
