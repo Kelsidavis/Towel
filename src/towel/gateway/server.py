@@ -3328,6 +3328,32 @@ class GatewayServer:
                 node_entry["assigned_tasks"] = [
                     str(t) for t in self._node_tasks.get(worker_id, [])
                 ]
+                # `quality_tier` rounds out the parity with /workers —
+                # the same low/medium/high bucket the dispatcher uses
+                # for task gating. Without it, the cluster panel had
+                # the hardware capabilities (vram, context) but not
+                # the derived "is this worker capable of CODE_REVIEW"
+                # tier, which is what operators actually want to see.
+                if worker is not None and worker.capabilities:
+                    node_entry["quality_tier"] = worker_quality_tier(
+                        worker.capabilities
+                    )
+                else:
+                    # Synthesize the caps the tier function needs from
+                    # the node-tracker entry — the field names differ
+                    # (resources.vram_total_mb here vs total_vram_mb in
+                    # worker.capabilities), so map them at the boundary
+                    # so stale tracker entries still get a meaningful
+                    # tier instead of "unknown".
+                    res = node_entry.get("resources") or {}
+                    synthetic_caps = {
+                        "total_vram_mb": res.get("vram_total_mb", 0),
+                        "context_window": node_entry.get("context_window", 0),
+                        "backend": node_entry.get("backend", ""),
+                    }
+                    node_entry["quality_tier"] = worker_quality_tier(
+                        synthetic_caps
+                    )
             return JSONResponse(data)
 
         async def dispatch_explain(request: Request) -> JSONResponse:

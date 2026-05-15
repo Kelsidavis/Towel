@@ -292,6 +292,65 @@ class TestClusterNodes:
         assert entry["roles"] == []
         assert entry["assigned_tasks"] == []
 
+    def test_cluster_nodes_includes_quality_tier(self, gateway, client):
+        """/cluster/nodes now surfaces the same low/medium/high
+        quality_tier /workers exposes — operators previously had to
+        eyeball total_vram_mb in resources and apply the bucketing
+        rule themselves. Tier is derived from the same dispatcher
+        signal so workers labelled `low` here won't surprise anyone
+        when they're filtered out of a CODE_REVIEW dispatch."""
+        from unittest.mock import MagicMock
+
+        # High tier: 16GB VRAM crosses the high threshold.
+        big_caps = {
+            "backend": "llama",
+            "modes": ["llama_chat"],
+            "total_vram_mb": 16000,
+            "context_window": 8192,
+        }
+        gateway._workers.register("big", MagicMock(), big_caps)
+        gateway._node_tracker.register("big", big_caps)
+
+        # Low tier: small VRAM, small context.
+        small_caps = {
+            "backend": "llama",
+            "modes": ["llama_chat"],
+            "total_vram_mb": 1024,
+            "context_window": 2048,
+        }
+        gateway._workers.register("tiny", MagicMock(), small_caps)
+        gateway._node_tracker.register("tiny", small_caps)
+
+        resp = client.get("/cluster/nodes")
+        nodes = resp.json()["nodes"]
+        assert nodes["big"]["quality_tier"] == "high"
+        assert nodes["tiny"]["quality_tier"] == "low"
+
+    def test_cluster_nodes_quality_tier_synthesizes_for_stale_entries(
+        self, gateway, client,
+    ):
+        """When the node tracker has an entry but the registry
+        doesn't (worker disconnected mid-session), we still want a
+        meaningful quality_tier. Synthesize it from the tracker's
+        own resources fields — the field names there differ from
+        WorkerInfo.capabilities (vram_total_mb vs total_vram_mb) so
+        map at the boundary."""
+        gateway._node_tracker.register(
+            "stale-big",
+            {
+                "backend": "llama",
+                "context_window": 8192,
+                "max_tokens": 4096,
+                "total_vram_mb": 24000,  # high tier
+            },
+        )
+        resp = client.get("/cluster/nodes")
+        entry = resp.json()["nodes"]["stale-big"]
+        # Without the synthesis the field would have been "unknown"
+        # or "low" — the tracker had the data, just under a different
+        # field name.
+        assert entry["quality_tier"] == "high"
+
 
 class TestWorkerStateEndpoint:
     def test_worker_state_update_sets_draining(self, gateway, client):
