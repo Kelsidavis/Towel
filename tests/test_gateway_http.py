@@ -471,6 +471,40 @@ class TestConversationsAPI:
         assert "text" in resp.json()["error"]
 
 
+class TestSearch:
+    """`/search` walks the conversation archive matching `?q=` against
+    every message. The gateway must keep nonsense queries out of the
+    expensive regex scan."""
+
+    def test_search_missing_q(self, client):
+        resp = client.get("/search")
+        assert resp.status_code == 400
+        assert "?q=" in resp.json()["error"]
+
+    def test_search_whitespace_only_q_rejected(self, store, client):
+        """`?q=  ` previously slipped through to ConversationStore.search
+        which compiled `re.escape("  ")` and matched essentially every
+        message containing two adjacent spaces. Whitespace-only is
+        functionally a "missing query"."""
+        # Seed a conversation so a permissive regex would match it.
+        conv = Conversation(id="match-all")
+        conv.add(Role.USER, "hello  world")  # two spaces inside the text
+        store.save(conv)
+
+        # The test client's URL parser doesn't accept raw whitespace,
+        # so encode each test case manually. The handler still sees
+        # the decoded string after Starlette parses the query string.
+        for encoded in ("%20%20", "%09", "%20%0a%20"):
+            resp = client.get(f"/search?q={encoded}")
+            assert resp.status_code == 400, f"accepted q={encoded!r}"
+            assert "?q=" in resp.json()["error"]
+
+    def test_search_bad_limit(self, client):
+        resp = client.get("/search?q=hello&limit=junk")
+        assert resp.status_code == 400
+        assert "limit" in resp.json()["error"]
+
+
 class TestSimpleAskAPI:
     def test_ask_missing_message(self, client):
         resp = client.post("/api/ask", json={})

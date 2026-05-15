@@ -3358,6 +3358,12 @@ class GatewayServer:
 
         async def search_conversations(request: Request) -> JSONResponse:
             query = request.query_params.get("q", "")
+            # Strip first, then check — whitespace-only `q` (e.g.
+            # `?q=%20%20`) used to flow into the store's regex builder
+            # as `re.escape("  ")` which matches any string containing
+            # two adjacent spaces, returning essentially every message
+            # in the archive. Treat whitespace-only as "missing query".
+            query = query.strip()
             if not query:
                 return JSONResponse({"error": "Missing ?q= parameter"}, status_code=400)
             # Sanitize limit: int() raises on non-numeric, and an
