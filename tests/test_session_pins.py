@@ -21,6 +21,34 @@ class TestSessionPinStore:
 
         assert store.load() == {}
 
+    def test_save_is_atomic(self, tmp_path, monkeypatch):
+        """A kill or disk-full mid-write must not corrupt the on-disk
+        file — the previous pins must still load cleanly. Achieved by
+        writing to a .tmp sibling then renaming."""
+        pins_path = tmp_path / "pins.json"
+        store = SessionPinStore(path=pins_path)
+        store.save({"sess-a": "worker-1"})
+        assert store.load() == {"sess-a": "worker-1"}
+
+        # Simulate a failure between the write and the rename.
+        from pathlib import Path
+        original_replace = Path.replace
+
+        def failing_replace(self, target):
+            raise OSError("simulated disk-full at rename time")
+
+        monkeypatch.setattr(Path, "replace", failing_replace)
+        try:
+            store.save({"sess-a": "worker-1", "sess-b": "worker-2"})
+        except OSError:
+            pass
+        finally:
+            monkeypatch.setattr(Path, "replace", original_replace)
+
+        # The original file must be intact — half-written state in
+        # the .tmp sibling is fine because load() ignores it.
+        assert store.load() == {"sess-a": "worker-1"}
+
 
 class TestGatewayPinPersistence:
     def test_gateway_loads_persisted_pins(self, tmp_path):

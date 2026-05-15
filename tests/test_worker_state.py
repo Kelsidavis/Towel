@@ -30,6 +30,43 @@ class TestWorkerStateStore:
 
         assert store.load() == {}
 
+    def test_save_is_atomic(self, tmp_path, monkeypatch):
+        """A kill / disk-full mid-write must not destroy the existing
+        on-disk state — the previous enabled / draining / tasks
+        overrides must still load. Same atomic-rename pattern as
+        SessionPinStore (and memory/store.py per 5512834)."""
+        state_path = tmp_path / "worker_state.json"
+        store = WorkerStateStore(path=state_path)
+        store.save({"worker-a": {"enabled": False, "draining": False}})
+        assert store.load() == {
+            "worker-a": {"enabled": False, "draining": False},
+        }
+
+        from pathlib import Path
+        original_replace = Path.replace
+
+        def failing_replace(self, target):
+            raise OSError("simulated disk-full at rename time")
+
+        monkeypatch.setattr(Path, "replace", failing_replace)
+        try:
+            store.save(
+                {
+                    "worker-a": {"enabled": True, "draining": True},
+                    "worker-b": {"enabled": True, "draining": False},
+                }
+            )
+        except OSError:
+            pass
+        finally:
+            monkeypatch.setattr(Path, "replace", original_replace)
+
+        # The original file must remain readable with the previous
+        # state.
+        assert store.load() == {
+            "worker-a": {"enabled": False, "draining": False},
+        }
+
 
 class TestGatewayWorkerStatePersistence:
     def test_gateway_loads_persisted_worker_state_on_register(self, tmp_path):

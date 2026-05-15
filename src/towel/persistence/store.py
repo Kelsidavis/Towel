@@ -35,10 +35,21 @@ class ConversationStore:
         return self.store_dir / f"{safe_id}.json"
 
     def save(self, conversation: Conversation) -> Path:
-        """Save a conversation to disk. Returns the file path."""
+        """Save a conversation to disk. Returns the file path.
+
+        Atomic write: dumps to a sibling .tmp then renames. Without
+        this, a kill / disk-full mid-write leaves a half-written
+        JSON that load() rejects with JSONDecodeError — the
+        conversation then appears empty / missing on next read.
+        Same pattern memory/store.py adopted in 5512834.
+        """
         path = self._path_for(conversation.id)
         data = conversation.to_dict()
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8",
+        )
+        tmp.replace(path)
         log.debug(f"Saved conversation {conversation.id} ({len(conversation)} messages)")
         return path
 

@@ -129,6 +129,40 @@ class TestConversationStore:
         assert loaded is not None
         assert len(loaded) == 4  # original 3 + 1
 
+    def test_save_is_atomic(self, store, monkeypatch):
+        """A crash mid-write must not corrupt an existing conversation
+        file — the previous version must still load. Pattern matches
+        memory/store.py's atomic _save_all (commit 5512834)."""
+        conv = _make_conversation("atomic-roundtrip")
+        store.save(conv)
+        # Sanity: file readable with 3 messages.
+        loaded = store.load("atomic-roundtrip")
+        assert loaded is not None
+        assert len(loaded) == 3
+
+        # Mutate the in-memory conv then fake a crash mid-save.
+        conv.add(Role.USER, "would corrupt the file")
+
+        from pathlib import Path
+        original_replace = Path.replace
+
+        def failing_replace(self, target):
+            raise OSError("simulated disk-full at rename time")
+
+        monkeypatch.setattr(Path, "replace", failing_replace)
+        try:
+            store.save(conv)
+        except OSError:
+            pass
+        finally:
+            monkeypatch.setattr(Path, "replace", original_replace)
+
+        # The on-disk file must still contain the 3-message version,
+        # not a half-written 4-message blob.
+        loaded = store.load("atomic-roundtrip")
+        assert loaded is not None
+        assert len(loaded) == 3
+
     def test_path_traversal_sanitized(self, store):
         conv = _make_conversation("../../etc/passwd")
         path = store.save(conv)

@@ -52,5 +52,17 @@ class WorkerStateStore:
         return result
 
     def save(self, states: dict[str, dict[str, Any]]) -> None:
-        """Persist the full worker-state mapping."""
-        self.path.write_text(json.dumps(states, indent=2, sort_keys=True), encoding="utf-8")
+        """Persist the full worker-state mapping.
+
+        Atomic write: dumps to a sibling .tmp then renames. Without
+        this, a kill / disk-full mid-write leaves a half-written
+        state file that load() classifies as corrupt and replaces
+        with {}, silently losing every enabled / draining / tasks
+        override the operator set. Same pattern memory/store.py
+        adopted in 5512834.
+        """
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        tmp.write_text(
+            json.dumps(states, indent=2, sort_keys=True), encoding="utf-8",
+        )
+        tmp.replace(self.path)

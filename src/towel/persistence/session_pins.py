@@ -34,5 +34,16 @@ class SessionPinStore:
         }
 
     def save(self, pins: dict[str, str]) -> None:
-        """Persist the full pin mapping."""
-        self.path.write_text(json.dumps(pins, indent=2, sort_keys=True), encoding="utf-8")
+        """Persist the full pin mapping.
+
+        Atomic write: dumps to a sibling .tmp then renames. Without
+        this, a kill / disk-full mid-write leaves a half-written
+        pins file that load() classifies as corrupt and replaces
+        with {}, silently losing every operator-set pin. Same
+        pattern memory/store.py adopted in 5512834.
+        """
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        tmp.write_text(
+            json.dumps(pins, indent=2, sort_keys=True), encoding="utf-8",
+        )
+        tmp.replace(self.path)
