@@ -684,12 +684,32 @@ def build_openai_routes(
                         towel_meta["primary_worker"] = meta.get(
                             "primary_worker", meta.get("remote_worker", "")
                         )
+                    elif verify_raw:
+                        # verify=true was requested but no verifier
+                        # ran. Mirror the /api/ask response shape so
+                        # OpenAI-compat clients also see the skip
+                        # signal in the towel-namespaced block.
+                        towel_meta["verify_skipped"] = True
+                        towel_meta["verify_skip_reason"] = (
+                            "primary returned no usable text; nothing to verify"
+                            if meta.get("empty_text_fallback")
+                            or meta.get("dual_empty_text")
+                            else "no alternate worker available"
+                        )
                     if meta.get("ensemble"):
                         towel_meta["ensemble"] = True
                         if meta.get("ensemble_arbitration"):
                             towel_meta["ensemble_arbitration"] = (
                                 meta["ensemble_arbitration"]
                             )
+                    elif ensemble_raw and not meta.get("verified_by"):
+                        # ensemble=true requested but fell through —
+                        # the response metadata won't have `ensemble`
+                        # unless arbitration produced a real answer.
+                        # The skip-reason detail isn't reachable from
+                        # this scope (the inner contributions list
+                        # was thrown away), so emit the bare flag.
+                        towel_meta["ensemble_skipped"] = True
                     if meta.get("fallback_from_worker"):
                         towel_meta["fallback_from_worker"] = (
                             meta["fallback_from_worker"]
@@ -697,6 +717,10 @@ def build_openai_routes(
                         towel_meta["fallback_reason"] = meta.get(
                             "fallback_reason", ""
                         )
+                    if meta.get("dual_empty_text"):
+                        towel_meta["dual_empty_text"] = True
+                        if meta.get("alt_worker"):
+                            towel_meta["alt_worker"] = meta["alt_worker"]
                     if towel_meta:
                         completion["towel"] = towel_meta
                     return JSONResponse(completion)
