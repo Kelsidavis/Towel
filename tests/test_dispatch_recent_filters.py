@@ -129,6 +129,42 @@ class TestDispatchRecentFilters:
         assert len(resp["decisions"]) == 1
         assert resp["decisions"][0]["affinity_missed"] is True
 
+    def test_only_pin_missed(self, gateway):
+        """The pin_missed filter surfaces decisions where the session
+        had an explicit pin that was silently bypassed (busy /
+        draining / disabled worker at dispatch time). Without this an
+        operator had no fast way to ask "where are my pins being
+        ignored?"; the bypassed decision looked like a normal route."""
+        assert gateway._dispatcher is not None
+        # Two decisions: one with a bypassed pin, one without.
+        gateway._dispatcher._record(
+            DispatchDecision(
+                worker=_stub_worker("free-host"),
+                intent="chat",
+                reason="role_match",
+                session_id="sess-pin",
+                candidates_considered=1,
+                pin_missed=True,
+                pinned_worker_id="busy-host",
+            )
+        )
+        gateway._dispatcher._record(
+            DispatchDecision(
+                worker=_stub_worker("other-host"),
+                intent="chat",
+                reason="role_match",
+                session_id="sess-no-pin",
+                candidates_considered=1,
+            )
+        )
+        client = TestClient(gateway._build_http_app())
+        resp = client.get("/dispatch/recent?only_pin_missed=1").json()
+        assert len(resp["decisions"]) == 1
+        entry = resp["decisions"][0]
+        assert entry["pin_missed"] is True
+        assert entry["pinned_worker_id"] == "busy-host"
+        assert entry["session_id"] == "sess-pin"
+
     def test_combined_filters(self, gateway):
         _seed_decisions(gateway)
         client = TestClient(gateway._build_http_app())

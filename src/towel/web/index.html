@@ -731,6 +731,15 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       if (d.affinity_missed) flags.push('<span class="fleet-badge warn">affinity-miss</span>');
       if (d.preempted_idle) flags.push('<span class="fleet-badge warn">preempted-idle</span>');
       if (d.quality_degraded) flags.push('<span class="fleet-badge err">quality-degraded</span>');
+      // pin_missed = operator pinned the session but the pinned
+      // worker was busy/draining/disabled, so the dispatcher
+      // silently routed elsewhere. Surface this so operators can
+      // spot "my pin is being ignored" without diffing the
+      // pinned_worker_id against the picked worker manually.
+      if (d.pin_missed) {
+        const pinned = d.pinned_worker_id ? ' (' + escHtml(d.pinned_worker_id) + ')' : '';
+        flags.push('<span class="fleet-badge err">pin-miss' + pinned + '</span>');
+      }
       const prev = d.previous_worker_id
         ? '<span> (from ' + escHtml(d.previous_worker_id) + ')</span>'
         : '';

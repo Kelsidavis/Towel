@@ -3387,6 +3387,7 @@ class GatewayServer:
               ``?session=<id>``        — only decisions for this session
               ``?only_degraded=1``     — only quality_degraded decisions
               ``?only_affinity_missed=1`` — only affinity_missed decisions
+              ``?only_pin_missed=1``   — only pin_missed decisions
               ``?limit=N``             — cap the response (default 20)
 
             Filters apply *before* the limit so a tight limit doesn't hide
@@ -3401,6 +3402,13 @@ class GatewayServer:
             session_filter = request.query_params.get("session")
             only_degraded = request.query_params.get("only_degraded") in {"1", "true"}
             only_affinity_missed = request.query_params.get("only_affinity_missed") in {"1", "true"}
+            # `only_pin_missed=1` surfaces decisions where the
+            # session had an explicit pin but it was silently
+            # bypassed (pinned worker was busy/draining/disabled).
+            # Without this filter operators had no fast way to spot
+            # "my pin is being ignored" — the bypassed decision
+            # looked like a normal route in the log.
+            only_pin_missed = request.query_params.get("only_pin_missed") in {"1", "true"}
 
             assert self._dispatcher is not None
             entries = [d.to_dict() for d in self._dispatcher.history()]
@@ -3430,6 +3438,8 @@ class GatewayServer:
                 entries = [e for e in entries if e.get("quality_degraded")]
             if only_affinity_missed:
                 entries = [e for e in entries if e.get("affinity_missed")]
+            if only_pin_missed:
+                entries = [e for e in entries if e.get("pin_missed")]
 
             # Log freshness: oldest-entry age + cap occupancy so the
             # UI can warn when the operator is looking at a saturated

@@ -137,6 +137,37 @@ class TestSelectionLayers:
         # Pin is unusable, so we fall through to a role-matching worker.
         assert decision.worker is not None
         assert decision.worker.id == "free_one"
+        # Fall-through must surface that the pin was bypassed so
+        # operators can see in /dispatch/recent that their explicit
+        # preference was ignored. Without this, the decision looked
+        # identical to a normal role-match route and the operator had
+        # no fast way to spot "my pin isn't taking effect".
+        assert decision.pin_missed is True
+        assert decision.pinned_worker_id == "pinned_busy"
+
+    def test_pin_hit_does_not_set_pin_missed(self):
+        """When the pin actually fires, pin_missed must stay False —
+        the flag specifically means "pin was set and bypassed". A
+        successful pinned dispatch is the happy path."""
+        workers = WorkerRegistry()
+        _make_worker(workers, "pinned_one")
+        d = _make_dispatcher(workers, session_pins={"s1": "pinned_one"})
+        decision = d.select_for_session("s1")
+        assert decision.reason == REASON_PINNED
+        assert decision.pin_missed is False
+
+    def test_no_pin_set_does_not_set_pin_missed(self):
+        """Sessions with no pin at all must not surface a `pin_missed`
+        flag — that would confuse operators who never pinned anything."""
+        workers = WorkerRegistry()
+        _make_worker(workers, "free_one")
+        d = _make_dispatcher(
+            workers,
+            roles={"free_one": [NodeRole.INFERENCE]},
+        )
+        decision = d.select_for_session("s1", intent="chat")
+        assert decision.pin_missed is False
+        assert decision.pinned_worker_id is None
 
     def test_task_type_match_preferred_when_assigned(self):
         workers = WorkerRegistry()

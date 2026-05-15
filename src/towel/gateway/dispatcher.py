@@ -99,6 +99,15 @@ class DispatchDecision:
     # ``/dispatch/recent`` for these to spot a thrashing session.
     affinity_missed: bool = False
     previous_worker_id: str | None = None
+    # True when the session had an EXPLICIT pin (`POST
+    # /sessions/<id>/pin-worker`) but the pinned worker was busy /
+    # draining / disabled at dispatch time, forcing the dispatcher to
+    # silently route elsewhere. The pin is an operator-set preference;
+    # without this flag a bypassed pin looked identical to a normal
+    # task-match decision and the operator had no way to see that
+    # their pin was being ignored.
+    pin_missed: bool = False
+    pinned_worker_id: str | None = None
     # True when the selected worker doesn't meet the task's declared
     # ``min_vram_mb`` / ``min_context`` minimums — the coordinator had to
     # adapt to the fleet it has rather than refuse, but operators should
@@ -140,6 +149,8 @@ class DispatchDecision:
             "affinity_missed": self.affinity_missed,
             "previous_worker_id": self.previous_worker_id,
             "quality_degraded": self.quality_degraded,
+            "pin_missed": self.pin_missed,
+            "pinned_worker_id": self.pinned_worker_id,
         }
         if self.ttft_ms is not None:
             out["ttft_ms"] = round(self.ttft_ms, 1)
@@ -416,6 +427,7 @@ class Dispatcher:
     ) -> DispatchDecision:
         # Layer 1: explicit pin
         pinned_id = self._session_pins.get(session_id)
+        pin_missed = False
         if pinned_id and pinned_id not in excluded:
             worker = self._workers.get(pinned_id)
             if worker and worker.enabled and not worker.busy and not worker.draining:
@@ -426,7 +438,14 @@ class Dispatcher:
                     notes=f"session pinned to worker {pinned_id}",
                     candidates_considered=1,
                     session_id=session_id,
+                    pinned_worker_id=pinned_id,
                 )
+            # Pin set but unusable — surface as `pin_missed` on the
+            # downstream decision so operators can see in
+            # /dispatch/recent that their pin was silently bypassed
+            # (busy/draining/disabled at dispatch time). Without this
+            # the bypass looked identical to a normal route.
+            pin_missed = True
 
         # Layer 2: session affinity
         affinity_id = self._session_workers.get(session_id)
@@ -444,6 +463,8 @@ class Dispatcher:
                         candidates_considered=1,
                         session_id=session_id,
                         previous_worker_id=affinity_id,
+                        pin_missed=pin_missed,
+                        pinned_worker_id=pinned_id if pin_missed else None,
                     )
                 # Worker is reachable but doesn't currently hold the context;
                 # falling through means a cold transfer — flag it as a miss.
@@ -470,6 +491,8 @@ class Dispatcher:
                     affinity_missed=affinity_missed,
                     previous_worker_id=affinity_id if affinity_missed else None,
                     quality_degraded=degraded,
+                    pin_missed=pin_missed,
+                    pinned_worker_id=pinned_id if pin_missed else None,
                 )
 
         # Layer 4: role match for the request intent
@@ -490,6 +513,8 @@ class Dispatcher:
                     affinity_missed=affinity_missed,
                     previous_worker_id=affinity_id if affinity_missed else None,
                     quality_degraded=degraded,
+                    pin_missed=pin_missed,
+                    pinned_worker_id=pinned_id if pin_missed else None,
                 )
 
         # Try the GENERAL role before falling all the way through to "any
@@ -507,6 +532,8 @@ class Dispatcher:
                 session_id=session_id,
                 affinity_missed=affinity_missed,
                 previous_worker_id=affinity_id if affinity_missed else None,
+                pin_missed=pin_missed,
+                pinned_worker_id=pinned_id if pin_missed else None,
             )
 
         # Layer 5: capability fallback — any idle, non-draining worker.
@@ -525,6 +552,8 @@ class Dispatcher:
                 affinity_missed=affinity_missed,
                 previous_worker_id=affinity_id if affinity_missed else None,
                 quality_degraded=degraded,
+                pin_missed=pin_missed,
+                pinned_worker_id=pinned_id if pin_missed else None,
             )
 
         # Layer 7 (preempt is layer 6, handled by caller in async variant)
@@ -538,6 +567,8 @@ class Dispatcher:
             session_id=session_id,
             affinity_missed=affinity_missed,
             previous_worker_id=affinity_id if affinity_missed else None,
+            pin_missed=pin_missed,
+            pinned_worker_id=pinned_id if pin_missed else None,
         )
 
     # ─── Selection helpers ───────────────────────────────────────────────
