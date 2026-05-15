@@ -2146,6 +2146,63 @@ class GatewayServer:
         # No worker → coordinator handles the request locally.
         return None, decision.intent
 
+    async def dispatch_role_task(
+        self,
+        role: str,
+        role_system: str,
+        prompt: str,
+        *,
+        session_id: str,
+        max_tokens: int = 2048,
+        temperature: float = 0.4,
+    ) -> str:
+        """Dispatch a single orchestrator subtask to the best-fit worker.
+
+        Implements the :class:`towel.agent.orchestrator.RoleDispatcher`
+        protocol so the orchestrator can fan subtasks across the fleet
+        instead of running them all on the local coordinator. Each call
+        gets a fresh session — the orchestrator passes per-subtask
+        ``session_id`` values, which prevents role-affinity bleed across
+        unrelated subtasks.
+
+        Returns the worker's response text; raises if the worker errors
+        or returns nothing usable. The caller (the orchestrator) catches
+        and converts the exception into a failed-task status, so the
+        rest of the orchestration can continue on the remaining tasks.
+        """
+        from towel.agent.conversation import Role as _Role
+        session = self.sessions.get_or_create(session_id)
+        # Append the role-task prompt as a user message so
+        # _quick_remote_infer's message-list construction includes it.
+        # Re-using the session machinery (vs. a one-shot infer payload)
+        # keeps memory injection, context tracking, and dispatch
+        # bookkeeping consistent with the /api/ask flow.
+        session.conversation.add(_Role.USER, prompt)
+
+        worker, _intent = await self._route_by_role(prompt, session_id)
+        if worker is None:
+            # Coordinator-local fallback isn't useful for orchestration —
+            # the whole point is fan-out across the fleet. Raise so the
+            # orchestrator can mark this subtask failed and the operator
+            # sees a clear "no worker" signal in the result summary.
+            raise RuntimeError(
+                f"no worker available for role={role} (session={session_id})"
+            )
+        response = await self._quick_remote_infer(
+            session_id,
+            session,
+            worker,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            identity_override=role_system,
+        )
+        text = getattr(response, "content", "") or ""
+        if not text:
+            raise RuntimeError(
+                f"worker {worker.id} returned empty response for role={role}"
+            )
+        return text
+
     async def _quick_remote_infer(
         self,
         session_id: str,
@@ -6788,6 +6845,155 @@ class GatewayServer:
                     )
                 return JSONResponse({"error": _err_str(e)}, status_code=500)
 
+        async def api_orchestrate(request: Request) -> JSONResponse:
+            """POST /api/orchestrate — multi-worker piecemeal coordination.
+
+            Body::
+
+                {
+                  "goal": "...",          // required, the overall objective
+                  "tasks": [              // required, 1..32 entries
+                    {
+                      "role": "architect",          // see ROLE_PROMPTS
+                      "prompt": "...",              // what this subtask does
+                      "depends_on": [0, 1]          // optional, indices into tasks
+                    },
+                    ...
+                  ],
+                  "parallel": false       // optional, run independent tasks together
+                }
+
+            Each subtask is dispatched to the best-fit worker via the
+            normal routing pipeline. With ``parallel=true`` independent
+            subtasks fan out across the fleet simultaneously — the
+            whole point of the system. Returns per-task results plus a
+            synthesis.
+            """
+            from towel.agent.orchestrator import (
+                ROLE_PROMPTS,
+                AgentTask,
+                Orchestrator,
+            )
+
+            try:
+                body = await request.json()
+            except Exception:
+                return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+            if not isinstance(body, dict):
+                return JSONResponse(
+                    {"error": "body must be a JSON object"}, status_code=400,
+                )
+
+            goal = body.get("goal", "")
+            if not isinstance(goal, str) or not goal.strip():
+                return JSONResponse({"error": "goal is required"}, status_code=400)
+            goal = goal.strip()
+
+            raw_tasks = body.get("tasks")
+            if not isinstance(raw_tasks, list) or not raw_tasks:
+                return JSONResponse(
+                    {"error": "tasks must be a non-empty list"}, status_code=400,
+                )
+            # Cap at 32 to prevent a single request from monopolizing
+            # the fleet — orchestrations beyond that scale should be
+            # split into multiple /api/orchestrate calls.
+            if len(raw_tasks) > 32:
+                return JSONResponse(
+                    {"error": "tasks list must have 32 entries or fewer"},
+                    status_code=400,
+                )
+
+            tasks: list[AgentTask] = []
+            for i, raw in enumerate(raw_tasks):
+                if not isinstance(raw, dict):
+                    return JSONResponse(
+                        {"error": f"tasks[{i}] must be an object"},
+                        status_code=400,
+                    )
+                role = raw.get("role", "default")
+                if not isinstance(role, str) or not role:
+                    return JSONResponse(
+                        {"error": f"tasks[{i}].role must be a non-empty string"},
+                        status_code=400,
+                    )
+                # Reject unknown roles loudly — silently falling back
+                # to "default" hides typos like "codr" that would
+                # otherwise produce confusingly generic output.
+                if role not in ROLE_PROMPTS:
+                    known = sorted(ROLE_PROMPTS.keys())
+                    return JSONResponse(
+                        {"error": (
+                            f"tasks[{i}].role={role!r} is unknown; "
+                            f"valid roles: {known}"
+                        )},
+                        status_code=400,
+                    )
+                prompt = raw.get("prompt", "")
+                if not isinstance(prompt, str) or not prompt.strip():
+                    return JSONResponse(
+                        {"error": f"tasks[{i}].prompt is required"},
+                        status_code=400,
+                    )
+                deps_raw = raw.get("depends_on") or []
+                if not isinstance(deps_raw, list):
+                    return JSONResponse(
+                        {"error": f"tasks[{i}].depends_on must be a list"},
+                        status_code=400,
+                    )
+                deps: list[int] = []
+                for d in deps_raw:
+                    if not isinstance(d, int) or d < 0 or d >= len(raw_tasks):
+                        return JSONResponse(
+                            {"error": (
+                                f"tasks[{i}].depends_on contains invalid index "
+                                f"{d!r} (must be int in [0, {len(raw_tasks) - 1}])"
+                            )},
+                            status_code=400,
+                        )
+                    deps.append(d)
+                tasks.append(AgentTask(
+                    role=role,
+                    prompt=prompt.strip(),
+                    depends_on=deps,
+                ))
+
+            parallel = bool(body.get("parallel", False))
+
+            orch = Orchestrator(
+                config=self.config,
+                skills=getattr(self.agent, "skills", None),
+                memory=getattr(self.agent, "memory", None),
+                dispatcher=self,
+            )
+            try:
+                if parallel:
+                    result = await orch.run_parallel(goal, tasks)
+                else:
+                    result = await orch.run(goal, tasks)
+            except Exception as exc:
+                log.exception("orchestrator run failed: %s", exc)
+                return JSONResponse(
+                    {"error": _err_str(exc)}, status_code=500,
+                )
+
+            return JSONResponse({
+                "goal": goal,
+                "success": result.success,
+                "total_elapsed_ms": round(result.total_elapsed * 1000.0, 1),
+                "synthesis": result.synthesis,
+                "tasks": [
+                    {
+                        "role": t.role,
+                        "prompt": t.prompt,
+                        "depends_on": t.depends_on,
+                        "status": t.status,
+                        "elapsed_ms": round(t.elapsed * 1000.0, 1),
+                        "result": t.result,
+                    }
+                    for t in result.tasks
+                ],
+            })
+
         async def api_sessions(request: Request) -> JSONResponse:
             """GET /api/sessions — list active and stored sessions with tags.
 
@@ -6956,6 +7162,7 @@ class GatewayServer:
             Route("/search", search_conversations),
             Route("/admin/restart", admin_restart, methods=["POST"]),
             Route("/api/ask", simple_ask, methods=["POST"]),
+            Route("/api/orchestrate", api_orchestrate, methods=["POST"]),
             Route("/api/sessions", api_sessions, methods=["GET"]),
             *openai_routes,
             *sse_routes,

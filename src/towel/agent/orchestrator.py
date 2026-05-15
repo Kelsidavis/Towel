@@ -19,12 +19,36 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from towel.agent.conversation import Conversation, Role
 from towel.config import TowelConfig
 
 log = logging.getLogger("towel.agent.orchestrator")
+
+
+class RoleDispatcher(Protocol):
+    """Protocol the Orchestrator uses to dispatch a single role task.
+
+    Implemented by the gateway server so each orchestrator subtask can land
+    on the best-fit remote worker (per `_route_by_role`) instead of running
+    locally on the coordinator. Defined as a Protocol so the agent package
+    stays free of a hard dependency on the gateway package — that
+    direction would create a circular import (gateway → orchestrator →
+    gateway).
+    """
+
+    async def dispatch_role_task(
+        self,
+        role: str,
+        role_system: str,
+        prompt: str,
+        *,
+        session_id: str,
+        max_tokens: int,
+        temperature: float,
+    ) -> str:
+        ...
 
 
 @dataclass
@@ -111,12 +135,26 @@ ROLE_PROMPTS: dict[str, str] = {
 
 
 class Orchestrator:
-    """Coordinates multiple specialist agents on a complex task."""
+    """Coordinates multiple specialist agents on a complex task.
 
-    def __init__(self, config: TowelConfig, skills: Any = None, memory: Any = None) -> None:
+    With `dispatcher` set, each role's subtask is dispatched to the best-fit
+    remote worker via the gateway's routing pipeline — so a "coder" subtask
+    can land on the bigger worker while a "writer" subtask runs in parallel
+    on a smaller one. Without `dispatcher`, falls back to a local
+    AgentRuntime per subtask (useful for tests and single-node setups).
+    """
+
+    def __init__(
+        self,
+        config: TowelConfig,
+        skills: Any = None,
+        memory: Any = None,
+        dispatcher: RoleDispatcher | None = None,
+    ) -> None:
         self.config = config
         self.skills = skills
         self.memory = memory
+        self.dispatcher = dispatcher
 
     async def run(self, goal: str, tasks: list[AgentTask]) -> OrchestratorResult:
         """Execute a sequence of agent tasks, respecting dependencies."""
@@ -200,14 +238,36 @@ class Orchestrator:
         return result
 
     async def _run_agent(self, role: str, prompt: str) -> str:
-        """Run a single agent step with role-specific system prompt."""
-        # Create a temporary config with role-specific identity
+        """Run a single agent step with role-specific system prompt.
+
+        Uses the configured remote dispatcher when present so each role's
+        subtask can land on the best-fit worker; otherwise falls back to
+        a local AgentRuntime.
+        """
+        role_system = ROLE_PROMPTS.get(role, ROLE_PROMPTS["default"])
+
+        if self.dispatcher is not None:
+            # Per-subtask session keeps role contexts isolated — a coder
+            # subtask shouldn't reuse the writer's affinity-pinned worker.
+            import uuid
+            session_id = f"orch-{role}-{uuid.uuid4().hex[:8]}"
+            return await self.dispatcher.dispatch_role_task(
+                role,
+                role_system,
+                prompt,
+                session_id=session_id,
+                max_tokens=2048,
+                temperature=0.4,
+            )
+
+        # Local fallback: spin up a coordinator-side AgentRuntime with
+        # the role's identity. Used by tests and single-node deployments.
         import copy
 
         from towel.agent.runtime import AgentRuntime
 
         agent_config = copy.deepcopy(self.config)
-        agent_config.identity = ROLE_PROMPTS.get(role, ROLE_PROMPTS["default"])
+        agent_config.identity = role_system
 
         runtime = AgentRuntime(agent_config, skills=self.skills, memory=self.memory)
         conv = Conversation(channel=f"orchestrator:{role}")

@@ -62,6 +62,122 @@ class TestAdminRestart:
     # sufficient.
 
 
+class TestOrchestrateEndpoint:
+    """`/api/orchestrate` runs a multi-worker piecemeal orchestration.
+    These tests pin the validation surface and that the endpoint actually
+    routes each subtask through the gateway's `dispatch_role_task`
+    (monkey-patched here so we don't need a live fleet)."""
+
+    def test_missing_goal_rejected(self, client):
+        resp = client.post("/api/orchestrate", json={"tasks": [
+            {"role": "coder", "prompt": "x"}
+        ]})
+        assert resp.status_code == 400
+        assert "goal" in resp.json()["error"]
+
+    def test_missing_tasks_rejected(self, client):
+        resp = client.post("/api/orchestrate", json={"goal": "g"})
+        assert resp.status_code == 400
+        assert "tasks" in resp.json()["error"]
+
+    def test_empty_tasks_rejected(self, client):
+        resp = client.post("/api/orchestrate", json={"goal": "g", "tasks": []})
+        assert resp.status_code == 400
+
+    def test_too_many_tasks_rejected(self, client):
+        resp = client.post("/api/orchestrate", json={
+            "goal": "g",
+            "tasks": [{"role": "coder", "prompt": "x"} for _ in range(33)],
+        })
+        assert resp.status_code == 400
+        assert "32" in resp.json()["error"]
+
+    def test_unknown_role_rejected(self, client):
+        resp = client.post("/api/orchestrate", json={
+            "goal": "g",
+            "tasks": [{"role": "codr", "prompt": "x"}],
+        })
+        assert resp.status_code == 400
+        err = resp.json()["error"]
+        assert "codr" in err
+        assert "coder" in err
+
+    def test_invalid_depends_on_rejected(self, client):
+        resp = client.post("/api/orchestrate", json={
+            "goal": "g",
+            "tasks": [
+                {"role": "coder", "prompt": "x", "depends_on": [5]},
+            ],
+        })
+        assert resp.status_code == 400
+        assert "depends_on" in resp.json()["error"]
+
+    def test_orchestrate_sequential_success(self, gateway, client):
+        """Happy path: monkey-patch dispatch_role_task to return canned
+        responses and verify the orchestrator threads dependency results."""
+        calls: list[dict] = []
+
+        async def fake_dispatch(
+            role, role_system, prompt, *, session_id, max_tokens, temperature,
+        ):
+            calls.append({"role": role, "prompt": prompt})
+            return f"<<{role} did: {prompt[:30]}>>"
+
+        gateway.dispatch_role_task = fake_dispatch  # type: ignore[method-assign]
+
+        resp = client.post("/api/orchestrate", json={
+            "goal": "Build it",
+            "tasks": [
+                {"role": "architect", "prompt": "plan it"},
+                {"role": "coder", "prompt": "code it", "depends_on": [0]},
+            ],
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert len(data["tasks"]) == 2
+        assert data["tasks"][0]["role"] == "architect"
+        assert data["tasks"][0]["status"] == "completed"
+        assert "<<architect did:" in data["tasks"][0]["result"]
+        # Dependency context: the coder's prompt must have included
+        # the architect's result.
+        assert "<<architect did:" in calls[1]["prompt"]
+
+    def test_orchestrate_parallel_runs_concurrently(self, gateway, client):
+        """parallel=true must not serialize independent subtasks. We
+        verify by recording start times — all three should overlap."""
+        import asyncio
+        starts: list[float] = []
+
+        async def fake_dispatch(
+            role, role_system, prompt, *, session_id, max_tokens, temperature,
+        ):
+            import time as _time
+            starts.append(_time.monotonic())
+            # Brief sleep so we can detect serialization vs parallelism.
+            await asyncio.sleep(0.05)
+            return f"{role}-done"
+
+        gateway.dispatch_role_task = fake_dispatch  # type: ignore[method-assign]
+
+        resp = client.post("/api/orchestrate", json={
+            "goal": "build three",
+            "parallel": True,
+            "tasks": [
+                {"role": "coder", "prompt": "file a"},
+                {"role": "coder", "prompt": "file b"},
+                {"role": "coder", "prompt": "file c"},
+            ],
+        })
+        assert resp.status_code == 200
+        assert resp.json()["success"]
+        # All three started within a 50ms window — parallel, not
+        # serial (which would space them ~50ms apart each).
+        assert len(starts) == 3
+        spread = max(starts) - min(starts)
+        assert spread < 0.04, f"subtasks serialized; spread={spread}s"
+
+
 class TestHealthEndpoint:
     def test_health_returns_200(self, client):
         resp = client.get("/health")
