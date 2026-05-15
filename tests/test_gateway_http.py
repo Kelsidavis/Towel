@@ -1851,6 +1851,85 @@ class TestDispatchRecentEphemeralFilter:
         assert body.get("verify_skipped") is True
         assert "no alternate worker" in body.get("verify_skip_reason", "")
 
+    def test_ensemble_skip_reason_distinguishes_empty_text_from_timeouts(
+        self, gateway, client,
+    ):
+        """The old ensemble_skip_reason had a single "all workers
+        tool-looped" bucket for every non-empty contributions case —
+        misleading when the actual failure was timeouts or mixed.
+        Operators triaging a slow worker that never returned saw the
+        same message as a flaky worker emitting tool calls, sending
+        them down the wrong path.
+
+        Three buckets now: all empty_text, all timeouts, or mixed."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "a", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        async def fake_route(_msg, _sid):
+            return None, "chat"
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        async def fake_step(_conv, **_kwargs):
+            return Message(role=Role.ASSISTANT, content="local fallback")
+        gateway.agent.step = fake_step  # type: ignore[method-assign]
+
+        scenarios = [
+            (
+                [
+                    {"worker_id": "x", "answer": "", "ms": 10.0, "error": "empty_text"},
+                    {"worker_id": "y", "answer": "", "ms": 10.0, "error": "empty_text"},
+                ],
+                "tool-looped",
+            ),
+            (
+                [
+                    {"worker_id": "x", "answer": "", "ms": 90.0, "error": "ensemble_timeout"},
+                    {"worker_id": "y", "answer": "", "ms": 90.0, "error": "ensemble_timeout"},
+                ],
+                "timed out",
+            ),
+            (
+                [
+                    {"worker_id": "x", "answer": "", "ms": 10.0, "error": "empty_text"},
+                    {"worker_id": "y", "answer": "", "ms": 90.0, "error": "ensemble_timeout"},
+                ],
+                "mixed failures",
+            ),
+        ]
+
+        for contributions, expected_phrase in scenarios:
+            async def fake_ensemble(*_args, **_kwargs):
+                return "", contributions, "none"
+            gateway._ensemble_dispatch = fake_ensemble  # type: ignore[method-assign]
+
+            resp = client.post(
+                "/api/ask",
+                json={
+                    "message": "q",
+                    "session_id": f"ens-skip-{expected_phrase.replace(' ', '_')}",
+                    "ensemble": True,
+                },
+            )
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body.get("ensemble_skipped") is True, body
+            assert expected_phrase in body.get("ensemble_skip_reason", ""), (
+                f"expected {expected_phrase!r} in skip_reason for "
+                f"contributions={contributions}; got {body.get('ensemble_skip_reason')!r}"
+            )
+            # ensemble_contributions must be surfaced in the body
+            # too — the success path always carries them; the skip
+            # path used to drop the list, so callers couldn't see
+            # which workers actually tried.
+            assert "ensemble_contributions" in body, body
+            assert len(body["ensemble_contributions"]) == len(contributions)
+
     def test_ensemble_all_workers_failed_notes_have_no_dangling_colon(
         self, gateway,
     ):

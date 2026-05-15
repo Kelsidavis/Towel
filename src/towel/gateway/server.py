@@ -599,6 +599,7 @@ class GatewayServer:
                         # `ensemble_skipped` in metadata — parity with
                         # /api/ask's response shape.
                         ensemble_skip_reason: str | None = None
+                        ensemble_skip_contribs: list[dict[str, Any]] = []
                         # Ensemble short-circuit (non-streaming only):
                         # fan out, synthesize, send one response event.
                         # Streaming clients fall through to the normal
@@ -665,15 +666,36 @@ class GatewayServer:
                             # Ensemble produced nothing useful — fall
                             # through to the normal single-worker
                             # path so the user isn't left empty-handed.
-                            # Capture the reason so the eventual
-                            # single-worker response metadata can
-                            # carry `ensemble_skipped`. Matches the
-                            # /api/ask body's reason text exactly.
-                            ensemble_skip_reason = (
-                                "no idle workers available"
-                                if not _contribs
-                                else "all workers tool-looped"
-                            )
+                            # Capture the reason + contributions so the
+                            # eventual single-worker response metadata
+                            # can carry `ensemble_skipped` +
+                            # `ensemble_contributions`. Matches the
+                            # /api/ask body's three-bucket reason
+                            # text — empty_text vs timeout vs mixed —
+                            # so WS clients render the same diagnostic.
+                            ensemble_skip_contribs = _contribs
+                            if not _contribs:
+                                ensemble_skip_reason = (
+                                    "no idle workers available"
+                                )
+                            else:
+                                _errors = [c.get("error") for c in _contribs]
+                                if all(e == "empty_text" for e in _errors):
+                                    ensemble_skip_reason = (
+                                        "all workers tool-looped "
+                                        "(returned empty text)"
+                                    )
+                                elif all(e == "ensemble_timeout" for e in _errors):
+                                    ensemble_skip_reason = (
+                                        "all workers timed out before "
+                                        "producing a response"
+                                    )
+                                else:
+                                    ensemble_skip_reason = (
+                                        "mixed failures across the "
+                                        "fan-out — see ensemble_"
+                                        "contributions for details"
+                                    )
                         worker, intent = await self._route_by_role(content, session_id)
                         if stream:
                             if worker:
@@ -811,6 +833,16 @@ class GatewayServer:
                                 response.metadata = (response.metadata or {}) | {
                                     "ensemble_skipped": True,
                                     "ensemble_skip_reason": ensemble_skip_reason,
+                                    # Surface what each worker actually
+                                    # did so the client can diagnose
+                                    # without cracking open the
+                                    # dispatch log. Parity with
+                                    # /api/ask's body, which has
+                                    # carried this since the
+                                    # contributions-on-skip fix.
+                                    "ensemble_contributions": (
+                                        ensemble_skip_contribs
+                                    ),
                                 }
                             await ws.send(
                                 json.dumps(
@@ -6327,11 +6359,38 @@ class GatewayServer:
                 # workers available)" vs "all workers tool-looped").
                 if ensemble and "ensemble" not in body:
                     body["ensemble_skipped"] = True
-                    body["ensemble_skip_reason"] = (
-                        "no idle workers available"
-                        if not ensemble_contributions
-                        else "all workers tool-looped"
-                    )
+                    # Accurate skip-reason: distinguish "no candidates"
+                    # from the three failure modes the fan-out actually
+                    # observes. The old single bucket ("all workers
+                    # tool-looped") mislabeled timeouts and exceptions
+                    # as tool-loops, which sent operators down the
+                    # wrong path when triaging a slow worker that
+                    # never returned vs. a flaky one that returned
+                    # empty.
+                    if not ensemble_contributions:
+                        body["ensemble_skip_reason"] = (
+                            "no idle workers available"
+                        )
+                    else:
+                        errors = [c.get("error") for c in ensemble_contributions]
+                        if all(e == "empty_text" for e in errors):
+                            body["ensemble_skip_reason"] = (
+                                "all workers tool-looped (returned empty text)"
+                            )
+                        elif all(e == "ensemble_timeout" for e in errors):
+                            body["ensemble_skip_reason"] = (
+                                "all workers timed out before producing a response"
+                            )
+                        else:
+                            body["ensemble_skip_reason"] = (
+                                "mixed failures across the fan-out — "
+                                "see ensemble_contributions for details"
+                            )
+                    # Surface what each worker actually did so the
+                    # caller (and operator triaging) can diagnose
+                    # without cracking open /dispatch/recent. Mirrors
+                    # the success-path body which always carries this.
+                    body["ensemble_contributions"] = ensemble_contributions
                 return JSONResponse(body)
             except Exception as e:
                 # Persist the partial session even on inference failure
