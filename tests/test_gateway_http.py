@@ -1714,6 +1714,37 @@ class TestDispatchRecentEphemeralFilter:
         assert "_WS_KNOWN_TYPES" in src
         assert "unknown type" in src
 
+    def test_ws_accepts_max_tokens_and_temperature_overrides(self):
+        """WS clients were pinned to defaults (max_tokens=256,
+        temperature=0.7) because the handler called
+        _quick_remote_infer with hardcoded values, ignoring whatever
+        the WS message specified. /api/ask has accepted these knobs
+        since the OpenAI-parity fix; WS clients wanting deterministic
+        output (temperature=0) or longer responses (max_tokens=2048)
+        had no way to express that.
+
+        Source-inspection test — confirms the parsing + the call site
+        passes the parsed values through. A full WS round-trip would
+        need a websocket harness."""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._handle_ws)
+        # Parsing exists for both knobs, with the WS-namespaced
+        # variable names the call site uses.
+        assert "ws_max_tokens" in src
+        assert "ws_temperature" in src
+        # Clamp ranges mirror /api/ask: max_tokens [1, 4096],
+        # temperature [0, 2].
+        assert "min(int(_mt_raw), 4096)" in src
+        assert "0.0 <= _temp_val <= 2.0" in src
+        # The call site uses the parsed values, not the old hardcoded
+        # max_tokens=256. (Bad inputs fall back to defaults — WS has
+        # no clean 400 path the way HTTP does.)
+        assert "max_tokens=ws_max_tokens" in src
+        assert "temperature=ws_temperature" in src
+
     def test_ws_stream_with_collab_logs_warning(self):
         """WS doesn't have an HTTP-style 400 path, so the openai-
         compat-equivalent 'verify/ensemble with stream=true is

@@ -564,6 +564,48 @@ class GatewayServer:
                     # the WS layer too — if both are set, ensemble
                     # wins (the more thorough mode).
                     verify_flag = bool(msg.get("verify", False)) and not ensemble_flag
+                    # Optional max_tokens / temperature overrides on
+                    # the WS path. /api/ask has accepted these since
+                    # the OpenAI-parity fix; the WS path was silently
+                    # pinned to defaults (256 / 0.7), so WS clients
+                    # wanting deterministic output (temperature=0) or
+                    # longer responses (max_tokens=2048) had no knob.
+                    # Coerce defensively — WS has no clean 400 error
+                    # path the way HTTP does, so bad values fall back
+                    # to defaults rather than tearing down the
+                    # connection. Same clamp ranges /api/ask uses.
+                    ws_max_tokens = 256
+                    _mt_raw = msg.get("max_tokens")
+                    if _mt_raw is not None:
+                        try:
+                            ws_max_tokens = max(1, min(int(_mt_raw), 4096))
+                        except (TypeError, ValueError):
+                            log.warning(
+                                "WS session %s sent non-integer max_tokens=%r; "
+                                "using default 256",
+                                session_id, _mt_raw,
+                            )
+                    ws_temperature = 0.7
+                    _temp_raw = msg.get("temperature")
+                    if _temp_raw is not None:
+                        try:
+                            _temp_val = float(_temp_raw)
+                        except (TypeError, ValueError):
+                            log.warning(
+                                "WS session %s sent non-numeric temperature=%r; "
+                                "using default 0.7",
+                                session_id, _temp_raw,
+                            )
+                        else:
+                            if 0.0 <= _temp_val <= 2.0:
+                                ws_temperature = _temp_val
+                            else:
+                                log.warning(
+                                    "WS session %s sent out-of-range "
+                                    "temperature=%r (expected 0..2); using "
+                                    "default 0.7",
+                                    session_id, _temp_val,
+                                )
                     # The openai-compat path rejects stream+collab
                     # with 400, but the WS protocol has no error
                     # code path that fits cleanly — log a warning
@@ -729,7 +771,9 @@ class GatewayServer:
                         else:
                             if worker and intent == "chat":
                                 response = await self._quick_remote_infer(
-                                    session_id, session, worker, max_tokens=256
+                                    session_id, session, worker,
+                                    max_tokens=ws_max_tokens,
+                                    temperature=ws_temperature,
                                 )
                             elif worker:
                                 response = await self._step_remote_inference(
