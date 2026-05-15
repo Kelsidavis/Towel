@@ -333,6 +333,18 @@ class TestResponseFormat:
         result2 = _format_completion("id-2", 1, "m", "different", 3)
         assert result2["system_fingerprint"] == fp
 
+    def test_format_completion_no_towel_field(self):
+        """The `towel`-namespaced metadata is attached by the
+        chat_completions handler, NOT by _format_completion itself.
+        A direct call to _format_completion must produce the strict
+        OpenAI shape — no `towel` field — so plain-vanilla
+        ChatCompletion responses don't carry vendor noise when
+        nothing collab-related happened."""
+        from towel.gateway.openai_compat import _format_completion
+
+        result = _format_completion("id", 0, "m", "content", 5)
+        assert "towel" not in result
+
     def test_prompt_tokens_uses_supplied_value(self):
         """When the caller provides prompt_tokens (e.g. from the worker's
         usage data, or an estimate over the input messages), the formatter
