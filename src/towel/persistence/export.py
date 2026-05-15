@@ -12,8 +12,11 @@ def export_markdown(conv: Conversation, include_metadata: bool = False) -> str:
     """Export a conversation to Markdown format."""
     lines: list[str] = []
 
-    # Header
-    lines.append(f"# {conv.summary}")
+    # Header. Use display_title (explicit title if set, else the
+    # auto-derived summary) so an operator who renamed a session
+    # via /conversations/<id>/rename sees their chosen title in
+    # the exported file instead of the first user message.
+    lines.append(f"# {conv.display_title}")
     lines.append("")
     lines.append(f"**Session:** `{conv.id}`  ")
     lines.append(f"**Channel:** {conv.channel}  ")
@@ -180,12 +183,12 @@ def export_html(conv: Conversation, include_metadata: bool = True) -> str:
 
     parts.append("<!DOCTYPE html>")
     parts.append('<html lang="en"><head><meta charset="utf-8">')
-    parts.append(f"<title>{html.escape(conv.summary)}</title>")
+    parts.append(f"<title>{html.escape(conv.display_title)}</title>")
     parts.append(f"<style>{_HTML_STYLE}</style>")
     parts.append("</head><body>")
 
     # Header
-    parts.append(f"<h1>{html.escape(conv.summary)}</h1>")
+    parts.append(f"<h1>{html.escape(conv.display_title)}</h1>")
     created = conv.created_at.strftime("%Y-%m-%d %H:%M UTC")
     parts.append(f'<div class="meta">{len(conv)} messages &middot; {created}</div>')
 

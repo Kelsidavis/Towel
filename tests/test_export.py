@@ -44,6 +44,31 @@ class TestMarkdownExport:
         assert "cli" in md
         assert "2026-03-15" in md
 
+    def test_header_prefers_explicit_title(self):
+        """An operator who renamed the conversation via
+        /conversations/<id>/rename should see that title in the
+        exported file instead of the first user message — previously
+        the export always used the auto-derived summary."""
+        c = Conversation(id="titled-export", channel="cli")
+        c.title = "Recipe Notes"
+        c.add(Role.USER, "How do I make pancakes?")
+        md = export_markdown(c)
+        # Explicit title wins.
+        assert "# Recipe Notes" in md
+        # The auto-summary is no longer the header.
+        assert "# How do I make pancakes?" not in md
+
+    def test_html_header_prefers_explicit_title(self):
+        """Parity with markdown — HTML title + h1 also honor the
+        operator-set title."""
+        c = Conversation(id="titled-html", channel="cli")
+        c.title = "Recipe Notes"
+        c.add(Role.USER, "How do I make pancakes?")
+        from towel.persistence.export import export_html
+        html_out = export_html(c)
+        assert "<title>Recipe Notes</title>" in html_out
+        assert "<h1>Recipe Notes</h1>" in html_out
+
     def test_user_messages(self, conv):
         md = export_markdown(conv)
         assert "### You" in md
