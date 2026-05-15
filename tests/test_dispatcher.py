@@ -409,6 +409,92 @@ class TestPreemption:
         assert decision.preempted_idle is True
         assert preempt_called == ["big_busy_idle"]
 
+    def test_bigger_preempt_works_when_assigned_tasks_unset(self):
+        """Live observation: workers in the running cluster reported
+        `assigned_tasks=None` (a general-purpose default). The
+        bigger-preempt filter rejected every such worker, so the
+        prefer_quality path silently fell back to the smaller worker
+        on every PLAN/GENERATE while the big worker idled on lint
+        or proactive_help. `assigned_tasks` is an explicit operator
+        override — when unset it must mean "any task," not "no task."
+        """
+        workers = WorkerRegistry()
+        # Big worker busy on idle work and declares NO assigned_tasks —
+        # this is the live-cluster shape.
+        big = _make_worker(workers, "big_busy_idle", busy=True)
+        big.capabilities["total_vram_mb"] = 24000
+        # No assigned_tasks key at all.
+        small = _make_worker(workers, "small_free", busy=False)
+        small.capabilities["total_vram_mb"] = 4096
+
+        preempt_called: list[str] = []
+
+        async def preempt(w: WorkerInfo) -> None:
+            preempt_called.append(w.id)
+            workers.release(w.id)
+
+        d = _make_dispatcher(
+            workers,
+            tasks={
+                "big_busy_idle": [TaskType.GENERATE],
+                "small_free": [TaskType.GENERATE],
+            },
+            roles={
+                "big_busy_idle": [NodeRole.INFERENCE, NodeRole.TOOL_WORKER],
+                "small_free": [NodeRole.INFERENCE, NodeRole.TOOL_WORKER],
+            },
+            idle_task_workers={"big_busy_idle"},
+            preempt_hook=preempt,
+        )
+        decision = asyncio.run(
+            d.async_select_for_session("s1", intent="task", task_type=TaskType.GENERATE)
+        )
+        assert decision.worker is not None
+        assert decision.worker.id == "big_busy_idle"
+        assert decision.reason == REASON_PREEMPT_IDLE
+        assert preempt_called == ["big_busy_idle"]
+
+    def test_smaller_preempt_works_when_assigned_tasks_unset(self):
+        """Mirror of test_bigger_preempt_works_when_assigned_tasks_unset
+        for the prefer_fast preempt path. A small worker with no
+        explicit assigned_tasks should still be preempt-eligible for
+        chat-like tasks — otherwise the live cluster pulls every
+        TRIAGE/CHAT to the heaviest worker until it saturates.
+        """
+        workers = WorkerRegistry()
+        big = _make_worker(workers, "big_free", busy=False)
+        big.capabilities["total_vram_mb"] = 24000
+        small = _make_worker(workers, "small_busy_idle", busy=True)
+        small.capabilities["total_vram_mb"] = 4096
+        # No assigned_tasks declared on either.
+
+        preempt_called: list[str] = []
+
+        async def preempt(w: WorkerInfo) -> None:
+            preempt_called.append(w.id)
+            workers.release(w.id)
+
+        d = _make_dispatcher(
+            workers,
+            tasks={
+                "big_free": [TaskType.CHAT],
+                "small_busy_idle": [TaskType.CHAT],
+            },
+            roles={
+                "big_free": [NodeRole.INFERENCE],
+                "small_busy_idle": [NodeRole.INFERENCE],
+            },
+            idle_task_workers={"small_busy_idle"},
+            preempt_hook=preempt,
+        )
+        decision = asyncio.run(
+            d.async_select_for_session("s1", intent="chat", task_type=TaskType.CHAT)
+        )
+        assert decision.worker is not None
+        assert decision.worker.id == "small_busy_idle"
+        assert decision.reason == REASON_PREEMPT_IDLE
+        assert preempt_called == ["small_busy_idle"]
+
     def test_no_bigger_preempt_when_picked_is_already_biggest(self):
         """If the quality path picked the bigger worker, no preempt
         should happen even when a smaller worker is busy with idle."""

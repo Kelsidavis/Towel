@@ -449,7 +449,13 @@ class Dispatcher:
             if not self._is_idle_task(w.id):
                 continue
             caps = w.capabilities or {}
-            if task not in (caps.get("assigned_tasks") or []):
+            assigned = caps.get("assigned_tasks") or []
+            # `assigned_tasks` is a manual operator override. When unset
+            # (None or []), the worker is general-purpose and eligible
+            # for any task type. Without this distinction the live
+            # cluster's preempt path silently returned None for every
+            # request because no worker had `assigned_tasks` populated.
+            if assigned and task not in assigned:
                 continue
             w_vram = _safe_int(caps.get("total_vram_mb"))
             # Strictly bigger so we don't churn between equally-sized
@@ -488,9 +494,12 @@ class Dispatcher:
             if not self._is_idle_task(w.id):
                 continue
             caps = w.capabilities or {}
-            if task not in (caps.get("assigned_tasks") or []):
-                # Worker isn't allowed this task type even if it
-                # weren't busy — don't preempt for nothing.
+            assigned = caps.get("assigned_tasks") or []
+            # Mirror the general-purpose handling in
+            # `_bigger_idle_worker_for_task`: an unset `assigned_tasks`
+            # means "any task," not "no task." Only a non-empty list
+            # that excludes this task disqualifies the worker.
+            if assigned and task not in assigned:
                 continue
             w_vram = _safe_int(caps.get("total_vram_mb"))
             # Strictly smaller, with a hard floor so a 0-vram
