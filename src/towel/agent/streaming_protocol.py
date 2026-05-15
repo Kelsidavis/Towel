@@ -69,12 +69,25 @@ def build_sse_routes(agent: Any, config: Any) -> list[Route]:
                     yield f"data: {json.dumps(payload)}\n\n"
 
                 elif event.type == EventType.RESPONSE_COMPLETE:
-                    meta = event.data.get("metadata", {})
+                    meta = event.data.get("metadata", {}) or {}
+                    # tps/tokens can arrive as explicit None when a
+                    # worker emits a metadata block but never measured
+                    # (e.g. empty-text fallback). `round(None, 1)`
+                    # raises TypeError and would crash the SSE
+                    # generator mid-stream. Coerce non-numeric to 0
+                    # at the boundary (same fix /api/ask got in
+                    # 8473883).
+                    tps_raw = meta.get('tps')
+                    tps_val = float(tps_raw) if isinstance(tps_raw, (int, float)) else 0.0
+                    tokens_raw = meta.get('tokens')
+                    tokens_val = (
+                        int(tokens_raw) if isinstance(tokens_raw, (int, float)) else 0
+                    )
                     payload = {
                         'type': 'done',
                         'content': full_text,
-                        'tokens': meta.get('tokens', 0),
-                        'tps': round(meta.get('tps', 0), 1),
+                        'tokens': tokens_val,
+                        'tps': round(tps_val, 1),
                     }
                     yield f"data: {json.dumps(payload)}\n\n"
 
@@ -136,10 +149,18 @@ def build_sse_routes(agent: Any, config: Any) -> list[Route]:
                     }
                     yield f"data: {json.dumps(payload)}\n\n"
                 elif event.type == EventType.RESPONSE_COMPLETE:
-                    meta = event.data.get("metadata", {})
+                    meta = event.data.get("metadata", {}) or {}
+                    # Same None-coerce as the other RESPONSE_COMPLETE
+                    # branch in this file — workers occasionally emit
+                    # `tokens: None` and a null in the SSE payload
+                    # confuses clients that expect a number.
+                    tokens_raw = meta.get('tokens')
+                    tokens_val = (
+                        int(tokens_raw) if isinstance(tokens_raw, (int, float)) else 0
+                    )
                     payload = {
                         'type': 'done',
-                        'tokens': meta.get('tokens', 0),
+                        'tokens': tokens_val,
                     }
                     yield f"data: {json.dumps(payload)}\n\n"
 
