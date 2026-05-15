@@ -157,6 +157,22 @@ class TestGatewayCancel:
         assert "isinstance(raw_id, str)" in src
         assert "256" in src
 
+    def test_gateway_ws_supports_verify_for_nonstreaming(self):
+        """Parity with /api/ask and /v1/chat/completions — verify is
+        reachable over WS too, with the same constraints (no
+        streaming, mutually exclusive with ensemble)."""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._handle_ws)
+        # Opt-in field is read from the WS frame.
+        assert 'msg.get("verify"' in src
+        # Mutually exclusive with ensemble at the WS layer.
+        assert "not ensemble_flag" in src
+        # Wired through to _verify_pass.
+        assert "_verify_pass" in src
+
     def test_gateway_ws_supports_ensemble_for_nonstreaming(self):
         """Web UI / WS clients can opt into multi-worker ensemble on
         non-streaming requests. Streaming is intentionally not

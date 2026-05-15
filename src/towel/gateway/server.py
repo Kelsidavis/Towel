@@ -471,6 +471,13 @@ class GatewayServer:
                     # since the WS protocol doesn't carry HTTP error
                     # codes).
                     ensemble_flag = bool(msg.get("ensemble", False))
+                    # Opt-in verify (sequential collaboration). Same
+                    # constraint as ensemble: synthesis/review can't
+                    # be streamed, so stream=true silently falls
+                    # through. Mutually exclusive with ensemble at
+                    # the WS layer too — if both are set, ensemble
+                    # wins (the more thorough mode).
+                    verify_flag = bool(msg.get("verify", False)) and not ensemble_flag
 
                     session = self.sessions.get_or_create(session_id)
                     session.conversation.add(Role.USER, content, channel=channel)
@@ -561,6 +568,47 @@ class GatewayServer:
                             else:
                                 response = await self.agent.step(session.conversation)
                                 session.conversation.messages.append(response)
+                            # Verify pass: opt-in second-worker review.
+                            # Same shape as /api/ask?verify=true (see
+                            # commits a315ea1, dc48d36). Skipped when
+                            # we have no remote worker (local-agent
+                            # path), when the answer is empty, or when
+                            # no alternate worker exists.
+                            if (
+                                verify_flag
+                                and worker is not None
+                                and response.content
+                                and not (response.metadata or {}).get("empty_text_fallback")
+                            ):
+                                final, was_corrected, verifier_id = (
+                                    await self._verify_pass(
+                                        session_id, content,
+                                        response.content, worker.id,
+                                    )
+                                )
+                                if was_corrected and final != response.content:
+                                    log.info(
+                                        "WS verifier %s corrected %s answer for session %s",
+                                        verifier_id, worker.id, session_id,
+                                    )
+                                    if (
+                                        session.conversation.messages
+                                        and session.conversation.messages[-1].role
+                                        == Role.ASSISTANT
+                                    ):
+                                        session.conversation.messages[-1].content = final
+                                    response.content = final
+                                    response.metadata = (response.metadata or {}) | {
+                                        "verified_by": verifier_id,
+                                        "verifier_corrected": True,
+                                        "primary_worker": worker.id,
+                                    }
+                                elif verifier_id is not None:
+                                    response.metadata = (response.metadata or {}) | {
+                                        "verified_by": verifier_id,
+                                        "verifier_corrected": False,
+                                        "primary_worker": worker.id,
+                                    }
                             await ws.send(
                                 json.dumps(
                                     {
