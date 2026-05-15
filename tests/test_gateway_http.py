@@ -163,6 +163,44 @@ class TestClusterNodes:
         assert entry["enabled"] is True
         assert entry["draining"] is True
         assert entry["busy"] is False
+        # Job/timing fields surface so operators debugging from this
+        # endpoint don't have to bounce to /workers.
+        assert entry["current_job_id"] is None
+        assert entry["current_session_id"] is None
+        assert entry["busy_since"] is None
+        assert entry["busy_for_seconds"] is None
+
+    def test_cluster_nodes_surfaces_busy_timing(self, gateway, client):
+        """When a worker is actively assigned to a job, /cluster/nodes
+        must echo busy_since + busy_for_seconds + current_job_id +
+        current_session_id so an operator can spot a stuck job from
+        the cluster panel without bouncing to /workers."""
+        gateway._workers.register(
+            "node-a", object(),
+            {
+                "backend": "llama",
+                "modes": ["llama_chat"],
+                "total_vram_mb": 16000,
+                "context_window": 8192,
+                "max_tokens": 4096,
+                "hostname": "node-a",
+                "resources": {"hostname": "node-a", "ram_total_mb": 32000},
+            },
+        )
+        gateway._node_tracker.register("node-a", gateway._workers.get("node-a").capabilities)
+        gateway._workers.assign("node-a", job_id="job-42", session_id="sess-7")
+
+        resp = client.get("/cluster/nodes")
+        assert resp.status_code == 200
+        entry = resp.json()["nodes"]["node-a"]
+        assert entry["busy"] is True
+        assert entry["current_job_id"] == "job-42"
+        assert entry["current_session_id"] == "sess-7"
+        assert entry["busy_since"] is not None
+        # busy_for_seconds is a float (newly-assigned, so near-zero
+        # but never negative).
+        assert isinstance(entry["busy_for_seconds"], (int, float))
+        assert entry["busy_for_seconds"] >= 0
 
     def test_cluster_nodes_marks_unknown_workers(self, gateway, client):
         """If the node tracker has a stale entry the registry doesn't,
@@ -178,6 +216,13 @@ class TestClusterNodes:
         assert entry["enabled"] is None
         assert entry["draining"] is None
         assert entry["busy"] is None
+        # Job/timing fields are also None for stale entries — the UI
+        # contract is "all operator-state fields are null when the
+        # registry has no record."
+        assert entry["current_job_id"] is None
+        assert entry["current_session_id"] is None
+        assert entry["busy_since"] is None
+        assert entry["busy_for_seconds"] is None
 
 
 class TestWorkerStateEndpoint:

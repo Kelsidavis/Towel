@@ -2434,14 +2434,33 @@ class GatewayServer:
             # /workers in another tab. The NodeTracker tracks
             # hardware + context-slot state; the WorkerRegistry
             # tracks operator-set flags.
+            #
+            # `busy_since` / `busy_for_seconds` / `current_job_id` /
+            # `current_session_id` come along for the ride so the
+            # cluster panel can tell "long task running" apart from
+            # "wedged for 15 minutes" without bouncing to /workers
+            # (the field set the fleet UI also reads).
+            from datetime import UTC, datetime
             data = self._node_tracker.to_dict()
             nodes = data.get("nodes", {}) or {}
+            now = datetime.now(UTC)
             for worker_id, node_entry in nodes.items():
                 worker = self._workers.get(worker_id)
                 if worker is not None:
                     node_entry["enabled"] = worker.enabled
                     node_entry["draining"] = worker.draining
                     node_entry["busy"] = worker.busy
+                    node_entry["current_job_id"] = worker.current_job_id
+                    node_entry["current_session_id"] = worker.current_session_id
+                    node_entry["busy_since"] = (
+                        worker.busy_since.isoformat()
+                        if worker.busy_since is not None else None
+                    )
+                    node_entry["busy_for_seconds"] = (
+                        (now - worker.busy_since).total_seconds()
+                        if worker.busy and worker.busy_since is not None
+                        else None
+                    )
                 else:
                     # Node-tracker has an entry the registry no longer
                     # knows about. Mark explicitly so the UI can show
@@ -2449,6 +2468,10 @@ class GatewayServer:
                     node_entry["enabled"] = None
                     node_entry["draining"] = None
                     node_entry["busy"] = None
+                    node_entry["current_job_id"] = None
+                    node_entry["current_session_id"] = None
+                    node_entry["busy_since"] = None
+                    node_entry["busy_for_seconds"] = None
             return JSONResponse(data)
 
         async def dispatch_explain(request: Request) -> JSONResponse:
