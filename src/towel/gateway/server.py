@@ -4606,6 +4606,33 @@ class GatewayServer:
                                         ),
                                     }
                                     response = retry_response
+                                else:
+                                    # Both primary AND alt returned
+                                    # empty text. This is a fleet-wide
+                                    # signal — the models likely emit
+                                    # tool calls for every chat-style
+                                    # input, which the user experiences
+                                    # as a long wait followed by the
+                                    # generic placeholder. Surface a
+                                    # warning at log level so the
+                                    # operator notices, and tag the
+                                    # response metadata so /dispatch
+                                    # readers and clients can spot it.
+                                    log.warning(
+                                        "Dual empty-text on session %s: "
+                                        "primary=%s alt=%s — both workers "
+                                        "produced no parseable text. The "
+                                        "models likely tool-loop on this "
+                                        "prompt; consider reviewing the "
+                                        "system prompt or worker quality.",
+                                        session_id, worker.id, alt.id,
+                                    )
+                                    response.metadata = (
+                                        response.metadata or {}
+                                    ) | {
+                                        "dual_empty_text": True,
+                                        "alt_worker": alt.id,
+                                    }
                 elif worker:
                     response = await self._step_remote_inference(
                         session_id, session, worker
