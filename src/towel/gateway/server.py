@@ -223,7 +223,27 @@ class GatewayServer:
         conn_id: str | None = None
         try:
             async for raw in ws:
-                msg = json.loads(raw)
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError:
+                    # A malformed frame (truncated, non-JSON binary,
+                    # whatever) shouldn't kill the entire WebSocket
+                    # connection — that would force the worker to
+                    # reconnect and re-sync state. Log and skip the
+                    # frame; the next valid one runs normally.
+                    log.warning(
+                        "Ignoring malformed JSON on WS conn_id=%s", conn_id
+                    )
+                    continue
+                if not isinstance(msg, dict):
+                    # A JSON array or scalar can't be a message — same
+                    # treatment as a malformed frame. Skipping keeps the
+                    # connection alive for the next valid one.
+                    log.warning(
+                        "Ignoring non-object WS frame on conn_id=%s (%s)",
+                        conn_id, type(msg).__name__,
+                    )
+                    continue
                 msg_type = msg.get("type", "message")
 
                 if msg_type == "register":

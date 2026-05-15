@@ -86,3 +86,21 @@ class TestGatewayCancel:
         gw = GatewayServer(config=config, agent=agent)
         assert hasattr(gw, "_active_tasks")
         assert isinstance(gw._active_tasks, dict)
+
+    def test_gateway_ws_loop_tolerates_malformed_frames(self):
+        """A worker (or a probing client) that sends a malformed JSON
+        frame or a non-object should not kill the WebSocket connection
+        — that would force the worker to reconnect and re-sync state.
+        Verify the handler swallows the offending frame and keeps
+        running."""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._handle_ws)
+        # Malformed JSON is logged-and-skipped, not raised.
+        assert "JSONDecodeError" in src
+        assert "Ignoring malformed JSON" in src
+        # Non-dict frames likewise.
+        assert "isinstance(msg, dict)" in src
+        assert "Ignoring non-object WS frame" in src
