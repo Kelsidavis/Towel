@@ -2781,6 +2781,63 @@ class TestSimpleAskAPI:
         )
 
 
+    def test_dual_empty_text_surfaces_in_api_ask_response(self, gateway, client):
+        """When BOTH the primary and the retry alt return empty text
+        (the fleet-wide tool-loop case), the metadata flag
+        `dual_empty_text` was set but never surfaced into the
+        /api/ask response body. Clients saw the same diagnostic
+        placeholder they'd get from a single-worker empty response
+        and had no way to tell the system actually tried twice.
+
+        Reproducer for the live-coordinator behavior observed in
+        2026-05: a "Hi" prompt produced an empty-text placeholder
+        after both Gemma and SparklesMint tool-looped; the dispatch
+        log showed two attempts but the response body looked single-
+        worker."""
+        from unittest.mock import AsyncMock
+
+        from towel.agent.conversation import Message, Role
+        from towel.gateway.workers import WorkerInfo
+
+        primary = WorkerInfo(id="dual-primary", ws=AsyncMock(), capabilities={})
+        alt = WorkerInfo(
+            id="dual-alt", ws=AsyncMock(),
+            capabilities={"total_vram_mb": 16000},
+        )
+        gateway._workers._workers["dual-primary"] = primary
+        gateway._workers._workers["dual-alt"] = alt
+
+        async def fake_route(message, session_id):
+            return primary, "chat"
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            # Both workers return the empty-text fallback shape.
+            msg = Message(
+                role=Role.ASSISTANT,
+                content="(empty text placeholder)",
+                metadata={
+                    "remote_worker": worker.id,
+                    "empty_text_fallback": True,
+                },
+            )
+            session.conversation.messages.append(msg)
+            return msg
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "hi", "session_id": "dual-empty"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # The body must signal that the fleet hit a dual-empty case
+        # so clients can render "Try rephrasing — both workers tool-
+        # looped" instead of the generic placeholder.
+        assert body.get("dual_empty_text") is True, body
+        assert body.get("alt_worker") == "dual-alt", body
+
+
 class TestApiSessions:
     def test_api_sessions_empty(self, client):
         resp = client.get("/api/sessions")

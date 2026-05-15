@@ -5605,6 +5605,21 @@ class GatewayServer:
                 if meta.get("fallback_from_worker"):
                     body["fallback_from_worker"] = meta["fallback_from_worker"]
                     body["fallback_reason"] = meta.get("fallback_reason", "")
+                # Surface the dual-empty-text signal — when BOTH the
+                # primary and the retry returned empty (typically
+                # because every worker tool-loops on this prompt
+                # shape), the caller currently sees the diagnostic
+                # placeholder with no hint that two workers actually
+                # tried. Without this field, clients couldn't tell
+                # "one slow worker returned empty" from "fleet-wide
+                # tool-loop on this prompt" and operators kept asking
+                # "did anything else try?". Same metadata flag the
+                # WS path has carried since the dual-empty fix; just
+                # mirror it into the HTTP body.
+                if meta.get("dual_empty_text"):
+                    body["dual_empty_text"] = True
+                    if meta.get("alt_worker"):
+                        body["alt_worker"] = meta["alt_worker"]
                 # Surface the verifier pass so the caller can tell
                 # the answer went through two-worker collaboration.
                 if meta.get("verified_by"):

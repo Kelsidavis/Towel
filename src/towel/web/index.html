@@ -1147,6 +1147,14 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     if (!workerId || !workerId.trim()) return;
     const data = await apiPost('/sessions/' + encodeURIComponent(sessionId) + '/pin-worker', { worker_id: workerId.trim() });
     if (data.error) throw new Error(data.error);
+    // Surface the server's non-fatal warning when the target worker
+    // is currently disabled/draining — the pin still took effect, but
+    // the next request will route elsewhere with pin_missed=True.
+    // Without this, the operator pinned, saw success, then later
+    // wondered why their pin wasn't firing.
+    if (data.warning) {
+      alert('Pin set, but: ' + data.warning);
+    }
     await loadFleetState();
   }
 
