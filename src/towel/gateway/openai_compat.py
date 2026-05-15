@@ -660,16 +660,46 @@ def build_openai_routes(
                         for msg in messages
                     )
                 try:
-                    return JSONResponse(
-                        _format_completion(
-                            request_id,
-                            created,
-                            model_name,
-                            response.content,
-                            completion_tokens,
-                            prompt_tokens=prompt_tokens,
-                        )
+                    completion = _format_completion(
+                        request_id,
+                        created,
+                        model_name,
+                        response.content,
+                        completion_tokens,
+                        prompt_tokens=prompt_tokens,
                     )
+                    # Vendor-namespaced metadata so OpenAI-strict
+                    # clients ignore it and Towel-aware clients can
+                    # see whether verify/ensemble actually ran. Sits
+                    # under a single `towel` key rather than at the
+                    # top level so we never collide with a future
+                    # OpenAI field. Only emitted when there's
+                    # something to report.
+                    towel_meta: dict[str, Any] = {}
+                    if meta.get("verified_by"):
+                        towel_meta["verified_by"] = meta["verified_by"]
+                        towel_meta["verifier_corrected"] = bool(
+                            meta.get("verifier_corrected", False)
+                        )
+                        towel_meta["primary_worker"] = meta.get(
+                            "primary_worker", meta.get("remote_worker", "")
+                        )
+                    if meta.get("ensemble"):
+                        towel_meta["ensemble"] = True
+                        if meta.get("ensemble_arbitration"):
+                            towel_meta["ensemble_arbitration"] = (
+                                meta["ensemble_arbitration"]
+                            )
+                    if meta.get("fallback_from_worker"):
+                        towel_meta["fallback_from_worker"] = (
+                            meta["fallback_from_worker"]
+                        )
+                        towel_meta["fallback_reason"] = meta.get(
+                            "fallback_reason", ""
+                        )
+                    if towel_meta:
+                        completion["towel"] = towel_meta
+                    return JSONResponse(completion)
                 finally:
                     # Drop the one-shot session's affinity + context
                     # slot now that the request is done; otherwise

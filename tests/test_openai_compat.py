@@ -630,6 +630,10 @@ class TestCollaborationOnOpenAICompat:
         assert data["object"] == "chat.completion"
         assert len(data["choices"]) == 1
         assert "Paris" in data["choices"][0]["message"]["content"]
+        # Towel-specific metadata rides under a `towel` key so
+        # spec-strict OpenAI clients can ignore it but Towel-aware
+        # ones see whether ensemble actually ran.
+        assert data.get("towel", {}).get("ensemble") is True
 
     def test_verify_corrects_through_openai_compat(self, tmp_path):
         """End-to-end verify through /v1/chat/completions: the
