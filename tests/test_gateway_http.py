@@ -119,10 +119,11 @@ class TestOrchestrateEndpoint:
 
         async def fake_dispatch(
             role, role_system, prompt, *, session_id, max_tokens, temperature,
-            with_tools,
+            with_tools, task_type,
         ):
             calls.append({
                 "role": role, "prompt": prompt, "with_tools": with_tools,
+                "task_type": task_type,
             })
             return f"<<{role} did: {prompt[:30]}>>"
 
@@ -155,9 +156,11 @@ class TestOrchestrateEndpoint:
 
         async def fake_dispatch(
             role, role_system, prompt, *, session_id, max_tokens, temperature,
-            with_tools,
+            with_tools, task_type,
         ):
-            captured.append({"role": role, "with_tools": with_tools})
+            captured.append({
+                "role": role, "with_tools": with_tools, "task_type": task_type,
+            })
             return f"{role}-done"
 
         gateway.dispatch_role_task = fake_dispatch  # type: ignore[method-assign]
@@ -186,6 +189,7 @@ class TestOrchestrateEndpoint:
         async def fake_dispatch(
             role, role_system, prompt, *,
             session_id, max_tokens, temperature, with_tools,  # noqa: ARG001
+            task_type,
         ):
             captured.append(prompt)
             return f"{role}-done"
@@ -295,6 +299,7 @@ class TestOrchestrateEndpoint:
         async def fake_dispatch(
             role, role_system, prompt, *,
             session_id, max_tokens, temperature, with_tools,  # noqa: ARG001
+            task_type,
         ):
             attempts.append(1)
             if len(attempts) == 1:
@@ -332,7 +337,7 @@ class TestOrchestrateEndpoint:
 
         async def fake_dispatch(
             role, role_system, prompt, *, session_id, max_tokens, temperature,
-            with_tools,  # noqa: ARG001
+            with_tools, task_type,  # noqa: ARG001
         ):
             import time as _time
             starts.append(_time.monotonic())

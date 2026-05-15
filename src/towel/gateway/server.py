@@ -2101,7 +2101,8 @@ class GatewayServer:
         return None
 
     async def _route_by_role(
-        self, message: str, session_id: str
+        self, message: str, session_id: str,
+        *, task_type_override: str | None = None,
     ) -> tuple[WorkerInfo | None, str]:
         """Route a message to the best worker based on task type.
 
@@ -2110,13 +2111,29 @@ class GatewayServer:
         selection (pin → affinity → task-match → role-match → capability
         fallback → idle preempt). Returns ``(worker, intent)``; worker is
         ``None`` when the coordinator should handle the request itself.
+
+        ``task_type_override`` skips classification entirely — used by
+        callers that already know what task type they want (orchestrator
+        subtasks pre-map their role to a TaskType, since the workspace
+        preamble they prepend would otherwise prevent the keyword
+        classifier from triggering).
         """
-        # Step 1: classify into a TaskType (cheap heuristic, then LLM fallback)
-        task_type = classify_task_type(message)
+        task_type: Any = None
+        if task_type_override is not None:
+            try:
+                task_type = TaskType(task_type_override)
+            except ValueError:
+                log.warning(
+                    "Invalid task_type_override %r — falling back to classifier",
+                    task_type_override,
+                )
         if task_type is None:
-            classifier = self._worker_for_role(NodeRole.CLASSIFIER, session_id)
-            if classifier:
-                task_type = await self._classify_task_on_worker(message, classifier)
+            # Step 1: classify into a TaskType (cheap heuristic, then LLM fallback)
+            task_type = classify_task_type(message)
+            if task_type is None:
+                classifier = self._worker_for_role(NodeRole.CLASSIFIER, session_id)
+                if classifier:
+                    task_type = await self._classify_task_on_worker(message, classifier)
 
         if task_type is not None:
             intent = self._TASK_TO_INTENT.get(task_type, "task")
@@ -2156,6 +2173,7 @@ class GatewayServer:
         max_tokens: int = 2048,
         temperature: float = 0.4,
         with_tools: bool = False,
+        task_type: str | None = None,
     ) -> str:
         """Dispatch a single orchestrator subtask to the best-fit worker.
 
@@ -2204,7 +2222,9 @@ class GatewayServer:
         session.conversation.add(_Role.USER, prompt)
 
         try:
-            worker, _intent = await self._route_by_role(prompt, session_id)
+            worker, _intent = await self._route_by_role(
+                prompt, session_id, task_type_override=task_type,
+            )
             if worker is None:
                 # Coordinator-local fallback isn't useful for
                 # orchestration — the whole point is fan-out across the

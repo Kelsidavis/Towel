@@ -48,6 +48,7 @@ class RoleDispatcher(Protocol):
         max_tokens: int,
         temperature: float,
         with_tools: bool,
+        task_type: str | None,
     ) -> str:
         ...
 
@@ -145,6 +146,26 @@ ROLE_PROMPTS: dict[str, str] = {
         "explain why the bug occurs, and provide verified fixes."
     ),
     "default": ("You are a helpful AI assistant. Be concise and accurate."),
+}
+
+
+# Map orchestrator roles to TaskType strings the dispatcher recognises.
+# Without this, the workspace preamble the orchestrator prepends to every
+# subtask prompt prevents the keyword classifier from triggering — the
+# prompt no longer starts with "write …" or "plan …", so it falls all
+# the way through to None and dispatches via role_match. Role_match
+# happens to pick the biggest INFERENCE worker (which is fine for
+# coder) but skips the dispatcher's prefer_quality preempt path that
+# would, e.g., pull SparklesMint off an idle task for an architect
+# request. Explicit mapping closes the gap.
+ROLE_TASK_TYPES: dict[str, str] = {
+    "architect": "plan",
+    "coder": "generate",
+    "researcher": "research",
+    "reviewer": "code_review",
+    "writer": "draft",
+    "tester": "test_gen",
+    "debugger": "analyze",
 }
 
 
@@ -361,6 +382,7 @@ class Orchestrator:
                 max_tokens=2048,
                 temperature=0.4,
                 with_tools=with_tools,
+                task_type=ROLE_TASK_TYPES.get(role),
             )
 
         # Local fallback: spin up a coordinator-side AgentRuntime with

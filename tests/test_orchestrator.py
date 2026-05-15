@@ -113,6 +113,7 @@ class _RecordingDispatcher:
         max_tokens: int,
         temperature: float,
         with_tools: bool,
+        task_type: str | None,
     ) -> str:
         self.calls.append({
             "role": role,
@@ -122,6 +123,7 @@ class _RecordingDispatcher:
             "max_tokens": max_tokens,
             "temperature": temperature,
             "with_tools": with_tools,
+            "task_type": task_type,
         })
         return f"[{role} result for: {prompt[:40]}]"
 
@@ -189,6 +191,38 @@ class TestOrchestratorWithDispatcher:
         # serializes them onto one worker.
         sids = {c["session_id"] for c in dispatcher.calls}
         assert len(sids) == 3
+
+    def test_role_to_task_type_mapping_flows_to_dispatcher(self):
+        """Without this, the workspace preamble the orchestrator
+        prepends to subtask prompts prevented the keyword classifier
+        from triggering (prompt no longer starts with 'write …') —
+        coder/architect/tester subtasks fell through to role_match
+        and skipped the dispatcher's prefer_quality preempt path.
+        Explicit role→task_type mapping closes the gap."""
+        from towel.config import TowelConfig
+        dispatcher = _RecordingDispatcher()
+        orch = Orchestrator(TowelConfig(), dispatcher=dispatcher)
+        tasks = [
+            AgentTask(role="architect", prompt="plan it"),
+            AgentTask(role="coder", prompt="write it"),
+            AgentTask(role="tester", prompt="test it"),
+            AgentTask(role="reviewer", prompt="review it"),
+            AgentTask(role="writer", prompt="document it"),
+            AgentTask(role="researcher", prompt="research it"),
+            AgentTask(role="debugger", prompt="debug it"),
+            AgentTask(role="default", prompt="something else"),
+        ]
+        asyncio.run(orch.run("g", tasks))
+        types_by_role = {c["role"]: c["task_type"] for c in dispatcher.calls}
+        assert types_by_role["architect"] == "plan"
+        assert types_by_role["coder"] == "generate"
+        assert types_by_role["tester"] == "test_gen"
+        assert types_by_role["reviewer"] == "code_review"
+        assert types_by_role["writer"] == "draft"
+        assert types_by_role["researcher"] == "research"
+        assert types_by_role["debugger"] == "analyze"
+        # `default` has no mapping — falls through to classifier.
+        assert types_by_role["default"] is None
 
     def test_with_tools_flows_through_to_dispatcher(self):
         """A subtask declared with_tools=True must hand that down to
@@ -322,7 +356,7 @@ class TestOrchestratorWithDispatcher:
 
             async def dispatch_role_task(  # noqa: PLR0913
                 self, role, role_system, prompt, *,
-                session_id, max_tokens, temperature, with_tools,
+                session_id, max_tokens, temperature, with_tools, task_type,
             ):
                 self.calls.append(role)
                 if role == "architect":
@@ -358,7 +392,7 @@ class TestOrchestratorWithDispatcher:
         class _FailDep:
             async def dispatch_role_task(  # noqa: PLR0913
                 self, role, role_system, prompt, *,
-                session_id, max_tokens, temperature, with_tools,
+                session_id, max_tokens, temperature, with_tools, task_type,
             ):
                 if role == "architect":
                     raise RuntimeError("nope")
