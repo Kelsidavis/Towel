@@ -316,6 +316,43 @@ class TestProbeFleetEndpoints:
         joined_warnings = " | ".join(c.warnings)
         assert "Empty-text retries" not in joined_warnings
 
+    def test_empty_text_retries_silent_when_log_status_missing(self):
+        """Older serves predate the empty_text_retries_by_worker
+        field — doctor running against them must not crash on a
+        missing log_status, and must stay silent (no warn) since
+        the data simply isn't available. Pre-fix code did `data["log_status"]`
+        which would raise KeyError on older deploys; the current
+        `data.get("log_status") or {}` chain handles it."""
+        responses = {
+            "/workers": {"workers": []},
+            "/skills": {"skills": [], "total_tools": 0},
+            "/fleet/inventory": {
+                "models": [], "total_unique": 0, "total_workers": 0,
+                "fleet_max_param_b": 0.0,
+            },
+            "/dispatch/recent?limit=1": {"decisions": []},  # no log_status
+            "/cluster/handoffs": {
+                "stats": {"total": 0, "failed": 0, "pending": 0}, "recent": [],
+            },
+        }
+
+        def fake_get(url, timeout=None):
+            for suffix, payload in responses.items():
+                if url.endswith(suffix):
+                    return _mock_response(payload)
+            raise AssertionError(f"unexpected url: {url}")
+
+        c = Check("test")
+        with patch("httpx.get", side_effect=fake_get):
+            _probe_fleet_endpoints(c, "localhost", 18743)
+
+        joined_warnings = " | ".join(c.warnings)
+        assert "Empty-text retries" not in joined_warnings
+        # Doctor still runs the rest of the probe — no crash on
+        # missing optional field.
+        joined_details = " | ".join(c.details)
+        assert "Dispatch log: empty" in joined_details
+
     def test_empty_text_retries_silent_when_buffer_clean(self):
         """No flaky workers in the buffer → no warning surfaced. The
         log_status field is always present (UIs don't have to special-
