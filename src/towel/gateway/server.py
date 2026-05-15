@@ -3666,6 +3666,11 @@ class GatewayServer:
                             "created_at": s.created_at,
                             "message_count": s.message_count,
                             "summary": s.summary,
+                            # Tags were on /api/sessions but not here —
+                            # two list endpoints with different shapes
+                            # confused API clients. Both now expose
+                            # the same shape so callers can use either.
+                            "tags": list(s.tags),
                         }
                         for s in summaries
                     ]

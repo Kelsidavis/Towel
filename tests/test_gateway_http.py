@@ -369,6 +369,21 @@ class TestConversationsAPI:
         assert len(data["conversations"]) == 1
         assert data["conversations"][0]["id"] == "test-1"
         assert data["conversations"][0]["message_count"] == 1
+        # `tags` field present (empty list by default) matches the
+        # shape of /api/sessions so API clients can use either.
+        assert data["conversations"][0]["tags"] == []
+
+    def test_list_carries_tags(self, store, client):
+        """A conversation with tags exposes them on /conversations
+        the same way /api/sessions does — same data, two paths."""
+        conv = Conversation(id="tagged-x", channel="api")
+        conv.tags = ["work", "urgent"]
+        conv.add(Role.USER, "hi")
+        store.save(conv)
+
+        data = client.get("/conversations").json()
+        assert len(data["conversations"]) == 1
+        assert data["conversations"][0]["tags"] == ["work", "urgent"]
 
     def test_get_conversation(self, store, client):
         conv = Conversation(id="detail-1", channel="webchat")
