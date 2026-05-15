@@ -506,6 +506,48 @@ class TestObservability:
         import json
         json.dumps(hist[-1].to_dict())
 
+    def test_record_retry_notes_reflect_cause(self):
+        """The retry path used to hardcode 'retry after empty
+        response from X' in notes, but the same code is also called
+        from the primary_failed (timeout/exception) branch. Operators
+        triaging a timed-out request saw "empty response" — wrong and
+        actively misleading. Threading the cause through gives the
+        notes line accurate failure semantics."""
+        workers = WorkerRegistry()
+        _make_worker(workers, "primary")
+        alt = _make_worker(workers, "alt")
+        d = _make_dispatcher(workers)
+
+        # Default cause: empty text (preserve existing behavior).
+        empty_retry = d.record_retry(
+            session_id="s-empty",
+            retry_worker=alt,
+            original_worker_id="primary",
+            intent="chat",
+        )
+        assert "empty response" in empty_retry.notes
+
+        # primary_failed cause: notes say "failed", not "empty".
+        failed_retry = d.record_retry(
+            session_id="s-failed",
+            retry_worker=alt,
+            original_worker_id="primary",
+            intent="chat",
+            cause="primary_failed",
+        )
+        assert "failed" in failed_retry.notes
+        assert "empty response" not in failed_retry.notes
+
+        # Free-text cause (e.g. with timeout details) surfaces verbatim.
+        timeout_retry = d.record_retry(
+            session_id="s-timeout",
+            retry_worker=alt,
+            original_worker_id="primary",
+            intent="chat",
+            cause="primary_failed: worker primary did not respond within 60s",
+        )
+        assert "did not respond within 60s" in timeout_retry.notes
+
 
 # --------------------------------------------------------------------------- #
 # Excludes                                                                     #

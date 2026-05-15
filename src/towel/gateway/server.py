@@ -5372,12 +5372,26 @@ class GatewayServer:
                             # operators that a fallback happened. The
                             # decision's `previous_worker_id` points
                             # to the failed primary.
+                            #
+                            # `cause` differentiates "primary failed
+                            # (timeout/error)" from "empty text" so
+                            # the notes line in /dispatch/recent
+                            # reflects the real failure mode. Without
+                            # it, a timed-out primary was logged as
+                            # "retry after empty response" — wrong
+                            # and actively misleading when triaging
+                            # latency issues.
                             if self._dispatcher is not None:
                                 self._dispatcher.record_retry(
                                     session_id=session_id,
                                     retry_worker=alt,
                                     original_worker_id=worker.id,
                                     intent="chat",
+                                    cause=(
+                                        f"primary_failed: {primary_exc}"
+                                        if primary_failed and primary_exc is not None
+                                        else "empty_text"
+                                    ),
                                 )
                             # Drop the diagnostic placeholder so the
                             # alt worker doesn't see it as its own

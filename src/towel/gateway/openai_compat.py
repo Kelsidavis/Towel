@@ -399,12 +399,21 @@ def build_openai_routes(
                                         # dispatch decision so
                                         # /dispatch/recent shows the
                                         # fallback path. Same as /api/ask.
+                                        # Pass the real failure cause so
+                                        # the dispatch notes don't claim
+                                        # "empty response" for a timed-
+                                        # out primary.
                                         if getattr(gateway, "_dispatcher", None) is not None:
                                             gateway._dispatcher.record_retry(
                                                 session_id=session_id,
                                                 retry_worker=alt,
                                                 original_worker_id=worker.id,
                                                 intent="chat",
+                                                cause=(
+                                                    f"primary_failed: {v1_primary_exc}"
+                                                    if v1_primary_failed and v1_primary_exc is not None
+                                                    else "empty_text"
+                                                ),
                                             )
                                         # Pop the placeholder so the alt
                                         # worker doesn't see it as a prior

@@ -807,6 +807,7 @@ class Dispatcher:
         retry_worker: "WorkerInfo",
         original_worker_id: str,
         intent: str,
+        cause: str = "empty_text",
     ) -> DispatchDecision:
         """Log a coordinator-side retry as its own dispatch decision.
 
@@ -818,12 +819,28 @@ class Dispatcher:
         retry as a separate decision with ``reason=retry_empty_text``
         and ``previous_worker_id=<primary>`` so the log entry is
         self-describing.
+
+        ``cause`` distinguishes WHY the retry happened so the notes
+        line accurately reflects the failure mode. Operators reading
+        /dispatch/recent for a timed-out request previously saw
+        "retry after empty response" — misleading; the primary
+        actually hit the worker_inference_timeout (default 300s),
+        not an empty-text fallback. Pass ``cause="primary_failed"``
+        (or any free-text description, e.g. "primary_failed: timeout
+        after 60s") so the dispatch entry surfaces the real cause.
         """
+        if cause == "empty_text":
+            note_phrase = f"retry after empty response from {original_worker_id}"
+        elif cause == "primary_failed":
+            note_phrase = f"retry after {original_worker_id} failed"
+        else:
+            # Free-text cause (e.g. "primary_failed: timeout after 60s").
+            note_phrase = f"retry after {original_worker_id}: {cause}"
         decision = DispatchDecision(
             worker=retry_worker,
             intent=intent,
             reason=REASON_RETRY_EMPTY,
-            notes=f"retry after empty response from {original_worker_id}",
+            notes=note_phrase,
             session_id=session_id,
             previous_worker_id=original_worker_id,
             candidates_considered=1,
