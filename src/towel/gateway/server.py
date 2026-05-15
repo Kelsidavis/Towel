@@ -1619,6 +1619,14 @@ class GatewayServer:
         it has visibility into every worker's contribution and can
         decide whether they agree, disagree, or partially overlap.
 
+        ``timing_sink``: optional dict the caller passes in to receive
+        per-call timing. On a successful synthesis the function writes
+        ``synthesis_ms`` (wall time of the local-agent generate). On
+        timeout it additionally writes ``synthesis_timeout: True`` so
+        operators can distinguish "synthesis ran and was useful" from
+        "synthesis bailed at the timeout bound." Pass ``None`` (default)
+        to opt out — common for callers that don't surface timing.
+
         Returns the synthesized answer text, or "" on failure
         (caller will fall back to a deterministic pick).
         """
