@@ -3851,10 +3851,26 @@ class GatewayServer:
                 # Route through cluster workers when available
                 worker, intent = await self._route_by_role(message, session_id)
                 if worker and intent == "chat":
-                    response = await self._quick_remote_infer(
-                        session_id, session, worker, max_tokens=256,
-                        identity_override=identity_override,
-                    )
+                    # Wrap primary call so a timeout / worker error
+                    # gets a retry on the alternate too, not just the
+                    # empty-text case. Operationally these are the same
+                    # failure: "worker X didn't give us a useful
+                    # answer" — and a second worker is right there.
+                    try:
+                        response = await self._quick_remote_infer(
+                            session_id, session, worker, max_tokens=256,
+                            identity_override=identity_override,
+                        )
+                        primary_failed = False
+                        primary_exc: Exception | None = None
+                    except Exception as exc:
+                        log.info(
+                            "primary worker %s raised %s; will try alternate",
+                            worker.id, exc,
+                        )
+                        primary_failed = True
+                        primary_exc = exc
+                        response = None  # type: ignore[assignment]
                     # When the chosen worker emitted no real text (small
                     # models like gemma-4-E2B routinely produce tool
                     # calls or empty content for a "hi"), try a SECOND
@@ -3867,12 +3883,26 @@ class GatewayServer:
                     # because in practice that path is slow enough
                     # (~85s for MLX on this fleet) to make the diagnostic
                     # placeholder a better UX than a hang.
-                    if (response.metadata or {}).get("empty_text_fallback"):
+                    needs_retry = primary_failed or (
+                        response is not None
+                        and (response.metadata or {}).get("empty_text_fallback")
+                    )
+                    if needs_retry:
                         alt = self._pick_alternate_chat_worker(exclude={worker.id})
+                        if alt is None and primary_failed:
+                            # No alt and primary raised — re-raise the
+                            # primary exception so the caller's 500
+                            # carries the useful message.
+                            assert primary_exc is not None
+                            raise primary_exc
                         if alt is not None:
                             log.info(
-                                "worker %s returned empty text; retrying on %s",
-                                worker.id, alt.id,
+                                "worker %s %s; retrying on %s",
+                                worker.id,
+                                "failed (" + str(primary_exc) + ")"
+                                if primary_failed
+                                else "returned empty text",
+                                alt.id,
                             )
                             # Record the retry as its own dispatch
                             # decision so /dispatch/recent shows
@@ -3888,13 +3918,15 @@ class GatewayServer:
                                 )
                             # Drop the diagnostic placeholder so the
                             # alt worker doesn't see it as its own
-                            # prior assistant turn. Remember what we
-                            # popped — if the retry itself raises, we
-                            # have to restore it to keep the persisted
-                            # session consistent.
+                            # prior assistant turn. Only the empty-text
+                            # path has a placeholder to pop — the
+                            # primary-failed path never appended one.
                             popped: Any = None
-                            if session.conversation.messages and (
-                                session.conversation.messages[-1].role == Role.ASSISTANT
+                            if (
+                                not primary_failed
+                                and session.conversation.messages
+                                and session.conversation.messages[-1].role
+                                == Role.ASSISTANT
                             ):
                                 popped = session.conversation.messages.pop()
                             try:
@@ -3907,27 +3939,41 @@ class GatewayServer:
                                 # Restore the original placeholder so the
                                 # session record matches what we'll send
                                 # back to the caller, then keep the
-                                # original `response`.
+                                # original `response` if we have one,
+                                # otherwise re-raise the primary exc.
                                 log.warning(
-                                    "retry on %s failed (%s); keeping original "
-                                    "empty-text response from %s",
-                                    alt.id, retry_exc, worker.id,
+                                    "retry on %s failed (%s); keeping %s",
+                                    alt.id, retry_exc,
+                                    "primary exception" if primary_failed
+                                    else f"empty-text response from {worker.id}",
                                 )
                                 if popped is not None:
                                     session.conversation.messages.append(popped)
+                                if primary_failed:
+                                    assert primary_exc is not None
+                                    raise primary_exc
                             else:
                                 # Only adopt the retry if it actually
                                 # produced text. If the alt worker ALSO
-                                # returned empty, keep the original
-                                # diagnostic (no point flapping).
-                                if not (retry_response.metadata or {}).get(
+                                # returned empty AND we have an original
+                                # response, keep that — no point flapping.
+                                # If primary FAILED (no response) and the
+                                # alt returned empty, adopt the empty
+                                # response with fallback metadata anyway —
+                                # the diagnostic placeholder is more useful
+                                # than the primary's exception.
+                                alt_was_empty = (retry_response.metadata or {}).get(
                                     "empty_text_fallback"
-                                ):
+                                )
+                                if (not alt_was_empty) or primary_failed:
                                     retry_response.metadata = (
                                         retry_response.metadata or {}
                                     ) | {
                                         "fallback_from_worker": worker.id,
-                                        "fallback_reason": "empty_text",
+                                        "fallback_reason": (
+                                            "primary_failed" if primary_failed
+                                            else "empty_text"
+                                        ),
                                     }
                                     response = retry_response
                 elif worker:

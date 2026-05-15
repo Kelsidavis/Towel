@@ -691,6 +691,85 @@ class TestSimpleAskAPI:
         assert resp.status_code == 400
         assert "string" in resp.json()["error"]
 
+    def test_primary_failure_retries_on_alt(self, gateway, client):
+        """When the primary worker crashes (timeout, connection lost),
+        the alt worker should still get a try — same as the
+        empty-response retry path. Operationally these are the same
+        failure: 'primary didn't give us a useful answer.'"""
+        from unittest.mock import AsyncMock
+        from towel.agent.conversation import Message, Role
+        from towel.gateway.workers import WorkerInfo
+
+        fake_primary = WorkerInfo(id="primary-fail", ws=AsyncMock(), capabilities={})
+        fake_alt = WorkerInfo(
+            id="alt-good", ws=AsyncMock(),
+            capabilities={"total_vram_mb": 16000},
+        )
+        gateway._workers._workers["primary-fail"] = fake_primary
+        gateway._workers._workers["alt-good"] = fake_alt
+
+        async def fake_route(message, session_id):
+            return fake_primary, "chat"
+
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        call_log: list[str] = []
+
+        async def fake_quick(session_id, session, worker, **kwargs):
+            call_log.append(worker.id)
+            if worker.id == "primary-fail":
+                raise RuntimeError("worker primary-fail did not respond within 60s")
+            msg = Message(
+                role=Role.ASSISTANT,
+                content="hi from alt",
+                metadata={"remote_worker": "alt-good"},
+            )
+            session.conversation.messages.append(msg)
+            return msg
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "hi", "session_id": "primary-failure-retry"},
+        )
+        assert resp.status_code == 200
+        # Both workers were attempted.
+        assert call_log == ["primary-fail", "alt-good"]
+        body = resp.json()
+        assert body["response"] == "hi from alt"
+        # fallback_from_worker should tag the primary.
+        assert body["fallback_from_worker"] == "primary-fail"
+        assert body["fallback_reason"] == "primary_failed"
+
+    def test_primary_failure_no_alt_re_raises(self, gateway, client):
+        """If primary fails and there's no alt worker, the API
+        caller should see the primary's exception bubble up as a
+        500 — not silently masked."""
+        from unittest.mock import AsyncMock
+        from towel.gateway.workers import WorkerInfo
+
+        only_worker = WorkerInfo(id="only-one", ws=AsyncMock(), capabilities={})
+        gateway._workers._workers["only-one"] = only_worker
+
+        async def fake_route(message, session_id):
+            return only_worker, "chat"
+
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        async def fake_quick(session_id, session, worker, **kwargs):
+            raise RuntimeError("worker only-one did not respond within 60s")
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "hi", "session_id": "single-worker-fail"},
+        )
+        assert resp.status_code == 500
+        assert "only-one" in resp.json()["error"]
+        assert "did not respond" in resp.json()["error"]
+
     def test_retry_failure_restores_original_placeholder(self, gateway, client):
         """When the empty-response retry path crashes (worker DC,
         timeout, anything), the session must still have a coherent
