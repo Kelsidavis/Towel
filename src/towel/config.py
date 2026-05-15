@@ -163,18 +163,54 @@ class TowelConfig(BaseModel):
 
     @classmethod
     def load(cls, path: Path | None = None) -> TowelConfig:
-        """Load config from TOML file, falling back to defaults."""
+        """Load config from TOML file, falling back to defaults.
+
+        On corruption (bad TOML, OS read error, model validation
+        failure), rename the bad file aside to a sibling
+        ``.corrupted-<ts>`` and fall back to defaults. Same pattern
+        the JSON-backed stores got (5512834, 98d1c68, 8a86987,
+        c62847f). Without this guard, a corrupted config.toml made
+        the coordinator crash on startup — the recovery flow was
+        "delete the file by hand" which also destroyed any
+        operator-set non-default values.
+        """
         config_path = path or TOWEL_HOME / "config.toml"
-        if config_path.exists():
+        if not config_path.exists():
+            return cls()
+        try:
             data: dict[str, Any] = toml.load(config_path)
             return cls.model_validate(data)
-        return cls()
+        except Exception as exc:
+            from datetime import UTC, datetime
+            backup = config_path.with_name(
+                f"{config_path.name}.corrupted-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}"
+            )
+            try:
+                config_path.replace(backup)
+                import logging
+                logging.getLogger("towel.config").warning(
+                    "Failed to load config: %s. Backed up the bad file "
+                    "to %s and falling back to defaults.",
+                    exc, backup,
+                )
+            except OSError:
+                pass
+            return cls()
 
     def save(self, path: Path | None = None) -> None:
-        """Save config to TOML file."""
+        """Save config to TOML file.
+
+        Atomic write: dumps to a sibling .tmp then renames. Without
+        this, a kill / disk-full mid-write leaves a half-written
+        config.toml that load() backs up and replaces with defaults
+        — silently undoing every operator-tuned setting (model name,
+        memory paths, gateway host/port, …).
+        """
         config_path = path or TOWEL_HOME / "config.toml"
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(toml.dumps(self.model_dump()))
+        tmp = config_path.with_name(config_path.name + ".tmp")
+        tmp.write_text(toml.dumps(self.model_dump()))
+        tmp.replace(config_path)
 
     def list_agents(self) -> dict[str, AgentProfile]:
         """List all available agents (user-defined + built-in)."""
