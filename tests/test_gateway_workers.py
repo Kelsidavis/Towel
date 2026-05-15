@@ -395,6 +395,28 @@ class TestRemoteExecution:
         assert "loop_detected_call_name" in src
         assert "stuck" in src.lower() or "stopping" in src.lower()
 
+    def test_stream_remote_inference_persists_terminal_messages(self):
+        """The non-streaming path appends both the loop-detected stuck
+        message and the max-iterations fall-off message into the
+        session conversation before returning. The streaming sibling
+        previously sent these via the WS complete event but never
+        added them to session.conversation — replay loaded the
+        transcript ending at the last tool result, so an operator
+        looking at the saved conversation couldn't tell why the model
+        "stopped responding". Verify the streaming path now mirrors
+        the persistence step."""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._stream_remote_inference)
+        # Both terminal branches must append to the conversation.
+        # Find the loop-detected branch and the max-iterations branch.
+        assert "session.conversation.add(Role.ASSISTANT, stuck_msg)" in src
+        # The max-iterations branch only adds when remaining_text is
+        # empty (otherwise the loop body already added it).
+        assert "session.conversation.add(Role.ASSISTANT, max_iter_msg)" in src
+
     @pytest.mark.asyncio
     async def test_step_remote_inference_updates_session_from_worker_result(self, gateway):
         session = gateway.sessions.get_or_create("remote-step")

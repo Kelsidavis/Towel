@@ -2031,6 +2031,15 @@ class GatewayServer:
                 f"I got stuck calling {loop_detected_call_name!r} repeatedly. "
                 "Stopping to avoid burning more time on this turn."
             )
+            # Persist the stuck message so the next turn (and any
+            # /conversations replay) sees the same text the WS client
+            # just got. The last iteration's `remaining_text` (if any)
+            # was already appended to the conversation in the for-loop,
+            # so we only need to add the stuck_msg itself. Without
+            # this, the WS client saw the loop-detected complete event
+            # but the persisted transcript ended with the last tool
+            # result — replay showed no model response.
+            session.conversation.add(Role.ASSISTANT, stuck_msg)
             await ws.send(
                 json.dumps(
                     AgentEvent.complete(
@@ -2044,10 +2053,18 @@ class GatewayServer:
                 )
             )
             return
+        # Same persistence symmetry for the max-iterations fall-off
+        # path — the natural exit-by-iteration-limit must land in the
+        # conversation too, not just the WS event stream. When
+        # remaining_text is non-empty it was already added in the
+        # loop body, so emit only the iteration-limit notice.
+        max_iter_msg = "I've reached my tool execution limit for this turn."
+        if not remaining_text:
+            session.conversation.add(Role.ASSISTANT, max_iter_msg)
         await ws.send(
             json.dumps(
                 AgentEvent.complete(
-                    remaining_text or "I've reached my tool execution limit for this turn.",
+                    remaining_text or max_iter_msg,
                     metadata={
                         "tokens": total_tokens,
                         "remote_worker": worker.id,
