@@ -401,7 +401,20 @@ def build_openai_routes(
                 if response is None:
                     response = await agent.step(conv)
                 meta = response.metadata or {}
-                completion_tokens = meta.get("tokens", meta.get("output_tokens", 0))
+                # Workers occasionally emit `tokens: None` /
+                # `output_tokens: None` after a job_error or
+                # empty-text fallback. The downstream `prompt_tokens +
+                # completion_tokens` in _format_completion raises
+                # TypeError on None, turning a recoverable error into
+                # HTTP 500 with no SSE complete frame. Coerce to int
+                # at the boundary (same defensive shape /api/ask got
+                # in 8473883 and SSE got in b553f7b).
+                completion_raw = meta.get("tokens", meta.get("output_tokens", 0))
+                completion_tokens = (
+                    int(completion_raw)
+                    if isinstance(completion_raw, (int, float))
+                    else 0
+                )
                 # Defensive: when the worker reports zero completion_tokens
                 # but we have visible content, estimate from the response
                 # text. Happens when an upstream llama-server build doesn't
@@ -416,7 +429,12 @@ def build_openai_routes(
                 # code derived prompt_tokens from completion_tokens // 4
                 # which gave nonsense (e.g. prompt=1 for a long input
                 # that produced 0 tokens).
-                prompt_tokens = meta.get("prompt_tokens")
+                prompt_raw = meta.get("prompt_tokens")
+                prompt_tokens = (
+                    int(prompt_raw)
+                    if isinstance(prompt_raw, (int, float))
+                    else None
+                )
                 if prompt_tokens is None:
                     from towel.agent.context import count_tokens_fallback
                     prompt_tokens = sum(
