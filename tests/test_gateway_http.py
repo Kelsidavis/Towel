@@ -177,6 +177,58 @@ class TestOrchestrateEndpoint:
         assert captured[0]["with_tools"] is False
         assert captured[1]["with_tools"] is True
 
+    def test_orchestrate_max_attempts_validated(self, client):
+        # Non-int rejected
+        resp = client.post("/api/orchestrate", json={
+            "goal": "g", "tasks": [{"role": "coder", "prompt": "x"}],
+            "max_attempts": "many",
+        })
+        assert resp.status_code == 400
+        # Bool rejected (would silently coerce to 1 otherwise)
+        resp = client.post("/api/orchestrate", json={
+            "goal": "g", "tasks": [{"role": "coder", "prompt": "x"}],
+            "max_attempts": True,
+        })
+        assert resp.status_code == 400
+        # Out of range rejected
+        resp = client.post("/api/orchestrate", json={
+            "goal": "g", "tasks": [{"role": "coder", "prompt": "x"}],
+            "max_attempts": 0,
+        })
+        assert resp.status_code == 400
+        resp = client.post("/api/orchestrate", json={
+            "goal": "g", "tasks": [{"role": "coder", "prompt": "x"}],
+            "max_attempts": 100,
+        })
+        assert resp.status_code == 400
+
+    def test_orchestrate_attempts_surface_in_response(self, gateway, client):
+        """The response must expose `attempts` per task so callers can
+        see when the cluster needed multiple workers to satisfy them."""
+        attempts: list[int] = []
+
+        async def fake_dispatch(
+            role, role_system, prompt, *,
+            session_id, max_tokens, temperature, with_tools,  # noqa: ARG001
+        ):
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise RuntimeError("first attempt fails")
+            return f"{role}-done-on-retry"
+
+        gateway.dispatch_role_task = fake_dispatch  # type: ignore[method-assign]
+
+        resp = client.post("/api/orchestrate", json={
+            "goal": "g",
+            "tasks": [{"role": "coder", "prompt": "x"}],
+            "max_attempts": 3,
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"]
+        assert body["tasks"][0]["attempts"] == 2
+        assert body["tasks"][0]["result"].endswith("done-on-retry")
+
     def test_orchestrate_with_tools_must_be_bool(self, client):
         resp = client.post("/api/orchestrate", json={
             "goal": "g",

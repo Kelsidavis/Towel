@@ -7003,11 +7003,30 @@ class GatewayServer:
 
             parallel = bool(body.get("parallel", False))
 
+            max_attempts_raw = body.get("max_attempts", 2)
+            if not isinstance(max_attempts_raw, int) or isinstance(max_attempts_raw, bool):
+                # `isinstance(True, int)` is True in Python — reject
+                # booleans explicitly so `{"max_attempts": true}` doesn't
+                # silently turn into 1.
+                return JSONResponse(
+                    {"error": "max_attempts must be an integer"},
+                    status_code=400,
+                )
+            # Clamp to [1, 5]. Higher values just burn worker time on
+            # a request that probably has a deeper problem (bad prompt,
+            # broken tool) than the retry path can recover from.
+            if max_attempts_raw < 1 or max_attempts_raw > 5:
+                return JSONResponse(
+                    {"error": "max_attempts must be in [1, 5]"},
+                    status_code=400,
+                )
+
             orch = Orchestrator(
                 config=self.config,
                 skills=getattr(self.agent, "skills", None),
                 memory=getattr(self.agent, "memory", None),
                 dispatcher=self,
+                max_attempts=max_attempts_raw,
             )
             try:
                 if parallel:
@@ -7033,6 +7052,7 @@ class GatewayServer:
                         "with_tools": t.with_tools,
                         "status": t.status,
                         "elapsed_ms": round(t.elapsed * 1000.0, 1),
+                        "attempts": t.attempts,
                         "result": t.result,
                     }
                     for t in result.tasks

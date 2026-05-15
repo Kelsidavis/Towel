@@ -213,9 +213,71 @@ class TestOrchestratorWithDispatcher:
             async def dispatch_role_task(self, *args, **kwargs) -> str:  # noqa: ARG002
                 raise RuntimeError("worker timed out")
 
-        orch = Orchestrator(TowelConfig(), dispatcher=_BrokenDispatcher())
+        # max_attempts=1 disables the default retry so the test is
+        # checking the failure-propagation path, not the retry path.
+        orch = Orchestrator(
+            TowelConfig(), dispatcher=_BrokenDispatcher(), max_attempts=1,
+        )
         tasks = [AgentTask(role="coder", prompt="x")]
         result = asyncio.run(orch.run("g", tasks))
         assert not result.success
         assert tasks[0].status == "failed"
         assert "worker timed out" in tasks[0].result
+        assert tasks[0].attempts == 1
+
+    def test_retry_recovers_when_second_attempt_succeeds(self):
+        """When a subtask fails once then succeeds, the orchestrator
+        marks the task completed and records the attempt count.
+        This is the codex-style "primary worker emitted empty text →
+        alt worker answered" pattern."""
+        from towel.config import TowelConfig
+
+        attempts = {"count": 0}
+
+        class _FlakyDispatcher:
+            async def dispatch_role_task(self, *args, **kwargs) -> str:  # noqa: ARG002
+                attempts["count"] += 1
+                if attempts["count"] == 1:
+                    raise RuntimeError("primary returned empty")
+                return "real answer on retry"
+
+        orch = Orchestrator(TowelConfig(), dispatcher=_FlakyDispatcher())
+        tasks = [AgentTask(role="coder", prompt="x")]
+        result = asyncio.run(orch.run("g", tasks))
+        assert result.success
+        assert tasks[0].status == "completed"
+        assert tasks[0].result == "real answer on retry"
+        assert tasks[0].attempts == 2
+
+    def test_retry_gives_up_after_max_attempts(self):
+        from towel.config import TowelConfig
+
+        attempt_log: list[int] = []
+
+        class _AlwaysFails:
+            async def dispatch_role_task(self, *args, **kwargs) -> str:  # noqa: ARG002
+                attempt_log.append(1)
+                raise RuntimeError(f"fail #{len(attempt_log)}")
+
+        orch = Orchestrator(
+            TowelConfig(), dispatcher=_AlwaysFails(), max_attempts=3,
+        )
+        tasks = [AgentTask(role="coder", prompt="x")]
+        result = asyncio.run(orch.run("g", tasks))
+        assert not result.success
+        # Tried exactly max_attempts times.
+        assert len(attempt_log) == 3
+        assert tasks[0].attempts == 3
+        # Final error message reflects the last failure.
+        assert "fail #3" in tasks[0].result
+
+    def test_retry_max_attempts_floor_is_one(self):
+        """max_attempts<=0 should clamp to 1 — orchestrator must always
+        try at least once per subtask, never zero-attempts."""
+        from towel.config import TowelConfig
+        dispatcher = _RecordingDispatcher()
+        orch = Orchestrator(TowelConfig(), dispatcher=dispatcher, max_attempts=0)
+        tasks = [AgentTask(role="coder", prompt="x")]
+        asyncio.run(orch.run("g", tasks))
+        assert len(dispatcher.calls) == 1
+        assert tasks[0].attempts == 1

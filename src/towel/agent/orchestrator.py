@@ -67,6 +67,10 @@ class AgentTask:
     # can call write_file/read_file/edit_file. Defaults False so simple
     # text-only roles (writer, default) stay on the faster path.
     with_tools: bool = False
+    # How many times this subtask retried before completing or failing.
+    # Surfaced so operators reading the response body can see when the
+    # cluster needed multiple workers to satisfy a request.
+    attempts: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -75,6 +79,7 @@ class AgentTask:
             "status": self.status,
             "elapsed": f"{self.elapsed:.1f}s",
             "result_length": len(self.result),
+            "attempts": self.attempts,
         }
 
 
@@ -155,11 +160,55 @@ class Orchestrator:
         skills: Any = None,
         memory: Any = None,
         dispatcher: RoleDispatcher | None = None,
+        max_attempts: int = 2,
     ) -> None:
         self.config = config
         self.skills = skills
         self.memory = memory
         self.dispatcher = dispatcher
+        # Single retry by default. Mirrors `/api/ask`'s primary→alt
+        # fallback: if a worker emits empty text or times out, a second
+        # attempt typically lands on the alternate worker (since the
+        # first is now busy/draining) and succeeds. Setting this to 1
+        # disables retries, which is occasionally useful for explicit
+        # benchmarking of a particular worker.
+        self.max_attempts = max(1, int(max_attempts))
+
+    async def _execute_with_retry(self, task: AgentTask, full_prompt: str) -> None:
+        """Run a subtask, retrying once on failure.
+
+        Updates `task` in place — populates result/status/elapsed/attempts.
+        Captures the last error message as the result on terminal failure
+        so the caller and downstream synthesis still see what went wrong.
+        """
+        task_start = time.perf_counter()
+        task.status = "running"
+        last_exc: Exception | None = None
+        for attempt in range(self.max_attempts):
+            task.attempts = attempt + 1
+            try:
+                task.result = await self._run_agent(
+                    task.role, full_prompt, with_tools=task.with_tools,
+                )
+                task.status = "completed"
+                last_exc = None
+                break
+            except Exception as e:
+                last_exc = e
+                log.warning(
+                    "Task (%s, attempt %d/%d) failed: %s",
+                    task.role, attempt + 1, self.max_attempts, e,
+                )
+                # Brief yield between attempts so the dispatcher can
+                # release the failed worker's slot — without this, a
+                # tight retry on the same event-loop tick lands back on
+                # the same worker that just failed. Same idea as the
+                # `await asyncio.sleep(0)` after `_preempt_idle_task`.
+                await asyncio.sleep(0)
+        if last_exc is not None:
+            task.result = f"Error: {last_exc}"
+            task.status = "failed"
+        task.elapsed = time.perf_counter() - task_start
 
     async def run(self, goal: str, tasks: list[AgentTask]) -> OrchestratorResult:
         """Execute a sequence of agent tasks, respecting dependencies."""
@@ -196,21 +245,11 @@ class Orchestrator:
             full_prompt += f"Goal: {goal}\n\nYour task: {task.prompt}"
 
             # Execute
-            task.status = "running"
-            task_start = time.perf_counter()
-
-            try:
-                task.result = await self._run_agent(
-                    task.role, full_prompt, with_tools=task.with_tools,
-                )
-                task.status = "completed"
-            except Exception as e:
-                task.result = f"Error: {e}"
-                task.status = "failed"
-                log.error(f"Task {i} ({task.role}) failed: {e}")
-
-            task.elapsed = time.perf_counter() - task_start
-            log.info(f"Task {i} ({task.role}): {task.status} in {task.elapsed:.1f}s")
+            await self._execute_with_retry(task, full_prompt)
+            log.info(
+                "Task %d (%s): %s in %.1fs (attempts=%d)",
+                i, task.role, task.status, task.elapsed, task.attempts,
+            )
 
         result.total_elapsed = time.perf_counter() - start
 
@@ -227,19 +266,9 @@ class Orchestrator:
         """Execute independent tasks in parallel."""
         start = time.perf_counter()
 
-        async def _exec(i: int, task: AgentTask) -> None:
-            task.status = "running"
-            task_start = time.perf_counter()
-            try:
-                full_prompt = f"Goal: {goal}\n\nYour task: {task.prompt}"
-                task.result = await self._run_agent(
-                    task.role, full_prompt, with_tools=task.with_tools,
-                )
-                task.status = "completed"
-            except Exception as e:
-                task.result = f"Error: {e}"
-                task.status = "failed"
-            task.elapsed = time.perf_counter() - task_start
+        async def _exec(i: int, task: AgentTask) -> None:  # noqa: ARG001
+            full_prompt = f"Goal: {goal}\n\nYour task: {task.prompt}"
+            await self._execute_with_retry(task, full_prompt)
 
         await asyncio.gather(*[_exec(i, t) for i, t in enumerate(tasks)])
 
