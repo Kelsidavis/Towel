@@ -26,15 +26,30 @@ def _load() -> dict[str, str]:
         return json.loads(ALIASES_FILE.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as e:
         log.warning(f"Failed to load aliases: {e}")
+        # Rename the corrupt file aside so the next _save can't
+        # overwrite the bytes with a fresh (probably empty) alias
+        # dict. Same pattern the persistence stores got
+        # (5512834, 98d1c68, 8a86987).
+        from datetime import UTC, datetime
+        backup = ALIASES_FILE.with_name(
+            f"{ALIASES_FILE.name}.corrupted-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}"
+        )
+        try:
+            ALIASES_FILE.replace(backup)
+        except OSError:
+            pass
         return {}
 
 
 def _save(aliases: dict[str, str]) -> None:
     ALIASES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    ALIASES_FILE.write_text(
+    # Atomic write — see persistence/store.py for rationale.
+    tmp = ALIASES_FILE.with_name(ALIASES_FILE.name + ".tmp")
+    tmp.write_text(
         json.dumps(aliases, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+    tmp.replace(ALIASES_FILE)
 
 
 def get_alias(name: str) -> str | None:

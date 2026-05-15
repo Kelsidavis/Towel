@@ -50,3 +50,27 @@ class TestAgentStorage:
         assert a is not None
         assert len(a.logs) == 1
         assert a.total_runs == 1
+
+    def test_corrupt_file_backed_up_on_load(self, tmp_path):
+        """If _load_agents returns [] on corruption, the next create
+        would overwrite the corrupt file with just the new agent —
+        every prior agent gone. Rename the bad file aside instead.
+        Same pattern persistence stores got (5512834, 98d1c68,
+        8a86987)."""
+        from towel.agent import agents as _agents
+        # Write a corrupt file in the test's monkeypatched location.
+        bad = _agents.AGENTS_FILE
+        bad.write_text("{ not valid json")
+
+        # create_agent triggers _load_agents → fails → backs up →
+        # writes new file with one entry.
+        create_agent("after-corruption", "test")
+
+        # The bad bytes are saved aside under a corrupted-* sibling.
+        backups = list(bad.parent.glob(f"{bad.name}.corrupted-*"))
+        assert len(backups) == 1
+        assert backups[0].read_text() == "{ not valid json"
+        # The fresh file has just the new agent.
+        agents = list_agents()
+        assert len(agents) == 1
+        assert agents[0].name == "after-corruption"

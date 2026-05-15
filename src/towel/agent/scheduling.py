@@ -51,13 +51,32 @@ def _load_schedules() -> list[Schedule]:
         return []
     try:
         return [Schedule.from_dict(s) for s in json.loads(SCHEDULES_FILE.read_text())]
-    except Exception:
+    except Exception as exc:
+        # Same backup-the-corrupt-file pattern the persistence stores
+        # adopted (5512834, 98d1c68, 8a86987). Without it, next save
+        # would clobber the bytes with a fresh schedule list.
+        from datetime import UTC, datetime
+        backup = SCHEDULES_FILE.with_name(
+            f"{SCHEDULES_FILE.name}.corrupted-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}"
+        )
+        try:
+            SCHEDULES_FILE.replace(backup)
+            import logging
+            logging.getLogger("towel.scheduling").warning(
+                "Failed to load schedules: %s. Backed up the bad file to %s.",
+                exc, backup,
+            )
+        except OSError:
+            pass
         return []
 
 
 def _save_schedules(schedules: list[Schedule]) -> None:
     SCHEDULES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    SCHEDULES_FILE.write_text(json.dumps([s.to_dict() for s in schedules], indent=2))
+    # Atomic write so a crash mid-save can't corrupt the file.
+    tmp = SCHEDULES_FILE.with_name(SCHEDULES_FILE.name + ".tmp")
+    tmp.write_text(json.dumps([s.to_dict() for s in schedules], indent=2))
+    tmp.replace(SCHEDULES_FILE)
 
 
 def add_schedule(name: str, cron: str, action: str, args: dict | None = None) -> Schedule:

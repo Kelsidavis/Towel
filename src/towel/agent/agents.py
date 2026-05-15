@@ -78,13 +78,35 @@ def _load_agents() -> list[AutonomousAgent]:
         return []
     try:
         return [AutonomousAgent.from_dict(a) for a in json.loads(AGENTS_FILE.read_text())]
-    except Exception:
+    except Exception as exc:
+        # Rename the corrupt file aside so the next _save_agents call
+        # can't overwrite the bytes with a fresh (probably empty)
+        # agent list. Same data-durability pattern the persistence
+        # stores adopted (5512834, 98d1c68, 8a86987).
+        from datetime import UTC, datetime
+        backup = AGENTS_FILE.with_name(
+            f"{AGENTS_FILE.name}.corrupted-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}"
+        )
+        try:
+            AGENTS_FILE.replace(backup)
+            import logging
+            logging.getLogger("towel.agents").warning(
+                "Failed to load agents: %s. Backed up the bad file to %s.",
+                exc, backup,
+            )
+        except OSError:
+            pass
         return []
 
 
 def _save_agents(agents: list[AutonomousAgent]) -> None:
     AGENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    AGENTS_FILE.write_text(json.dumps([a.to_dict() for a in agents], indent=2))
+    # Atomic write: dump to a sibling .tmp then rename. Without this,
+    # a kill / disk-full mid-write leaves a half-written agents file
+    # that the next _load_agents classifies as corrupt and discards.
+    tmp = AGENTS_FILE.with_name(AGENTS_FILE.name + ".tmp")
+    tmp.write_text(json.dumps([a.to_dict() for a in agents], indent=2))
+    tmp.replace(AGENTS_FILE)
 
 
 def create_agent(
