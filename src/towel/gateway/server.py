@@ -1103,14 +1103,81 @@ class GatewayServer:
             *(_ask_one(w) for w in candidates),
         )
 
-        # Arbitration: longest non-empty answer wins. Conservative
-        # first cut — real synthesis (LLM-as-judge, voting, merging)
-        # comes later; this commit lands the fan-out plumbing.
+        # Arbitration:
+        # - 0 real answers → caller falls through to single-worker dispatch
+        # - 1 real answer → return it directly (nothing to arbitrate)
+        # - 2+ real answers → use the coordinator's local agent as
+        #   LLM-as-judge to synthesize the final answer from all
+        #   contributions. This is the "coordinator pieces it
+        #   together" half of the collaboration model — the workers
+        #   each contribute an independent attempt, the coordinator
+        #   reconciles them into one final answer.
         real_answers = [c for c in contributions if c["answer"]]
-        if real_answers:
-            best = max(real_answers, key=lambda c: len(c["answer"]))
-            return best["answer"], contributions
-        return "", contributions
+        if not real_answers:
+            return "", contributions
+        if len(real_answers) == 1:
+            return real_answers[0]["answer"], contributions
+
+        synthesized = await self._synthesize_ensemble(question, real_answers)
+        if synthesized:
+            return synthesized, contributions
+        # Synthesis fell through (local agent unavailable, error, or
+        # empty output). Don't lose the run — surface the longest
+        # contribution as a deterministic fallback.
+        best = max(real_answers, key=lambda c: len(c["answer"]))
+        return best["answer"], contributions
+
+    async def _synthesize_ensemble(
+        self,
+        question: str,
+        contributions: list[dict[str, Any]],
+    ) -> str:
+        """Reconcile N worker answers into one via the local agent.
+
+        The coordinator runs its own local model (loaded into memory
+        at startup) and is the natural arbiter for ensemble runs —
+        it has visibility into every worker's contribution and can
+        decide whether they agree, disagree, or partially overlap.
+
+        Returns the synthesized answer text, or "" on failure
+        (caller will fall back to a deterministic pick).
+        """
+        from towel.agent.conversation import Conversation, Role as _Role
+
+        # Build a single-turn synthesis prompt. The worker answers
+        # are tagged A/B/C/... so the model can refer to them without
+        # being primed by raw worker_ids (which encode hardware
+        # specs the model shouldn't anchor on).
+        labels = "ABCDEFGHIJKLMN"
+        lines = [
+            "You are arbitrating between answers from multiple AI workers "
+            "to a single question. Produce the best final answer for the "
+            "user. Synthesize where the workers agree, resolve disagreements "
+            "in favor of correctness and completeness, and prefer concrete "
+            "specifics over vague generalities. Output only the final "
+            "answer — no meta-commentary, no 'Worker A said...' framing.",
+            "",
+            f"Question: {question}",
+            "",
+        ]
+        for i, c in enumerate(contributions[: len(labels)]):
+            lines.append(f"Worker {labels[i]} answered:")
+            lines.append(c["answer"])
+            lines.append("")
+        lines.append("Final answer:")
+
+        synth_conv = Conversation(id="_synth_ensemble")
+        synth_conv.add(_Role.USER, "\n".join(lines))
+        try:
+            response = await self.agent.step(synth_conv)
+            return (response.content or "").strip()
+        except Exception as exc:
+            log.warning(
+                "Ensemble synthesis on local agent failed (%s); "
+                "falling back to deterministic pick",
+                exc,
+            )
+            return ""
 
     def cleanup_ephemeral_session(self, session_id: str) -> None:
         """Drop in-memory state for a one-shot session.

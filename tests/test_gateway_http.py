@@ -1067,6 +1067,114 @@ class TestSimpleAskAPI:
         ids = {c["worker_id"] for c in body["ensemble_contributions"]}
         assert ids == {"small", "large"}
 
+    def test_ask_ensemble_synthesizes_via_local_agent(self, gateway, client):
+        """When 2+ workers contribute, the coordinator's local agent
+        synthesizes a final answer rather than picking a longest
+        answer. This is the 'coordinator pieces it together' half of
+        the collaboration model — workers each contribute an
+        independent attempt, coordinator reconciles."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "a", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "b", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            answers = {
+                "a": "Answer from A: Paris.",
+                "b": "Answer from B: Paris, the capital of France.",
+            }
+            return Message(
+                role=Role.ASSISTANT,
+                content=answers[worker.id],
+                metadata={"remote_worker": worker.id, "tokens": 6, "tps": 5.0},
+            )
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        # Stub the local agent's step so synthesis returns a known
+        # reconciled answer — proves the synthesis path was reached
+        # and used, rather than the longest-answer fallback.
+        async def fake_step(conv):
+            # The synthesis prompt should mention both workers' answers.
+            user_msg = conv.messages[-1].content
+            assert "Worker A answered:" in user_msg
+            assert "Worker B answered:" in user_msg
+            assert "Paris" in user_msg
+            return Message(
+                role=Role.ASSISTANT,
+                content="Synthesized: The capital of France is Paris.",
+                metadata={"tps": 10.0, "tokens": 8},
+            )
+
+        gateway.agent.step = fake_step  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={
+                "message": "What is the capital of France?",
+                "session_id": "ens-synth",
+                "ensemble": True,
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # The synthesized answer wins, not either individual worker's.
+        assert "Synthesized" in body["response"]
+        # Both workers' contributions are still reported.
+        ids = {c["worker_id"] for c in body["ensemble_contributions"]}
+        assert ids == {"a", "b"}
+
+    def test_ask_ensemble_single_contribution_skips_synthesis(
+        self, gateway, client,
+    ):
+        """When only one worker is idle (or only one returned text),
+        there's nothing to arbitrate. Return that answer directly
+        without burning local-agent compute on a single-answer
+        'synthesis'."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "solo", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            return Message(
+                role=Role.ASSISTANT,
+                content="The only worker's answer.",
+                metadata={"remote_worker": worker.id, "tokens": 5, "tps": 5.0},
+            )
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        # If synthesis fired this would be called — assert it wasn't.
+        synth_called = []
+
+        async def fake_step(conv):
+            synth_called.append(True)
+            return Message(role=Role.ASSISTANT, content="should not appear")
+
+        gateway.agent.step = fake_step  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "q", "session_id": "ens-solo", "ensemble": True},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "only worker" in body["response"]
+        assert synth_called == [], "synthesis should not run for single contribution"
+
     def test_ask_ensemble_skips_empty_text_placeholder(self, gateway, client):
         """An empty-text fallback isn't a real contribution — the
         arbitrator must skip it and pick a real answer from another
