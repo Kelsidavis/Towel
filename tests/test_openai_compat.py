@@ -108,6 +108,20 @@ class TestChatCompletionsEndpoint:
             assert resp.status_code == 400, f"accepted max_tokens={bad!r}"
             assert "max_tokens" in resp.json()["error"]["message"]
 
+    def test_rejects_non_string_model(self, client):
+        """`model` is cosmetic but echoes into the response and SSE
+        chunks. Non-string would render badly in JSON output."""
+        for bad in (42, [1, 2], {"x": 1}):
+            resp = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": bad,
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+            )
+            assert resp.status_code == 400, f"accepted model={bad!r}"
+            assert "model" in resp.json()["error"]["message"]
+
     def test_rejects_non_bool_stream(self, client):
         """`{"stream": "yes"}` would otherwise pass as truthy and
         silently take the streaming path. OpenAI's contract uses a

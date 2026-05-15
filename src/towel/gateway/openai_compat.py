@@ -81,6 +81,16 @@ def build_openai_routes(
                 status_code=400,
             )
         model_name = body.get("model", config.model.name)
+        # `model` is echoed back in the response and SSE chunks. A
+        # non-string would render oddly in JSON output ("model":[1,2])
+        # and confuse OpenAI clients that expect a string identifier.
+        # The dispatcher routes by intent/task_type, not by model name,
+        # so this field is cosmetic — but cosmetic should still be valid.
+        if not isinstance(model_name, str):
+            return JSONResponse(
+                {"error": {"message": "model must be a string", "type": "invalid_request_error"}},
+                status_code=400,
+            )
         # Honor OpenAI-standard sampling params. max_tokens is clamped
         # to [1, 4096] so a hostile or accidental request can't burn
         # the worker's max generation budget; the previous behavior was
