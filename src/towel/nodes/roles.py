@@ -260,6 +260,27 @@ def assign_tasks(
     return tasks
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    """``int(x)`` that doesn't crash on garbage input.
+
+    Capabilities fields flow in from worker self-reports. A worker
+    sending ``total_vram_mb: "huge"`` (typo, JSON-serialised wrong)
+    would otherwise crash ``int("huge")`` with ValueError deep
+    inside the dispatcher and 500 the user's request. Same
+    defensive shape as the assign_roles fix for non-numeric
+    capability fields — just wrapped so every caller stays
+    concise.
+    """
+    if isinstance(value, bool):
+        # bool is a subtype of int; preserve the historical
+        # behaviour where True/False got coerced via `or 0` (False
+        # → default, True → 1).
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    return default
+
+
 def worker_quality_tier(capabilities: dict[str, Any]) -> str:
     """Bucket a worker into ``high`` / ``medium`` / ``low`` for at-a-glance UX.
 
@@ -274,8 +295,8 @@ def worker_quality_tier(capabilities: dict[str, Any]) -> str:
 
     Workers that don't advertise VRAM or context default to ``low``.
     """
-    vram = int(capabilities.get("total_vram_mb") or 0)
-    ctx = int(capabilities.get("context_window") or 0)
+    vram = _safe_int(capabilities.get("total_vram_mb"))
+    ctx = _safe_int(capabilities.get("context_window"))
     backend = capabilities.get("backend") or ""
     if vram >= _LARGE_VRAM_MB or ctx >= 65536 or backend == "claude":
         return "high"
@@ -296,10 +317,10 @@ def node_meets_task_requirements(node: dict[str, Any], task: TaskType) -> bool:
     """
     reqs = TASK_REQUIREMENTS.get(task, {})
     caps = node.get("capabilities") or {}
-    min_vram = int(reqs.get("min_vram_mb") or 0)
-    min_ctx = int(reqs.get("min_context") or 0)
-    have_vram = int(caps.get("total_vram_mb") or 0)
-    have_ctx = int(caps.get("context_window") or 0)
+    min_vram = _safe_int(reqs.get("min_vram_mb"))
+    min_ctx = _safe_int(reqs.get("min_context"))
+    have_vram = _safe_int(caps.get("total_vram_mb"))
+    have_ctx = _safe_int(caps.get("context_window"))
     if min_vram and have_vram < min_vram:
         return False
     if min_ctx and have_ctx < min_ctx:

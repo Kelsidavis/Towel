@@ -360,6 +360,34 @@ class TestAssignRolesDefensiveCoercion:
         # vram + (zeroed) context_window qualify for.
         assert isinstance(tasks, list)
 
+    def test_worker_quality_tier_handles_non_numeric_vram(self):
+        """``int("huge") → ValueError`` would crash quality_tier
+        deep inside the doctor probe and fleet panel renders. The
+        ``_safe_int`` helper returns 0 for non-numeric inputs, so a
+        garbage capability field downgrades the worker to ``low``
+        instead of taking out the whole render."""
+        from towel.nodes.roles import worker_quality_tier
+        assert worker_quality_tier({"total_vram_mb": "huge"}) == "low"
+        assert worker_quality_tier({"total_vram_mb": [1, 2]}) == "low"
+        assert worker_quality_tier({"total_vram_mb": {"v": 1}}) == "low"
+        assert worker_quality_tier({"context_window": "huge"}) == "low"
+        # Sanity: valid numeric inputs still work.
+        assert worker_quality_tier({"total_vram_mb": 10000}) == "high"
+        assert worker_quality_tier({"total_vram_mb": 10000.5}) == "high"
+
+    def test_node_meets_task_requirements_handles_non_numeric(self):
+        """Same defensive shape on the dispatcher's gate check —
+        a non-numeric ``total_vram_mb`` used to crash inside
+        ``int(...)`` and 500 the user's routing request."""
+        from towel.nodes.roles import TaskType, node_meets_task_requirements
+        # CODE_REVIEW has min_vram_mb=4000. A garbage vram value
+        # coerces to 0, so the gate correctly says "doesn't meet".
+        node = {"capabilities": {"total_vram_mb": "huge", "context_window": 32768}}
+        assert node_meets_task_requirements(node, TaskType.CODE_REVIEW) is False
+        # Valid numeric still works.
+        node_ok = {"capabilities": {"total_vram_mb": 10000, "context_window": 32768}}
+        assert node_meets_task_requirements(node_ok, TaskType.CODE_REVIEW) is True
+
 
 class TestNodeTracker:
     def test_register_and_get(self):
