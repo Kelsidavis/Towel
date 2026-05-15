@@ -886,67 +886,91 @@ async def _stream_sse(
     created: int,
     model: str,
 ) -> Any:
-    """Yield Server-Sent Events in OpenAI streaming format."""
+    """Yield Server-Sent Events in OpenAI streaming format.
+
+    A mid-iteration failure in agent.step_streaming (model crash,
+    cancellation propagation) previously propagated up without
+    sending [DONE] — SSE clients that wait for the terminator
+    before flushing would hang. Wrap the iteration so any exception
+    becomes a final `finish_reason="error"` chunk + [DONE],
+    matching the error-frame shape _stream_sse_remote already uses.
+    """
     from towel.agent.events import EventType
 
-    async for event in agent.step_streaming(conv):
-        if event.type == EventType.TOKEN:
-            chunk = {
-                "id": request_id,
-                "object": "chat.completion.chunk",
-                "created": created,
-                "model": model,
-                "system_fingerprint": _SYSTEM_FINGERPRINT,
-                "choices": [
-                    {
-                        "index": 0,
-                        "delta": {"content": event.data["content"]},
-                        "finish_reason": None,
-                    }
-                ],
-            }
-            yield f"data: {json.dumps(chunk)}\n\n"
+    try:
+        async for event in agent.step_streaming(conv):
+            if event.type == EventType.TOKEN:
+                chunk = {
+                    "id": request_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "system_fingerprint": _SYSTEM_FINGERPRINT,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": event.data["content"]},
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+                yield f"data: {json.dumps(chunk)}\n\n"
 
-        elif event.type == EventType.RESPONSE_COMPLETE:
-            # Final chunk with finish_reason
-            chunk = {
-                "id": request_id,
-                "object": "chat.completion.chunk",
-                "created": created,
-                "model": model,
-                "system_fingerprint": _SYSTEM_FINGERPRINT,
-                "choices": [
-                    {
-                        "index": 0,
-                        "delta": {},
-                        "finish_reason": "stop",
-                    }
-                ],
-            }
-            yield f"data: {json.dumps(chunk)}\n\n"
-            yield "data: [DONE]\n\n"
-            return
+            elif event.type == EventType.RESPONSE_COMPLETE:
+                # Final chunk with finish_reason
+                chunk = {
+                    "id": request_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "system_fingerprint": _SYSTEM_FINGERPRINT,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+                yield f"data: {json.dumps(chunk)}\n\n"
+                yield "data: [DONE]\n\n"
+                return
 
-        elif event.type == EventType.CANCELLED:
-            chunk = {
-                "id": request_id,
-                "object": "chat.completion.chunk",
-                "created": created,
-                "model": model,
-                "system_fingerprint": _SYSTEM_FINGERPRINT,
-                "choices": [
-                    {
-                        "index": 0,
-                        "delta": {},
-                        "finish_reason": "stop",
-                    }
-                ],
-            }
-            yield f"data: {json.dumps(chunk)}\n\n"
-            yield "data: [DONE]\n\n"
-            return
+            elif event.type == EventType.CANCELLED:
+                chunk = {
+                    "id": request_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "system_fingerprint": _SYSTEM_FINGERPRINT,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+                yield f"data: {json.dumps(chunk)}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+    except Exception as exc:
+        err_chunk = {
+            "id": request_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "system_fingerprint": _SYSTEM_FINGERPRINT,
+            "choices": [
+                {"index": 0, "delta": {}, "finish_reason": "error"},
+            ],
+            "error": {"message": str(exc), "type": "server_error"},
+        }
+        yield f"data: {json.dumps(err_chunk)}\n\n"
+        yield "data: [DONE]\n\n"
+        return
 
-    # Safety: always end stream
+    # Safety: always end stream (loop completed without TERMINAL event)
     yield "data: [DONE]\n\n"
 
 

@@ -413,6 +413,44 @@ class TestNoneMetadataHandling:
 
 class TestSSEFormat:
     @pytest.mark.asyncio
+    async def test_local_stream_exception_emits_error_chunk(self):
+        """When agent.step_streaming raises mid-iteration, the SSE
+        generator must still emit a final `finish_reason="error"`
+        chunk + [DONE]. Previously the exception propagated up and
+        clients waiting for [DONE] before flushing would hang."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Conversation, Role
+        from towel.agent.events import AgentEvent
+        from towel.gateway.openai_compat import _stream_sse
+
+        agent = MagicMock()
+        conv = Conversation()
+        conv.add(Role.USER, "hi")
+
+        async def crashing_stream(c):
+            yield AgentEvent.token("partial-")
+            raise RuntimeError("model wedged")
+        agent.step_streaming = crashing_stream
+
+        chunks = []
+        async for chunk in _stream_sse(agent, conv, "rid", 0, "m"):
+            chunks.append(chunk)
+
+        joined = "".join(chunks)
+        # The partial token came through.
+        assert "partial-" in joined
+        # And the failure produced a terminator pair.
+        assert "finish_reason\": \"error\"" in joined
+        assert chunks[-1] == "data: [DONE]\n\n"
+        # Error frame carries the type field (parity with the
+        # non-streaming 500 path and _stream_sse_remote's error
+        # chunks).
+        err_frame = next(c for c in chunks if "finish_reason\": \"error\"" in c)
+        payload = json.loads(err_frame.replace("data: ", ""))
+        assert payload["error"]["type"] == "server_error"
+
+    @pytest.mark.asyncio
     async def test_sse_stream_format(self):
         """Test the SSE generator produces valid format."""
         from unittest.mock import MagicMock
