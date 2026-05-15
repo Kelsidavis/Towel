@@ -1813,6 +1813,28 @@ class GatewayServer:
         # cluster wouldn't see the last six workers' contributions
         # influence arbitration at all).
         labels = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        # Detect code-shaped contributions so the synthesis prompt
+        # can ask the arbiter to actually compare code on the
+        # axes that matter (syntax, completeness) instead of the
+        # generic "concrete-over-vague" heuristic that works for
+        # prose. Same pattern as _verify_pass's code detection.
+        _question_lower = question.lower()
+        _code_keywords = (
+            "write a function", "write a class", "write a script",
+            "write code", "implement ", "refactor ",
+            "fix the bug", "fix this code", "generate code",
+        )
+        is_code_synth = any(s in _question_lower for s in _code_keywords)
+        if not is_code_synth:
+            # Shape-detect from the answers: code fences or
+            # multiple def/class lines.
+            is_code_synth = any(
+                "```" in (c.get("answer") or "")
+                or (c.get("answer") or "").count("def ") >= 2
+                or (c.get("answer") or "").count("class ") >= 2
+                or (c.get("answer") or "").count("function ") >= 2
+                for c in ordered
+            )
         # Prompt that biases toward concrete grounded text: prefer
         # specifics over averaging, copy whichever phrasing is more
         # precise rather than rewriting in the arbiter's voice, and
@@ -1837,6 +1859,22 @@ class GatewayServer:
             "block into a one-liner.",
             "4. Output ONLY the final answer — no preamble, no "
             "'Worker A said...' framing, no meta-commentary.",
+        ]
+        if is_code_synth:
+            lines.extend([
+                "5. For CODE: if one answer has obviously broken "
+                "syntax (mismatched brackets, undefined names "
+                "referenced, broken indentation) and another "
+                "doesn't, pick the one that parses. Do NOT merge "
+                "code fragments — pick one complete working "
+                "implementation rather than splicing pieces of "
+                "multiple answers.",
+                "6. For CODE: prefer answers that handle the edge "
+                "cases the question implies (empty input, zero, "
+                "negative, very large) over answers that only "
+                "handle the happy path.",
+            ])
+        lines.extend([
             "",
             # Cap the embedded question + each worker answer so a
             # user paste of an enormous document can't blow past the
@@ -1846,7 +1884,7 @@ class GatewayServer:
             # had context overflow problems upstream.
             f"Question: {question[:64000]}{'…' if len(question) > 64000 else ''}",
             "",
-        ]
+        ])
         for i, c in enumerate(ordered[: len(labels)]):
             ans = c["answer"]
             if len(ans) > 64000:

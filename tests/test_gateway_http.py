@@ -3141,6 +3141,121 @@ class TestSimpleAskAPI:
         # Synthesis ran with the deterministic-ish temperature.
         assert captured["temperature"] == 0.2
 
+    def test_ensemble_synthesis_uses_code_aware_rules_for_code_questions(
+        self, gateway, client,
+    ):
+        """The generic "concrete-over-vague" synthesis prompt is the
+        wrong tool for arbitrating between two code answers. For
+        code we need the arbiter checking syntax + edge-case
+        coverage explicitly. Code-detection mirrors the verify
+        path: regex on the question, code-shape on the answers."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+        from towel.agent.runtime import GenerationResult
+
+        gateway._workers.register(
+            "a", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "b", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            answers = {
+                "a": "def fib(n):\n    return [0, 1]",
+                "b": (
+                    "def fib(n):\n"
+                    "    a, b = 0, 1\n"
+                    "    for _ in range(n):\n"
+                    "        a, b = b, a+b\n"
+                    "    return [a]"
+                ),
+            }
+            return Message(
+                role=Role.ASSISTANT, content=answers[worker.id],
+                metadata={"remote_worker": worker.id, "tokens": 20, "tps": 5.0},
+            )
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        captured: dict = {}
+
+        async def fake_generate(conv, **kwargs):
+            captured["prompt"] = (
+                conv.messages[0].content if conv.messages else ""
+            )
+            return GenerationResult(text="def fib(n): ...", total_tokens=5)
+        gateway.agent.generate = fake_generate  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={
+                "message": "Write a function that returns fibonacci",
+                "session_id": "ens-code",
+                "ensemble": True,
+            },
+        )
+        assert resp.status_code == 200
+        prompt = captured["prompt"]
+        # The code-specific arbitration rules made it into the prompt.
+        assert "broken syntax" in prompt
+        assert "edge cases" in prompt.lower()
+
+    def test_ensemble_synthesis_keeps_generic_rules_for_factual_questions(
+        self, gateway, client,
+    ):
+        """A non-code question (capital of France) should NOT trip
+        the code-specific rules — those rules are added in addition
+        to the generic ones, but only when the question or answers
+        look code-shaped."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+        from towel.agent.runtime import GenerationResult
+
+        gateway._workers.register(
+            "a", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "b", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            answers = {"a": "Paris", "b": "Lyon"}
+            return Message(
+                role=Role.ASSISTANT, content=answers[worker.id],
+                metadata={"remote_worker": worker.id, "tokens": 1, "tps": 5.0},
+            )
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        captured: dict = {}
+
+        async def fake_generate(conv, **kwargs):
+            captured["prompt"] = (
+                conv.messages[0].content if conv.messages else ""
+            )
+            return GenerationResult(text="Paris", total_tokens=1)
+        gateway.agent.generate = fake_generate  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={
+                "message": "What is the capital of France?",
+                "session_id": "ens-fact",
+                "ensemble": True,
+            },
+        )
+        assert resp.status_code == 200
+        prompt = captured["prompt"]
+        # Factual questions don't trip the code-specific rules.
+        assert "broken syntax" not in prompt
+        # But the generic rules are still there.
+        assert "Where the workers agree" in prompt
+
     def test_ensemble_synthesis_handles_none_text_gracefully(
         self, gateway, client,
     ):
