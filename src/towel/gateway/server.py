@@ -293,7 +293,20 @@ class GatewayServer:
                 msg_type = msg.get("type", "message")
 
                 if msg_type == "register":
-                    conn_id = msg.get("id", ws.id.hex[:12])
+                    raw_id = msg.get("id")
+                    # Worker IDs flow into HTTP URL paths
+                    # (/workers/{id}/state) and JSON responses keyed by
+                    # string. A non-string id (int, list, None) would
+                    # silently store the worker under a non-string key,
+                    # then disappear from /workers because the HTTP
+                    # lookup uses the URL string "42" not the integer
+                    # 42 the worker registered as. Coerce to a sane
+                    # string, fall back to a random handle, and cap
+                    # length so a 100KB id can't bloat /workers JSON.
+                    if isinstance(raw_id, str) and raw_id:
+                        conn_id = raw_id[:256]
+                    else:
+                        conn_id = ws.id.hex[:12]
                     self._connections[conn_id] = ws
                     role = msg.get("role", "channel")
                     capabilities = msg.get("capabilities", {})

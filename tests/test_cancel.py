@@ -120,3 +120,20 @@ class TestGatewayCancel:
         assert "non-object" in src and "capabilities" in src
         # memory_sync coerces non-list mutations to [].
         assert "non-list" in src and "mutations" in src
+
+    def test_gateway_ws_register_coerces_bad_id_types(self):
+        """A worker that registers with `id=42` or `id=null` would
+        previously land in the connections / workers dicts under a
+        non-string key, then vanish from /workers/{id} HTTP lookups
+        because the URL gives a string "42" not the integer 42. The
+        register handler must coerce non-string ids to a string
+        fallback (and cap length to keep /workers JSON sane)."""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._handle_ws)
+        # The coercion lives in the register branch — verify it
+        # checks isinstance(..., str) and caps to 256.
+        assert "isinstance(raw_id, str)" in src
+        assert "256" in src
