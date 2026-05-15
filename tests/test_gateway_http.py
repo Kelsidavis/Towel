@@ -1702,6 +1702,35 @@ class TestDispatchRecentEphemeralFilter:
         assert "asyncio.CancelledError" in src
         assert "raise" in src
 
+    def test_preempt_idle_task_yields_after_cancel(self):
+        """Live observation: preempting an active idle generation
+        (especially the long-running PROACTIVE_HELP path) and
+        immediately dispatching a chat on the same worker produced
+        empty-text responses ≈100% of the time. The coordinator
+        sent ``cancel_job``, released the worker, and fired the new
+        infer all in the same event-loop tick — the worker saw
+        infer before its cancel handler ran.
+
+        ``await asyncio.sleep(0)`` after the release lets the
+        cancel_job WS frame land ahead of the next dispatch's
+        write. Pinning the yield via source inspection so a future
+        refactor can't silently re-introduce the same-tick race."""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._preempt_idle_task)
+        # The yield must come AFTER the worker.release call —
+        # otherwise the worker stays busy on the coordinator side
+        # while the cancel is still in flight.
+        release_pos = src.index("self._workers.release(worker.id)")
+        sleep_pos = src.index("await asyncio.sleep(0)")
+        assert release_pos < sleep_pos, (
+            "asyncio.sleep(0) must come after _workers.release "
+            "so the cancel_job frame flushes before the next "
+            "dispatch's assign"
+        )
+
     def test_ws_unknown_register_role_warns(self):
         """A typo'd `role` in a WS register message (e.g. "workre")
         previously got channel treatment silently — the worker

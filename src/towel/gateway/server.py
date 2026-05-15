@@ -2585,7 +2585,25 @@ class GatewayServer:
                 await self._dispatch_idle_task(worker)
 
     async def _preempt_idle_task(self, worker: WorkerInfo) -> None:
-        """Cancel any idle task running on a worker to free it for real work."""
+        """Cancel any idle task running on a worker to free it for real work.
+
+        Live observation: preempting an active idle generation
+        (especially the long-running PROACTIVE_HELP path) and
+        immediately dispatching a chat request on the same worker
+        produced empty-text responses ≈100% of the time. The
+        coordinator sent ``cancel_job``, released the worker, and
+        fired the new infer all in the same event-loop tick — the
+        worker received the new request while still draining the
+        idle generation, and its model state was mid-cancel rather
+        than clean.
+
+        Yield once with ``asyncio.sleep(0)`` so the WS send actually
+        flushes to the worker before the next dispatch's
+        ``assign``/``send`` runs. This isn't a hard guarantee — a
+        worker can still take a moment to stop generation on its
+        own end — but it eliminates the same-tick race the
+        coordinator was creating.
+        """
         if not self._idle_manager.is_idle_task(worker.id):
             return
         task = self._idle_manager.cancel_task(worker.id)
@@ -2603,6 +2621,11 @@ class GatewayServer:
             )
             self._job_queues.pop(job_id, None)
             self._workers.release(worker.id)
+            # Yield so the cancel_job WS frame lands ahead of the
+            # next dispatch's infer message. Without this, both
+            # writes ride out of the coordinator in the same tick
+            # and the worker sees infer-before-cancel-completes.
+            await asyncio.sleep(0)
 
     async def _remote_generate(
         self,
