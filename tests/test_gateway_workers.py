@@ -381,6 +381,20 @@ class TestRemoteExecution:
         # The message returned on loop detection should explain itself.
         assert "stuck" in src.lower() or "stopping" in src.lower()
 
+    def test_stream_remote_inference_has_loop_detection(self):
+        """The streaming agent loop has the same MAX_TOOL_ITERATIONS
+        cap as the non-streaming path, so it needs the same protection.
+        Source-level check guards against future divergence."""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._stream_remote_inference)
+        assert "last_call_fingerprints" in src
+        assert "LOOP_REPEAT_LIMIT" in src
+        assert "loop_detected_call_name" in src
+        assert "stuck" in src.lower() or "stopping" in src.lower()
+
     @pytest.mark.asyncio
     async def test_step_remote_inference_updates_session_from_worker_result(self, gateway):
         session = gateway.sessions.get_or_create("remote-step")

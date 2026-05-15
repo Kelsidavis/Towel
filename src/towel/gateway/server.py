@@ -1842,6 +1842,12 @@ class GatewayServer:
         """Run the local streaming tool loop while outsourcing generation."""
         total_tokens = 0
         remaining_text = ""
+        # Loop-detection state (mirrors _step_remote_inference_inner).
+        # See 4f5a63e for rationale — without this a stuck worker
+        # loops 999 times, ~5h of compute on a 20s/call worker.
+        last_call_fingerprints: list[str] = []
+        LOOP_REPEAT_LIMIT = 3
+        loop_detected_call_name: str | None = None
 
         for _ in range(MAX_TOOL_ITERATIONS):
             result = await self._remote_generate(
@@ -1889,6 +1895,27 @@ class GatewayServer:
             if remaining_text:
                 session.conversation.add(Role.ASSISTANT, remaining_text)
 
+            # Loop-detection check — see _step_remote_inference_inner
+            # for rationale (commit 4f5a63e).
+            iter_fingerprint = json.dumps(
+                [(tc.name, tc.arguments) for tc in tool_calls],
+                sort_keys=True, default=str,
+            )
+            last_call_fingerprints.append(iter_fingerprint)
+            if len(last_call_fingerprints) > LOOP_REPEAT_LIMIT:
+                last_call_fingerprints.pop(0)
+            if (
+                len(last_call_fingerprints) == LOOP_REPEAT_LIMIT
+                and len(set(last_call_fingerprints)) == 1
+            ):
+                log.warning(
+                    "Tool-call loop detected on streaming session %s "
+                    "(same call %r repeated %d times); breaking out",
+                    session_id, tool_calls[0].name, LOOP_REPEAT_LIMIT,
+                )
+                loop_detected_call_name = tool_calls[0].name
+                break
+
             for tc in tool_calls:
                 event_msg = AgentEvent.tool_call(tc.name, tc.arguments).to_ws_message(session_id)
                 await ws.send(json.dumps(event_msg))
@@ -1910,6 +1937,27 @@ class GatewayServer:
                     status="error" if is_error else "ok",
                 )
 
+        # Decide which terminal message to emit based on why we exited
+        # the loop. Loop-detected gets its own structured note; running
+        # out of iterations naturally is the existing fallback.
+        if loop_detected_call_name is not None:
+            stuck_msg = (
+                f"I got stuck calling {loop_detected_call_name!r} repeatedly. "
+                "Stopping to avoid burning more time on this turn."
+            )
+            await ws.send(
+                json.dumps(
+                    AgentEvent.complete(
+                        (remaining_text + "\n\n" + stuck_msg) if remaining_text else stuck_msg,
+                        metadata={
+                            "tokens": total_tokens,
+                            "remote_worker": worker.id,
+                            "loop_detected": True,
+                        },
+                    ).to_ws_message(session_id)
+                )
+            )
+            return
         await ws.send(
             json.dumps(
                 AgentEvent.complete(
