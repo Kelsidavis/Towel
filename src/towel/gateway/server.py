@@ -1433,6 +1433,7 @@ class GatewayServer:
 
         # Collect result in background — don't block
         async def _collect() -> None:
+            completed_normally = False
             try:
                 while True:
                     msg = await asyncio.wait_for(queue.get(), timeout=300.0)
@@ -1445,11 +1446,14 @@ class GatewayServer:
                             resp = msg.get("response", {})
                             text = resp.get("content", "")
                         self._idle_manager.complete_task(worker.id, text)
+                        completed_normally = True
                         break
                     elif msg_type == "job_error":
                         self._idle_manager.complete_task(
                             worker.id, msg.get("message", "error"), error=True
                         )
+                        # Worker errored on its own; no cancel needed.
+                        completed_normally = True
                         break
                     # job_event — ignore streaming tokens for idle tasks
             except TimeoutError:
@@ -1457,6 +1461,22 @@ class GatewayServer:
             except asyncio.CancelledError:
                 self._idle_manager.cancel_task(worker.id)
             finally:
+                if not completed_normally:
+                    # Tell the worker to drop its in-flight idle job —
+                    # otherwise on a coord-side timeout/cancel it keeps
+                    # generating output nobody will read. Same pattern
+                    # as the inference and classification paths.
+                    try:
+                        await worker.ws.send(
+                            json.dumps(
+                                {"type": "cancel_job", "job_id": job_id, "session": session_id}
+                            )
+                        )
+                    except Exception as cancel_exc:
+                        log.debug(
+                            "Failed to send cancel_job (idle) to %s: %s",
+                            worker.id, cancel_exc,
+                        )
                 self._job_queues.pop(job_id, None)
                 self._workers.release(worker.id)
                 # After finishing, try to dispatch another idle task
