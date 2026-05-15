@@ -1200,8 +1200,13 @@ class GatewayServer:
         self._job_queues[job_id] = queue
         self._workers.assign(worker.id, job_id, "classify_task")
 
-        modes = worker.capabilities.get("modes", [])
-        mode = modes[0] if modes else "llama_chat"
+        # Parity with _classify_on_worker's defensive coercion: a
+        # worker registering with ``modes: "llama_chat"`` (a bare
+        # string instead of a list) would have ``modes[0]`` return
+        # "l" — a single char — and silently send a garbage mode to
+        # the worker. isinstance check skips that.
+        modes = worker.capabilities.get("modes")
+        mode = modes[0] if isinstance(modes, list) and modes else "llama_chat"
 
         await worker.ws.send(
             json.dumps(
