@@ -2061,11 +2061,19 @@ class GatewayServer:
                 candidates.append(w)
         # Prefer idle, but accept busy if that's all we've got. Both
         # buckets sort by VRAM descending so the largest worker wins
-        # within its bucket.
+        # within its bucket. _safe_int matches the same defensive
+        # coercion the dispatcher / role scoring already applies —
+        # a worker reporting ``total_vram_mb`` as a non-numeric
+        # string would otherwise crash the sort comparator (str vs
+        # int) and 500 the retry path on whatever request triggered
+        # it.
+        from towel.nodes.capability import _safe_int
         for bucket in (candidates, busy_candidates):
             if bucket:
                 bucket.sort(
-                    key=lambda w: w.capabilities.get("total_vram_mb", 0),
+                    key=lambda w: _safe_int(
+                        w.capabilities.get("total_vram_mb"),
+                    ),
                     reverse=True,
                 )
                 return bucket[0]
