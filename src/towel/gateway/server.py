@@ -4014,7 +4014,13 @@ class GatewayServer:
 
             updated = self._workers.get(worker_id)
             assert updated is not None
-            return JSONResponse(_memory_entry_dict(updated))
+            # WorkerInfo.to_dict directly — the previous code mistakenly
+            # routed this through `_memory_entry_dict`, which is the
+            # memory-store response shaper and added spurious
+            # `tags`/`source`/`scope`/`last_recalled_at` fields to the
+            # worker payload. Operators saw "tags": [] on a worker
+            # and reasonably wondered if memory entries were attached.
+            return JSONResponse(updated.to_dict())
 
         async def session_pin_worker(request: Request) -> JSONResponse:
             session_id = request.path_params["session_id"]

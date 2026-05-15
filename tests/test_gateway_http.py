@@ -248,6 +248,31 @@ class TestWorkerStateEndpoint:
         assert resp.json()["enabled"] is False
         assert gateway._workers.get("desktop-1").enabled is False
 
+    def test_worker_state_update_response_shape_is_worker_not_memory(
+        self, gateway, client,
+    ):
+        """The response body used to flow through `_memory_entry_dict`,
+        which set defaults for memory-entry fields (tags / source /
+        scope / last_recalled_at). Operators saw `"tags": []` on a
+        worker and wondered if memory entries were attached. Verify
+        the response now uses WorkerInfo.to_dict shape only."""
+        gateway._workers.register(
+            "desktop-1", object(),
+            {"backend": "mlx", "modes": ["mlx_prompt"]},
+        )
+
+        resp = client.post("/workers/desktop-1/state", json={"enabled": True})
+        assert resp.status_code == 200
+        data = resp.json()
+        # Worker-shape fields must be present.
+        assert "id" in data
+        assert "capabilities" in data
+        assert "enabled" in data
+        assert "draining" in data
+        # Memory-shape fields must NOT be there.
+        for field in ("tags", "source", "scope", "last_recalled_at"):
+            assert field not in data, f"unexpected memory field {field!r}"
+
     def test_worker_state_update_rejects_unknown_worker(self, client):
         resp = client.post("/workers/missing/state", json={"enabled": False})
 
