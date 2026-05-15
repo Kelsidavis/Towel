@@ -6099,7 +6099,20 @@ class GatewayServer:
                 # dispatch log.
                 if verify and not meta.get("verified_by"):
                     body["verify_skipped"] = True
-                    body["verify_skip_reason"] = "no alternate worker available"
+                    # Reasons _verify_pass might have skipped:
+                    #   * primary returned empty / placeholder text
+                    #     (verifying "I couldn't respond" is useless)
+                    #   * no alternate worker exists (single-worker
+                    #     fleet)
+                    # The first case is detectable from the response
+                    # metadata; everything else falls through to the
+                    # alternate-worker reason.
+                    if meta.get("empty_text_fallback") or meta.get("dual_empty_text"):
+                        body["verify_skip_reason"] = (
+                            "primary returned no usable text; nothing to verify"
+                        )
+                    else:
+                        body["verify_skip_reason"] = "no alternate worker available"
                 # Symmetric to verify_skipped: when ensemble was
                 # requested but the fan-out returned no usable
                 # arbitrated answer (no idle candidates, or every

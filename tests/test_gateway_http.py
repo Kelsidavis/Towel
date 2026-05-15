@@ -3553,6 +3553,51 @@ class TestSimpleAskAPI:
         )
 
 
+    def test_verify_skipped_reason_when_primary_empty(self, gateway, client):
+        """When verify=true is set but the primary itself returned
+        an empty-text placeholder, the verify pass is skipped
+        because there's nothing to verify — distinct from the
+        "no alternate worker" reason. Surface the actual cause."""
+        from unittest.mock import AsyncMock
+
+        from towel.agent.conversation import Message, Role
+        from towel.gateway.workers import WorkerInfo
+
+        primary = WorkerInfo(id="empty-primary", ws=AsyncMock(), capabilities={})
+        alt = WorkerInfo(
+            id="empty-alt", ws=AsyncMock(),
+            capabilities={"total_vram_mb": 16000},
+        )
+        gateway._workers._workers["empty-primary"] = primary
+        gateway._workers._workers["empty-alt"] = alt
+
+        async def fake_route(message, session_id):
+            return primary, "chat"
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            msg = Message(
+                role=Role.ASSISTANT,
+                content="(placeholder)",
+                metadata={
+                    "remote_worker": worker.id,
+                    "empty_text_fallback": True,
+                },
+            )
+            session.conversation.messages.append(msg)
+            return msg
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "hi", "session_id": "ver-empty", "verify": True},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # Verify was opted in but the primary had nothing to verify.
+        assert body.get("verify_skipped") is True
+        assert "nothing to verify" in body.get("verify_skip_reason", "")
+
     def test_dual_empty_text_surfaces_in_api_ask_response(self, gateway, client):
         """When BOTH the primary and the retry alt return empty text
         (the fleet-wide tool-loop case), the metadata flag
