@@ -3863,6 +3863,16 @@ class GatewayServer:
                 except Exception:
                     pass
                 log_status["saturated"] = len(full_history) >= history_size
+            # Per-primary-worker empty-text retry tally, computed over
+            # the full buffer (before filters). Surfaces "worker X has
+            # had N empty-text retries" so operators viewing the log
+            # see a flaky chat worker at a glance without having to
+            # eyeball each entry. Always include the key (even when
+            # empty) so UIs can render "no flaky workers" without
+            # special-casing the missing-field path.
+            log_status["empty_text_retries_by_worker"] = (
+                self._dispatcher.empty_text_retry_counts()
+            )
             return JSONResponse(
                 {
                     "decisions": entries[-limit:],

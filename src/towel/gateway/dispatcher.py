@@ -218,6 +218,36 @@ class Dispatcher:
         """Return the most recent dispatch decisions (newest last)."""
         return list(self._history)
 
+    def empty_text_retry_counts(self) -> dict[str, int]:
+        """Tally retry_empty_text decisions by their failing primary worker.
+
+        On a heterogeneous fleet, one worker tends to produce empty
+        text far more often than the others — small models routinely
+        emit tool calls instead of chat text for trivial prompts, and
+        every such turn costs the user the primary's full latency
+        before the retry runs on the alt. The retry decisions are
+        already in the ring buffer; counting them by
+        ``previous_worker_id`` surfaces "worker X has had N empty-text
+        retries in the recent window" without forcing operators to
+        eyeball every entry.
+        """
+        counts: dict[str, int] = {}
+        for d in self._history:
+            if d.reason != REASON_RETRY_EMPTY:
+                continue
+            prev = d.previous_worker_id
+            if not prev:
+                continue
+            # Only the actual empty-text retries — primary_failed
+            # retries (timeout / exception) live in the same reason
+            # code but carry "failed" in notes. Counting them under
+            # "empty text" would conflate a slow worker with a flaky
+            # one, and the operator-facing signal is different.
+            if "empty response" not in (d.notes or ""):
+                continue
+            counts[prev] = counts.get(prev, 0) + 1
+        return counts
+
     def select_for_session(
         self,
         session_id: str,

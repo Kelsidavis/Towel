@@ -332,3 +332,38 @@ class TestDispatchRecentFilters:
         # a couple of seconds for the 5s-old entry.
         assert resp["log_status"]["oldest_age_seconds"] >= 0
         assert resp["log_status"]["oldest_age_seconds"] >= 4
+
+    def test_log_status_includes_empty_text_retries_by_worker(self, gateway):
+        """A flaky chat worker can drive empty-text retries every
+        time it gets routed — costing the user the full primary
+        latency before the retry runs. Operators viewing
+        /dispatch/recent need the per-primary tally surfaced
+        directly so "worker X had N empty-text retries" is visible
+        without grepping every entry by hand."""
+        # Always-present key (even with zero retries) so the UI
+        # doesn't have to special-case missing data.
+        client = TestClient(gateway._build_http_app())
+        resp = client.get("/dispatch/recent").json()
+        assert resp["log_status"]["empty_text_retries_by_worker"] == {}
+
+        # Push three empty-text retries (two from gpu-host, one
+        # from pi-host) into the buffer. The previous_worker_id
+        # surfaces in the tally; the alt worker (newly-picked) does
+        # not.
+        from towel.gateway.dispatcher import REASON_RETRY_EMPTY
+        for prev in ("gpu-host", "gpu-host", "pi-host"):
+            d = DispatchDecision(
+                worker=_stub_worker("alt"),
+                intent="chat",
+                reason=REASON_RETRY_EMPTY,
+                notes=f"retry after empty response from {prev}",
+                session_id=f"sess-{prev}",
+                candidates_considered=1,
+                previous_worker_id=prev,
+            )
+            gateway._dispatcher._record(d)
+
+        resp = client.get("/dispatch/recent").json()
+        assert resp["log_status"]["empty_text_retries_by_worker"] == {
+            "gpu-host": 2, "pi-host": 1,
+        }

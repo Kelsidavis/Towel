@@ -548,6 +548,56 @@ class TestObservability:
         )
         assert "did not respond within 60s" in timeout_retry.notes
 
+    def test_empty_text_retry_counts_groups_by_previous_worker(self):
+        """A heterogeneous fleet routinely sees one model produce empty
+        text (tool calls instead of chat) far more often than another.
+        Each such turn costs the user the primary's full latency before
+        the retry runs. Operators need a per-worker tally surfaced
+        from the buffer — without it, "worker X is flaky" requires
+        eyeballing every retry entry."""
+        workers = WorkerRegistry()
+        _make_worker(workers, "primary")
+        _make_worker(workers, "other_primary")
+        alt = _make_worker(workers, "alt")
+        d = _make_dispatcher(workers)
+
+        # Three empty-text retries from "primary", one from "other_primary".
+        for sid in ("s1", "s2", "s3"):
+            d.record_retry(
+                session_id=sid,
+                retry_worker=alt,
+                original_worker_id="primary",
+                intent="chat",
+            )
+        d.record_retry(
+            session_id="s4",
+            retry_worker=alt,
+            original_worker_id="other_primary",
+            intent="chat",
+        )
+        # primary_failed retries share the reason code but have
+        # different notes ("failed", not "empty response") and should
+        # NOT inflate the empty-text tally — operators would mistake a
+        # slow worker for a flaky one.
+        d.record_retry(
+            session_id="s5",
+            retry_worker=alt,
+            original_worker_id="primary",
+            intent="chat",
+            cause="primary_failed",
+        )
+
+        counts = d.empty_text_retry_counts()
+        assert counts == {"primary": 3, "other_primary": 1}
+
+    def test_empty_text_retry_counts_empty_buffer(self):
+        """Dispatcher with no retries reports an empty dict so callers
+        can render "no flaky workers" without special-casing None."""
+        workers = WorkerRegistry()
+        _make_worker(workers, "primary")
+        d = _make_dispatcher(workers)
+        assert d.empty_text_retry_counts() == {}
+
 
 # --------------------------------------------------------------------------- #
 # Excludes                                                                     #
