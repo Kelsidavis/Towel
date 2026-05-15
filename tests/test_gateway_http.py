@@ -1199,6 +1199,88 @@ class TestSimpleAskAPI:
                 f"worker {wid} missing latest turn: {hist}"
             )
 
+    def test_ask_ensemble_shuffles_contributions_in_synthesis_prompt(
+        self, gateway, client, monkeypatch,
+    ):
+        """LLM-as-judge has measurable primacy/recency bias. Workers
+        arrive in completion order (fastest first), so a fast-but-
+        shallow worker would consistently get the privileged 'Worker
+        A' slot. Random ordering removes that bias from arbitration.
+        Test by stubbing random.shuffle to reverse the list and
+        confirming Worker A's answer is the LAST contribution from
+        the un-shuffled candidate list."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+        from towel.agent.runtime import GenerationResult
+
+        gateway._workers.register(
+            "fast", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "slow", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        # Divergent so synthesis fires.
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            answers = {
+                "fast": "Quick fast-worker answer.",
+                "slow": "Slow but thorough slow-worker answer.",
+            }
+            return Message(
+                role=Role.ASSISTANT, content=answers[worker.id],
+                metadata={"remote_worker": worker.id, "tokens": 5, "tps": 5.0},
+            )
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        # Capture the synthesis prompt so we can check ordering.
+        captured_prompts: list[str] = []
+
+        async def fake_generate(conv):
+            captured_prompts.append(conv.messages[-1].content)
+            return GenerationResult(text="Synthesized.")
+
+        gateway.agent.generate = fake_generate  # type: ignore[method-assign]
+
+        # Force a deterministic shuffle that REVERSES the list.
+        import random
+        original_shuffle = random.shuffle
+
+        def reverse_shuffle(lst):
+            lst.reverse()
+
+        monkeypatch.setattr(random, "shuffle", reverse_shuffle)
+
+        try:
+            resp = client.post(
+                "/api/ask",
+                json={"message": "q", "session_id": "ens-shuf", "ensemble": True},
+            )
+        finally:
+            monkeypatch.setattr(random, "shuffle", original_shuffle)
+
+        assert resp.status_code == 200
+        assert captured_prompts, "synthesis didn't run"
+        prompt = captured_prompts[0]
+        # With the reverse-shuffle, Worker A should be whichever
+        # contribution was LAST in arrival order. Both contributions
+        # appear in the prompt; we just verify the shuffle ran by
+        # confirming the prompt contains both worker answers.
+        assert "Quick fast-worker answer" in prompt
+        assert "Slow but thorough slow-worker answer" in prompt
+        # Find positions of the two answer strings.
+        fast_pos = prompt.find("Quick fast-worker answer")
+        slow_pos = prompt.find("Slow but thorough slow-worker answer")
+        # In normal completion order, "fast" arrived first → would be
+        # Worker A → appears earlier. With reverse-shuffle, "slow"
+        # should appear first.
+        assert slow_pos < fast_pos, (
+            f"shuffle didn't fire: fast={fast_pos} slow={slow_pos}"
+        )
+
     def test_ask_ensemble_synthesis_timing_in_contributions(
         self, gateway, client,
     ):

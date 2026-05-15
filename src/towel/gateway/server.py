@@ -1378,6 +1378,17 @@ class GatewayServer:
         """
         from towel.agent.conversation import Conversation, Role as _Role
 
+        # Shuffle the contributions before labeling. LLM-as-judge has
+        # measurable primacy/recency bias — the model tends to favor
+        # answers in certain positions regardless of content. Workers
+        # arrive in `_ensemble_dispatch` in completion order (fastest
+        # first), which means a fast-but-shallow worker would
+        # consistently get the privileged "Worker A" slot. Random
+        # ordering removes that bias from the arbitration signal.
+        import random as _random
+        ordered = list(contributions)
+        _random.shuffle(ordered)
+
         # Build a single-turn synthesis prompt. The worker answers
         # are tagged A/B/C/... so the model can refer to them without
         # being primed by raw worker_ids (which encode hardware
@@ -1394,7 +1405,7 @@ class GatewayServer:
             f"Question: {question}",
             "",
         ]
-        for i, c in enumerate(contributions[: len(labels)]):
+        for i, c in enumerate(ordered[: len(labels)]):
             lines.append(f"Worker {labels[i]} answered:")
             lines.append(c["answer"])
             lines.append("")
