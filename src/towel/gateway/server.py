@@ -5036,7 +5036,17 @@ class GatewayServer:
             )
 
         async def conversations_list(request: Request) -> JSONResponse:
-            """List all persisted conversations (not just active ones)."""
+            """List all persisted conversations (not just active ones).
+
+            Query params:
+              ``limit`` — cap on entries scanned from disk (default 50,
+                          max 500). Filters apply *after* the scan, so
+                          channel/tag filters on a large archive may
+                          return fewer entries than ``limit``.
+              ``channel`` — only return conversations created on this
+                            channel (api / cli / webchat / unknown).
+              ``tag``     — only return conversations carrying this tag.
+            """
             try:
                 limit = int(request.query_params.get("limit", "50"))
             except ValueError:
@@ -5044,10 +5054,34 @@ class GatewayServer:
                     {"error": "limit must be an integer"}, status_code=400
                 )
             limit = max(1, min(limit, 500))
+            # Optional channel + tag narrowing. The store doesn't
+            # support these directly, so filter the already-loaded
+            # summaries — fine because the scan is capped at `limit`
+            # anyway and operators using these filters typically know
+            # what they're looking for. Cap each filter at 64 chars to
+            # match other filter-param rules.
+            channel_filter = request.query_params.get("channel")
+            if channel_filter is not None:
+                if len(channel_filter) > 64:
+                    return JSONResponse(
+                        {"error": "channel must be 64 chars or fewer"},
+                        status_code=400,
+                    )
+            tag_filter = request.query_params.get("tag")
+            if tag_filter is not None:
+                if len(tag_filter) > 64:
+                    return JSONResponse(
+                        {"error": "tag must be 64 chars or fewer"},
+                        status_code=400,
+                    )
             store = self.sessions.store
             if not store:
                 return JSONResponse({"conversations": []})
             summaries = store.list_conversations(limit=limit)
+            if channel_filter is not None:
+                summaries = [s for s in summaries if s.channel == channel_filter]
+            if tag_filter is not None:
+                summaries = [s for s in summaries if tag_filter in (s.tags or [])]
             return JSONResponse(
                 {
                     "conversations": [

@@ -660,6 +660,42 @@ class TestConversationsAPI:
         assert len(data["conversations"]) == 1
         assert data["conversations"][0]["tags"] == ["work", "urgent"]
 
+    def test_list_channel_filter(self, store, client):
+        """`?channel=` narrows results to conversations created on a
+        specific channel. Operators looking through a mixed archive
+        previously had to client-filter — /api/sessions and
+        /conversations both returned everything regardless of source."""
+        for sid, ch in (("cli-1", "cli"), ("api-1", "api"), ("api-2", "api")):
+            conv = Conversation(id=sid, channel=ch)
+            conv.add(Role.USER, "hi")
+            store.save(conv)
+
+        resp = client.get("/conversations?channel=api")
+        assert resp.status_code == 200
+        ids = {c["id"] for c in resp.json()["conversations"]}
+        assert ids == {"api-1", "api-2"}
+
+    def test_list_tag_filter(self, store, client):
+        """`?tag=` narrows results to conversations carrying a given
+        tag — same data path /api/sessions exposes, now filterable."""
+        for sid, tags in (
+            ("plain", []),
+            ("work-1", ["work"]),
+            ("work-urgent", ["work", "urgent"]),
+        ):
+            conv = Conversation(id=sid, channel="api")
+            conv.tags = tags
+            conv.add(Role.USER, "hi")
+            store.save(conv)
+
+        resp = client.get("/conversations?tag=work")
+        ids = {c["id"] for c in resp.json()["conversations"]}
+        assert ids == {"work-1", "work-urgent"}
+
+        resp = client.get("/conversations?tag=urgent")
+        ids = {c["id"] for c in resp.json()["conversations"]}
+        assert ids == {"work-urgent"}
+
     def test_get_conversation_includes_title_and_tags(self, store, client):
         """Conversation.to_dict omits title/tags when empty, but the
         detail endpoint always emits them so API clients don't have
