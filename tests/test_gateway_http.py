@@ -1525,6 +1525,69 @@ class TestSimpleAskAPI:
         assert resp.status_code == 200
         assert captured["max_tokens"] == 2048
 
+    def test_ask_temperature_invalid_rejected(self, client):
+        """`temperature` must be a number in [0, 2]. Same range
+        /v1/chat/completions documents. Non-numeric or out-of-range
+        values fail loud at the boundary."""
+        # Booleans aren't included because Python's float(True) = 1.0
+        # silently coerces — matches /v1/chat/completions' lenient
+        # parser. The range check still catches the truly bad cases.
+        for bad in ("abc", [], {}, -0.1, 2.1):
+            resp = client.post(
+                "/api/ask",
+                json={"message": "hi", "temperature": bad},
+            )
+            assert resp.status_code == 400, f"accepted {bad!r}"
+
+    def test_ask_temperature_flows_to_quick_infer(self, gateway, client):
+        """A valid `temperature` reaches `_quick_remote_infer` so the
+        worker actually uses the requested sampling. Without this,
+        /api/ask was hard-pinned at 0.7 — clients couldn't request
+        deterministic (0.0) or more creative (1.5+) outputs."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "w", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        async def fake_route(_msg, _sid):
+            return gateway._workers.get("w"), "chat"
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        captured: dict = {}
+
+        async def fake_quick(
+            session_id, session, worker,
+            max_tokens=256, temperature=0.7, **kwargs,
+        ):
+            captured["temperature"] = temperature
+            msg = Message(
+                role=Role.ASSISTANT, content="answer",
+                metadata={"remote_worker": worker.id, "tokens": 1, "tps": 5.0},
+            )
+            session.conversation.messages.append(msg)
+            return msg
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        # Deterministic generation.
+        resp = client.post(
+            "/api/ask",
+            json={"message": "hi", "session_id": "temp-0", "temperature": 0},
+        )
+        assert resp.status_code == 200
+        assert captured["temperature"] == 0.0
+
+        # Higher creativity.
+        resp = client.post(
+            "/api/ask",
+            json={"message": "hi", "session_id": "temp-1p5", "temperature": 1.5},
+        )
+        assert resp.status_code == 200
+        assert captured["temperature"] == 1.5
+
     def test_ask_max_tokens_clamped_to_4096(self, gateway, client):
         """Requesting an absurd value should clamp to the same upper
         bound /v1/chat/completions uses rather than rejecting with

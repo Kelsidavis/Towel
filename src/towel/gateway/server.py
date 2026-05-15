@@ -5351,6 +5351,28 @@ class GatewayServer:
                         status_code=400,
                     )
                 api_ask_max_tokens = min(max_tokens_int, 4096)
+            # Optional temperature override. Same as max_tokens:
+            # /v1/chat/completions honors it, /api/ask was hard-pinned
+            # at the _quick_remote_infer default (0.7). Clients
+            # wanting deterministic outputs (temperature=0) or more
+            # creative ones (temperature=1.5+) had no way to express
+            # that. Clamp to [0, 2] matching OpenAI's documented
+            # range and openai-compat's parser.
+            temperature_raw = body.get("temperature")
+            api_ask_temperature = 0.7
+            if temperature_raw is not None:
+                try:
+                    api_ask_temperature = float(temperature_raw)
+                except (TypeError, ValueError):
+                    return JSONResponse(
+                        {"error": "temperature must be a number"},
+                        status_code=400,
+                    )
+                if api_ask_temperature < 0 or api_ask_temperature > 2:
+                    return JSONResponse(
+                        {"error": "temperature must be between 0 and 2"},
+                        status_code=400,
+                    )
 
             session = self.sessions.get_or_create(session_id)
             session.conversation.channel = "api"
@@ -5468,6 +5490,7 @@ class GatewayServer:
                         response = await self._quick_remote_infer(
                             session_id, session, worker,
                             max_tokens=api_ask_max_tokens,
+                            temperature=api_ask_temperature,
                             identity_override=identity_override,
                         )
                         primary_failed = False
@@ -5556,6 +5579,7 @@ class GatewayServer:
                                 retry_response = await self._quick_remote_infer(
                                     session_id, session, alt,
                                     max_tokens=api_ask_max_tokens,
+                                    temperature=api_ask_temperature,
                                     identity_override=identity_override,
                                 )
                             except Exception as retry_exc:
