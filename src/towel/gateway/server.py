@@ -542,6 +542,20 @@ class GatewayServer:
                             arbitrated, _contribs, arb_mode = await self._ensemble_dispatch(
                                 session_id, content, user_session=session,
                             )
+                            # Aggregate dispatch entry — parity with
+                            # /api/ask's record_ensemble call (e00fb6d).
+                            if _contribs and self._dispatcher is not None:
+                                try:
+                                    self._dispatcher.record_ensemble(
+                                        session_id=session_id,
+                                        contributions=_contribs,
+                                        arbitration_mode=arb_mode,
+                                    )
+                                except Exception as exc:
+                                    log.debug(
+                                        "Failed to record WS ensemble dispatch: %s",
+                                        exc,
+                                    )
                             if arbitrated:
                                 from towel.agent.conversation import Message as _M
                                 response = _M(
@@ -629,6 +643,25 @@ class GatewayServer:
                                         response.content, worker.id,
                                     )
                                 )
+                                # Aggregate dispatch entry — parity
+                                # with /api/ask's record_verify call
+                                # (e00fb6d).
+                                if (
+                                    verifier_id is not None
+                                    and self._dispatcher is not None
+                                ):
+                                    try:
+                                        self._dispatcher.record_verify(
+                                            session_id=session_id,
+                                            verifier_id=verifier_id,
+                                            primary_id=worker.id,
+                                            was_corrected=was_corrected,
+                                        )
+                                    except Exception as exc:
+                                        log.debug(
+                                            "Failed to record WS verify dispatch: %s",
+                                            exc,
+                                        )
                                 if was_corrected and final != response.content:
                                     log.info(
                                         "WS verifier %s corrected %s answer for session %s",

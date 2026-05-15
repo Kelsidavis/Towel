@@ -319,6 +319,20 @@ def build_openai_routes(
                         arbitrated, _contribs, arb_mode = await gateway._ensemble_dispatch(
                             session_id, last_user, user_session=sess,
                         )
+                        # Aggregate dispatch entry — parity with
+                        # /api/ask's record_ensemble call (e00fb6d).
+                        if (
+                            _contribs
+                            and getattr(gateway, "_dispatcher", None) is not None
+                        ):
+                            try:
+                                gateway._dispatcher.record_ensemble(
+                                    session_id=session_id,
+                                    contributions=_contribs,
+                                    arbitration_mode=arb_mode,
+                                )
+                            except Exception:
+                                pass
                         if arbitrated:
                             from towel.agent.conversation import Message as _M
                             from towel.agent.conversation import Role as _R
@@ -488,6 +502,21 @@ def build_openai_routes(
                                 response.content, primary_id,
                             )
                         )
+                        # Aggregate dispatch entry — parity with
+                        # /api/ask's record_verify call (e00fb6d).
+                        if (
+                            verifier_id is not None
+                            and getattr(gateway, "_dispatcher", None) is not None
+                        ):
+                            try:
+                                gateway._dispatcher.record_verify(
+                                    session_id=session_id,
+                                    verifier_id=verifier_id,
+                                    primary_id=primary_id,
+                                    was_corrected=was_corrected,
+                                )
+                            except Exception:
+                                pass
                         if was_corrected and final != response.content:
                             response.content = final
                             response.metadata = (response.metadata or {}) | {
