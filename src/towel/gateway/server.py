@@ -922,7 +922,7 @@ class GatewayServer:
         try:
             try:
                 msg = await asyncio.wait_for(queue.get(), timeout=60.0)
-            except (asyncio.TimeoutError, TimeoutError) as exc:
+            except TimeoutError as exc:
                 # asyncio.TimeoutError stringifies to "" — bubble up a
                 # message the API caller can actually act on. Otherwise
                 # simple_ask's generic except returns
@@ -1402,7 +1402,7 @@ class GatewayServer:
             while True:
                 try:
                     msg = await asyncio.wait_for(queue.get(), timeout=chunk_timeout)
-                except (asyncio.TimeoutError, TimeoutError) as exc:
+                except TimeoutError as exc:
                     # asyncio.TimeoutError stringifies to "" — convert to
                     # a RuntimeError carrying the worker id and timeout
                     # so the caller's generic except renders something
