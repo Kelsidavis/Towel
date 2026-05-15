@@ -1053,9 +1053,17 @@ class GatewayServer:
         from towel.gateway.sessions import Session as _Session
 
         # Build the candidate pool: every enabled, non-draining,
-        # non-stuck worker. Skip busy workers — fan-out wants real
-        # concurrency, not queue thrash. (Operators who want to
-        # serialize against busy workers should use verify= instead.)
+        # non-stuck worker WITH the INFERENCE role assigned. Skip
+        # busy workers — fan-out wants real concurrency, not queue
+        # thrash. (Operators who want to serialize against busy
+        # workers should use verify= instead.)
+        #
+        # The INFERENCE filter excludes classifier-only workers —
+        # those exist for cheap-token tasks (intent / task-type
+        # routing) and aren't sized to produce substantive answers.
+        # Including them would waste their compute and pollute the
+        # arbiter with low-effort responses.
+        from towel.nodes.roles import NodeRole as _NodeRole
         from datetime import UTC, datetime as _dt
         now = _dt.now(UTC)
         stuck_threshold_secs = 300.0
@@ -1067,6 +1075,19 @@ class GatewayServer:
                 (now - w.busy_since).total_seconds() >= stuck_threshold_secs
             ):
                 continue
+            # Role filter: skip workers built only for cheap-token
+            # tasks (classifier-only). A worker with NO role info is
+            # treated as eligible — that path covers freshly-registered
+            # workers and test fixtures. A worker WITH role info but
+            # missing INFERENCE+GENERAL is the classifier-only case
+            # we want to exclude.
+            worker_roles = self._node_roles.get(w.id)
+            if worker_roles is not None and len(worker_roles) > 0:
+                if not (
+                    _NodeRole.INFERENCE in worker_roles
+                    or _NodeRole.GENERAL in worker_roles
+                ):
+                    continue
             candidates.append(w)
 
         if not candidates:

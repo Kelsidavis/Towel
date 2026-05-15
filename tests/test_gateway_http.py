@@ -1195,6 +1195,56 @@ class TestSimpleAskAPI:
                 f"worker {wid} missing latest turn: {hist}"
             )
 
+    def test_ask_ensemble_skips_classifier_only_workers(
+        self, gateway, client,
+    ):
+        """A classifier-only worker isn't sized for substantive
+        answers — including it in ensemble wastes its compute and
+        pollutes the arbiter with low-effort responses. Workers with
+        no INFERENCE/GENERAL role must be filtered from the fan-out
+        pool. Workers with no role info at all stay eligible (covers
+        test fixtures and freshly-registered workers)."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+        from towel.nodes.roles import NodeRole
+
+        gateway._workers.register(
+            "inference-worker", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "classifier-only", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        # Assign roles explicitly.
+        gateway._node_roles["inference-worker"] = [NodeRole.INFERENCE]
+        gateway._node_roles["classifier-only"] = [NodeRole.CLASSIFIER]
+
+        seen_workers: list[str] = []
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            seen_workers.append(worker.id)
+            return Message(
+                role=Role.ASSISTANT, content=f"from {worker.id}",
+                metadata={"remote_worker": worker.id, "tokens": 3, "tps": 5.0},
+            )
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "q", "session_id": "ens-roles", "ensemble": True},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # Only the inference worker contributed.
+        assert "inference-worker" in seen_workers
+        assert "classifier-only" not in seen_workers
+        # And the response carries that one contribution.
+        ids = {c["worker_id"] for c in body["ensemble_contributions"]}
+        assert ids == {"inference-worker"}
+
     def test_ask_ensemble_records_straggler_as_timeout(self, gateway, client):
         """A wedged worker can't extend the ensemble run beyond the
         slowest honest worker. The outer deadline cancels stragglers
