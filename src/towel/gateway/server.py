@@ -6086,6 +6086,20 @@ class GatewayServer:
                     body["primary_worker"] = meta.get(
                         "primary_worker", body.get("worker", ""),
                     )
+                # When verify was requested but couldn't run (no
+                # alternate worker), tell the client. Without this,
+                # a `verify=true` request that fell through to
+                # single-worker dispatch looked indistinguishable
+                # from a normal request — the absence of
+                # `verified_by` was the only signal, and only if
+                # the client knew to look for it. The dispatch log
+                # already records "verify: skipped" since the
+                # earlier observability round; mirror that into the
+                # response body for clients that can't reach the
+                # dispatch log.
+                if verify and not meta.get("verified_by"):
+                    body["verify_skipped"] = True
+                    body["verify_skip_reason"] = "no alternate worker available"
                 return JSONResponse(body)
             except Exception as e:
                 # Persist the partial session even on inference failure

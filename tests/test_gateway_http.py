@@ -1698,8 +1698,14 @@ class TestDispatchRecentEphemeralFilter:
         entry = verify_entries[0]
         assert "skipped" in entry["notes"], entry["notes"]
         assert "no alternate worker" in entry["notes"], entry["notes"]
-        # The response itself shouldn't claim it was verified.
-        assert "verified_by" not in resp.json()
+        # The response itself shouldn't claim it was verified, AND
+        # should surface verify_skipped so clients that don't read
+        # the dispatch log know why their verify=true request did
+        # nothing.
+        body = resp.json()
+        assert "verified_by" not in body
+        assert body.get("verify_skipped") is True
+        assert "no alternate worker" in body.get("verify_skip_reason", "")
 
     def test_ensemble_all_workers_failed_notes_have_no_dangling_colon(
         self, gateway,
