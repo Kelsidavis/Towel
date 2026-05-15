@@ -4898,10 +4898,19 @@ class GatewayServer:
                 recent = [r for r in recent if not r.get("success")]
             if reason_filter is not None:
                 recent = [r for r in recent if r.get("reason") == reason_filter]
+            # Pending handoffs: in-progress migrations. The stats
+            # output exposes a bare count under `pending`; expose the
+            # records themselves too so an operator triaging "what's
+            # stuck right now?" doesn't have to guess. Filter the
+            # same way as recent records for consistency.
+            pending = self._handoff_manager.pending_handoffs()
+            if reason_filter is not None:
+                pending = [p for p in pending if p.get("reason") == reason_filter]
             return JSONResponse(
                 {
                     "stats": self._handoff_manager.stats(),
                     "recent": recent,
+                    "pending": pending,
                 }
             )
 

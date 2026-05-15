@@ -464,6 +464,35 @@ class TestClusterHandoffs:
         assert len(recent) == 3
         assert all(r["reason"] == "worker_disconnected" for r in recent)
 
+    def test_pending_handoffs_in_response(self, gateway, client):
+        """In-progress handoffs surface alongside the completed
+        history — operators triaging "what's stuck right now?" need
+        more than the bare count. The pending list carries the same
+        record shape as the recent list (minus completed_at fields)."""
+        from datetime import UTC, datetime
+        from towel.gateway.handoff import HandoffReason, HandoffRecord
+
+        # Seed one pending (started, never completed).
+        active = HandoffRecord(
+            session_id="stuck-sess",
+            from_worker_id="a",
+            to_worker_id="b",
+            reason=HandoffReason.WORKER_DRAINING,
+            started_at=datetime.now(UTC),
+        )
+        gateway._handoff_manager._pending["stuck-sess"] = active
+
+        resp = client.get("/cluster/handoffs")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "pending" in body
+        assert len(body["pending"]) == 1
+        entry = body["pending"][0]
+        assert entry["session_id"] == "stuck-sess"
+        assert entry["reason"] == "worker_draining"
+        # Stats still report the bare count for legacy callers.
+        assert body["stats"]["pending"] == 1
+
     def test_reason_filter_rejects_unknown(self, client):
         """A typo like `?reason=draining` (missing the worker_
         prefix) returns 400 with the list of valid reasons —

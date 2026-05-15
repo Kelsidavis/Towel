@@ -179,6 +179,15 @@ class HandoffManager:
         """Get recent handoff records for monitoring."""
         return [r.to_dict() for r in self._history[-limit:]]
 
+    def pending_handoffs(self) -> list[dict[str, Any]]:
+        """In-progress handoff records — operators triaging "what's
+        stuck right now?" want detail beyond the bare count exposed
+        on ``stats().pending``. Each record carries the same shape as
+        ``recent_handoffs`` entries (minus ``completed_at`` /
+        ``duration_ms`` since those only land after completion).
+        """
+        return [r.to_dict() for r in self._pending.values()]
+
     def stats(self) -> dict[str, Any]:
         total = len(self._history)
         successful = sum(1 for r in self._history if r.success)
