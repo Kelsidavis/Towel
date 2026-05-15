@@ -2630,6 +2630,22 @@ class GatewayServer:
             mem_type = request.query_params.get("type") or None
             query = request.query_params.get("q") or None
             tag = request.query_params.get("tag") or None
+            # Strip + length + control-char guard on `q` so a 2000-char
+            # FTS scan / null byte / embedded newline can't slip into
+            # the substring fallback path. Matches the /search rule.
+            if query is not None:
+                query = query.strip() or None
+            if query is not None:
+                if len(query) > 256:
+                    return JSONResponse(
+                        {"error": "q must be 256 chars or fewer"},
+                        status_code=400,
+                    )
+                if any(ord(c) < 0x20 or ord(c) == 0x7F for c in query):
+                    return JSONResponse(
+                        {"error": "q must not contain control characters"},
+                        status_code=400,
+                    )
             # scope semantics on this endpoint:
             #   absent           — honor the store's default (project + global)
             #   "__all__"        — no filter (audit across every project)

@@ -112,6 +112,29 @@ class TestMemoryEndpoint:
         assert resp.status_code == 400
         assert "limit" in resp.json()["error"]
 
+    def test_rejects_overlong_q(self, store, memory):
+        """A 1000-char q would walk the entire FTS index / substring
+        fallback path with no upside — match the 256-char rule used
+        on /search and other operator-facing query strings."""
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+
+        resp = client.get("/memory?q=" + "a" * 1000)
+        assert resp.status_code == 400
+        assert "256" in resp.json()["error"]
+
+    def test_rejects_control_chars_in_q(self, store, memory):
+        """Null byte / embedded newline in `q` break log readability
+        and the substring fallback would otherwise scan with the
+        control char embedded — reject at the boundary."""
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+
+        for encoded in ("%00", "hello%0aworld", "tab%09here"):
+            resp = client.get(f"/memory?q={encoded}")
+            assert resp.status_code == 400, f"accepted q={encoded!r}"
+            assert "control" in resp.json()["error"].lower()
+
     def test_returns_empty_when_agent_has_no_memory(self, store):
         class _BareAgent:
             pass
