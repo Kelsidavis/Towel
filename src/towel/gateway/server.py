@@ -2792,7 +2792,7 @@ class GatewayServer:
             if not upgrade_body:
                 upgrade_body["strategy"] = "pip"
 
-            launcher_token = body.get("launcher_token") or ""
+            launcher_token = _stripped_str(body.get("launcher_token"))
             headers = {"Content-Type": "application/json"}
             if launcher_token:
                 headers["Authorization"] = f"Bearer {launcher_token}"
@@ -2950,7 +2950,7 @@ class GatewayServer:
                     {"error": "worker must be a JSON object"}, status_code=400
                 )
 
-            launcher_token = body.get("launcher_token") or ""
+            launcher_token = _stripped_str(body.get("launcher_token"))
             reason = body.get("reason") or "replace-worker"
             result, status = await self._replace_worker_impl(
                 target_id=target_id,
@@ -3000,7 +3000,7 @@ class GatewayServer:
                 return JSONResponse(
                     {"error": "targets must be a non-empty list"}, status_code=400
                 )
-            shared_token = body.get("launcher_token") or ""
+            shared_token = _stripped_str(body.get("launcher_token"))
             worker_template = body.get("worker") or {}
             if not isinstance(worker_template, dict):
                 return JSONResponse(
@@ -3038,7 +3038,7 @@ class GatewayServer:
                         }
                     )
                     continue
-                tok = target.get("launcher_token") or shared_token
+                tok = _stripped_str(target.get("launcher_token")) or shared_token
                 # Each target gets a fresh copy of the worker template — we
                 # don't want one worker's modification (controller auto-fill,
                 # worker_id) to leak into the next.
@@ -3121,7 +3121,7 @@ class GatewayServer:
                 f"ws://{self.config.gateway.host}:{self.config.gateway.port}",
             )
 
-            launcher_token = body.get("launcher_token") or ""
+            launcher_token = _stripped_str(body.get("launcher_token"))
             headers = {"Content-Type": "application/json"}
             if launcher_token:
                 headers["Authorization"] = f"Bearer {launcher_token}"
