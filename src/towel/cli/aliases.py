@@ -23,22 +23,38 @@ def _load() -> dict[str, str]:
     if not ALIASES_FILE.exists():
         return {}
     try:
-        return json.loads(ALIASES_FILE.read_text(encoding="utf-8"))
+        data = json.loads(ALIASES_FILE.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as e:
         log.warning(f"Failed to load aliases: {e}")
         # Rename the corrupt file aside so the next _save can't
         # overwrite the bytes with a fresh (probably empty) alias
         # dict. Same pattern the persistence stores got
         # (5512834, 98d1c68, 8a86987).
-        from datetime import UTC, datetime
-        backup = ALIASES_FILE.with_name(
-            f"{ALIASES_FILE.name}.corrupted-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}"
-        )
-        try:
-            ALIASES_FILE.replace(backup)
-        except OSError:
-            pass
+        _back_up_corrupt(e)
         return {}
+    if not isinstance(data, dict):
+        # JSON parsed cleanly but the top-level shape is wrong —
+        # parity with the snippets fix. Callers expect a dict and
+        # would crash on .get() / .items().
+        log.warning(
+            f"Aliases file shape is {type(data).__name__}, expected dict"
+        )
+        _back_up_corrupt(
+            ValueError(f"top-level shape is {type(data).__name__}, expected dict")
+        )
+        return {}
+    return data
+
+
+def _back_up_corrupt(reason: Exception) -> None:
+    from datetime import UTC, datetime
+    backup = ALIASES_FILE.with_name(
+        f"{ALIASES_FILE.name}.corrupted-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}"
+    )
+    try:
+        ALIASES_FILE.replace(backup)
+    except OSError:
+        pass
 
 
 def _save(aliases: dict[str, str]) -> None:

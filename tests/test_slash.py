@@ -657,6 +657,24 @@ class TestAliases:
         assert "Say hello to" in last_user.content
         assert "the world" in last_user.content
 
+    def test_non_dict_aliases_file_does_not_crash_caller(self, tmp_path, monkeypatch):
+        """Same regression-class as the snippets fix — a hand-edited
+        aliases.json containing a non-dict top-level shape (list,
+        string, number) slipped through ``_load``'s
+        JSONDecodeError catch and crashed callers on
+        AttributeError when they tried ``.get(name)`` or
+        ``.items()``."""
+        aliases_path = tmp_path / "aliases.json"
+        aliases_path.write_text('"not a dict"', encoding="utf-8")
+        monkeypatch.setattr("towel.cli.aliases.ALIASES_FILE", aliases_path)
+
+        from towel.cli.aliases import _load, get_alias, set_alias
+
+        assert _load() == {}
+        assert get_alias("anything") is None
+        set_alias("recovered", "now working")
+        assert get_alias("recovered") == "now working"
+
     def test_alias_no_args(self, ctx, tmp_path, monkeypatch):
         monkeypatch.setattr("towel.cli.aliases.ALIASES_FILE", tmp_path / "aliases.json")
         from towel.cli.aliases import set_alias
