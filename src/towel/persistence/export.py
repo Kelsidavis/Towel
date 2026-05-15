@@ -41,10 +41,17 @@ def export_markdown(conv: Conversation, include_metadata: bool = False) -> str:
                 if include_metadata:
                     ts = msg.timestamp.strftime("%H:%M:%S")
                     meta_parts = [ts]
-                    if msg.metadata.get("tps"):
-                        meta_parts.append(f"{msg.metadata['tps']:.1f} tok/s")
-                    if msg.metadata.get("tokens"):
-                        meta_parts.append(f"{msg.metadata['tokens']} tokens")
+                    # `:.1f` on a non-numeric value raises TypeError —
+                    # a buggy worker reporting ``tps: "5.0"`` as a
+                    # string would crash the whole export. Coerce to
+                    # float defensively (then skip the field on failure
+                    # rather than emit garbage to the markdown).
+                    tps_val = msg.metadata.get("tps")
+                    if isinstance(tps_val, (int, float)) and tps_val:
+                        meta_parts.append(f"{tps_val:.1f} tok/s")
+                    tokens_val = msg.metadata.get("tokens")
+                    if isinstance(tokens_val, (int, float)) and tokens_val:
+                        meta_parts.append(f"{int(tokens_val)} tokens")
                     # Surface collaboration info so an exported
                     # transcript shows when multi-worker arbitration
                     # ran. Without this, a reader of the markdown

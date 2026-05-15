@@ -102,6 +102,32 @@ class TestMarkdownExport:
         md = export_markdown(c)
         assert "(empty)" in md
 
+    def test_non_numeric_tps_does_not_crash_export(self):
+        """``f"{tps:.1f}"`` raises TypeError on a non-numeric value.
+        A buggy worker reporting ``tps: "5.0"`` (string instead of
+        float) used to crash the whole export — operators clicking
+        "Export markdown" got an HTTP 500 with no usable output.
+        Defensive isinstance check skips the field on garbage so
+        the rest of the conversation still renders."""
+        c = Conversation(id="bad-meta", channel="api")
+        c.add(Role.USER, "hi")
+        c.add(
+            Role.ASSISTANT,
+            "response",
+            # Both fields with non-numeric values — historically each
+            # one would crash on its own; the defensive checks skip
+            # both without exploding.
+            tps="5.0",
+            tokens="forty-two",
+        )
+        md = export_markdown(c, include_metadata=True)
+        # The non-numeric fields are skipped, not formatted as
+        # garbage. Operators see the rest of the metadata (timestamp,
+        # role) and the content survives.
+        assert "response" in md
+        assert "tok/s" not in md
+        assert "tokens" not in md.split("response")[0]
+
     def test_ensemble_metadata_surfaces(self):
         """An exported transcript should make it obvious when
         multi-worker collaboration ran on a turn. Without this, the
