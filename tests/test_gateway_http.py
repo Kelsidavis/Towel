@@ -369,6 +369,59 @@ class TestWorkerPinEndpoint:
         assert resp.json()["pinned"] is False
         assert "chat-1" not in gateway._session_pins
 
+    def test_pin_worker_warns_when_pinning_to_disabled(self, gateway, client):
+        """Pinning to a disabled worker still takes effect (the pin
+        will fire when the worker is re-enabled), but the operator
+        deserves a heads-up — otherwise the next request will go to
+        a different worker and they'll wonder why their pin didn't
+        work."""
+        gateway._workers.register(
+            "desktop-1", object(), {"backend": "mlx", "modes": ["mlx_prompt"]}
+        )
+        gateway._workers.set_enabled("desktop-1", False)
+
+        resp = client.post(
+            "/sessions/chat-1/pin-worker", json={"worker_id": "desktop-1"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["pinned"] is True
+        assert "warning" in body
+        assert "disabled" in body["warning"]
+
+    def test_pin_worker_warns_when_pinning_to_draining(self, gateway, client):
+        """Symmetric to the disabled case — pinning to a draining
+        worker should warn so operators don't see silent pin_missed
+        routing on the next request without context."""
+        gateway._workers.register(
+            "desktop-1", object(), {"backend": "mlx", "modes": ["mlx_prompt"]}
+        )
+        gateway._workers.set_draining("desktop-1", True)
+
+        resp = client.post(
+            "/sessions/chat-1/pin-worker", json={"worker_id": "desktop-1"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["pinned"] is True
+        assert "warning" in body
+        assert "draining" in body["warning"]
+
+    def test_pin_worker_no_warning_for_routable_worker(self, gateway, client):
+        """A pin to a healthy worker should NOT include a warning —
+        otherwise tests/automation would either ignore the field or
+        be tripped up by it."""
+        gateway._workers.register(
+            "desktop-1", object(), {"backend": "mlx", "modes": ["mlx_prompt"]}
+        )
+        resp = client.post(
+            "/sessions/chat-1/pin-worker", json={"worker_id": "desktop-1"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["pinned"] is True
+        assert "warning" not in body
+
 
 class TestWebUI:
     def test_index_returns_html(self, client):

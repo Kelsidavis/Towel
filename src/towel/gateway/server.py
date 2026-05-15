@@ -4756,13 +4756,33 @@ class GatewayServer:
                 return JSONResponse({"error": "worker_id required"}, status_code=400)
             if not self.pin_session_worker(session_id, worker_id):
                 return JSONResponse({"error": "Worker not found"}, status_code=404)
-            return JSONResponse(
-                {
-                    "session_id": session_id,
-                    "worker_id": worker_id,
-                    "pinned": True,
-                }
-            )
+            # The pin was set, but the worker's current state may make
+            # it unusable for the next request — surface a non-fatal
+            # warning so the operator who just pinned a draining /
+            # disabled worker isn't surprised when their next request
+            # gets pin_missed-routed elsewhere. The pin itself still
+            # took effect (will fire if the worker becomes routable).
+            pinned_worker = self._workers.get(worker_id)
+            warning: str | None = None
+            if pinned_worker is not None:
+                if not pinned_worker.enabled:
+                    warning = (
+                        "pinned worker is currently disabled — "
+                        "requests will route elsewhere until you re-enable it"
+                    )
+                elif pinned_worker.draining:
+                    warning = (
+                        "pinned worker is currently draining — "
+                        "requests will route elsewhere until it returns to service"
+                    )
+            body_out: dict[str, Any] = {
+                "session_id": session_id,
+                "worker_id": worker_id,
+                "pinned": True,
+            }
+            if warning is not None:
+                body_out["warning"] = warning
+            return JSONResponse(body_out)
 
         async def session_unpin_worker(request: Request) -> JSONResponse:
             session_id = request.path_params["session_id"]
