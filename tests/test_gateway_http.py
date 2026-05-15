@@ -3436,6 +3436,70 @@ class TestSimpleAskAPI:
                 f"verifier output {verifier_output!r} treated as correction"
             )
 
+    def test_ask_verify_strict_match_catches_just_the_token(
+        self, gateway, client,
+    ):
+        """The strict-confirmation layer (strip non-word, compare
+        to "VERIFIED") catches every cosmetic variant of just the
+        token regardless of length: whitespace, markdown bullets,
+        underscores, mixed case. Different from the lenient fallback
+        which gates on length."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "primary", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "verifier", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        # All these normalise to "VERIFIED" exactly. The strict
+        # layer should accept each one as a confirmation without
+        # falling back to the length-gated lenient path.
+        for verifier_output in (
+            "  VERIFIED  ",            # surrounded by whitespace
+            "**VERIFIED**",            # markdown bold
+            "***\nVERIFIED\n***",      # markdown thematic break
+            "verified.",               # lowercase with punctuation
+            "Verified",                # title case
+        ):
+            def make_fake_quick(out: str):
+                async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+                    if session_id.startswith("_verify_"):
+                        return Message(
+                            role=Role.ASSISTANT, content=out,
+                            metadata={"remote_worker": worker.id, "tokens": 1, "tps": 5.0},
+                        )
+                    msg = Message(
+                        role=Role.ASSISTANT, content="primary answer",
+                        metadata={"remote_worker": worker.id, "tokens": 2, "tps": 5.0},
+                    )
+                    session.conversation.messages.append(msg)
+                    return msg
+                return fake_quick
+
+            gateway._quick_remote_infer = make_fake_quick(verifier_output)  # type: ignore[method-assign]
+
+            async def fake_route(_msg, _sid):
+                return gateway._workers.get("primary"), "chat"
+            gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+            sid = f"v-strict-{abs(hash(verifier_output))}"
+            resp = client.post(
+                "/api/ask",
+                json={"message": "q", "session_id": sid, "verify": True},
+            )
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["response"] == "primary answer", (
+                f"strict-match cosmetic variant {verifier_output!r} "
+                f"did not confirm primary; got {body['response']!r}"
+            )
+
     def test_ask_verify_long_response_treated_as_correction(
         self, gateway, client,
     ):
