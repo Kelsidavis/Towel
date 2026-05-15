@@ -267,6 +267,13 @@ class GatewayServer:
     async def _handle_ws(self, ws: ServerConnection) -> None:
         """Handle an incoming WebSocket connection."""
         conn_id: str | None = None
+        # Track which session_ids THIS connection started streaming
+        # tasks for. The outer finally only cancels these — without
+        # this scoping, a channel client A disconnecting would have
+        # cancelled channel client B's in-flight streaming task too
+        # because `_active_tasks` is a coordinator-wide dict keyed
+        # by session_id (not by connection).
+        my_session_tasks: set[str] = set()
         try:
             async for raw in ws:
                 try:
@@ -479,6 +486,7 @@ class GatewayServer:
                                     self._stream_response(ws, session_id, session)
                                 )
                             self._active_tasks[session_id] = task
+                            my_session_tasks.add(session_id)
                             try:
                                 await task
                             except asyncio.CancelledError:
@@ -494,6 +502,7 @@ class GatewayServer:
                                 )
                             finally:
                                 self._active_tasks.pop(session_id, None)
+                                my_session_tasks.discard(session_id)
                         else:
                             if worker and intent == "chat":
                                 response = await self._quick_remote_infer(
@@ -560,9 +569,14 @@ class GatewayServer:
                 self._node_roles.pop(conn_id, None)
                 self._node_tasks.pop(conn_id, None)
                 self._context_sync.clear_worker(conn_id)
-            # Cancel any running tasks for this connection
-            for task in self._active_tasks.values():
-                if not task.done():
+            # Cancel only the streaming tasks THIS connection started.
+            # Iterating self._active_tasks blindly would cancel tasks
+            # belonging to other clients' WS connections too because
+            # the dict is coordinator-wide (keyed by session_id, not
+            # connection).
+            for sid in my_session_tasks:
+                task = self._active_tasks.get(sid)
+                if task is not None and not task.done():
                     task.cancel()
 
     def _notify_in_flight_disconnect(self, worker_id: str) -> None:

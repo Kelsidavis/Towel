@@ -87,6 +87,25 @@ class TestGatewayCancel:
         assert hasattr(gw, "_active_tasks")
         assert isinstance(gw._active_tasks, dict)
 
+    def test_handle_ws_only_cancels_own_streaming_tasks(self):
+        """The _active_tasks dict is coordinator-wide (keyed by
+        session_id). If one WS connection's finally iterated all
+        tasks and cancelled them, a second WS client streaming a
+        response would have its task killed when the first client
+        disconnected. Verify the handler tracks per-connection
+        session ids and only cancels those."""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._handle_ws)
+        # Per-connection set is built up as streaming starts.
+        assert "my_session_tasks" in src
+        # The finally iterates THAT set, not self._active_tasks.values().
+        assert "for sid in my_session_tasks:" in src
+        # The blind-cancel-all-tasks pattern must NOT be present.
+        assert "for task in self._active_tasks.values()" not in src
+
     def test_gateway_ws_loop_tolerates_malformed_frames(self):
         """A worker (or a probing client) that sends a malformed JSON
         frame or a non-object should not kill the WebSocket connection
