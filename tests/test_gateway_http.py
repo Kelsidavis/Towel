@@ -993,6 +993,130 @@ class TestSimpleAskAPI:
         assert isinstance(body["tokens"], int)
         assert body["tokens"] > 0
 
+    def test_ask_verify_must_be_bool(self, client):
+        """Strict-bool guard on the opt-in `verify` flag — a truthy
+        string like 'yes' would otherwise silently enable the
+        two-worker pass."""
+        for bad in ("yes", 1, "true", "false", [True]):
+            resp = client.post(
+                "/api/ask",
+                json={"message": "hi", "session_id": "v-bad", "verify": bad},
+            )
+            assert resp.status_code == 400, f"accepted verify={bad!r}"
+
+    def test_ask_verify_returns_corrected_answer(self, gateway, client):
+        """End-to-end: when verify=true and a second worker is
+        available, the verifier's correction replaces the primary's
+        answer. This is the smallest piece of real multi-worker
+        collaboration in the system — two workers acting on a single
+        request, not just routing one request to one worker."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        # Register two workers so _pick_alternate_chat_worker finds one.
+        gateway._workers.register(
+            "primary", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"], "tools": False},
+        )
+        gateway._workers.register(
+            "verifier", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"], "tools": False},
+        )
+
+        # Stub _quick_remote_infer to return different responses
+        # depending on which worker is being called and which session.
+        # The verifier session_id starts with "_verify_".
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            if session_id.startswith("_verify_"):
+                # Verifier returns a corrected answer (not "VERIFIED").
+                return Message(
+                    role=Role.ASSISTANT,
+                    content="Corrected: list.append adds one item; list.extend adds each item from an iterable.",
+                    metadata={"remote_worker": worker.id, "tokens": 20, "tps": 5.0},
+                )
+            # Primary returns a wrong/incomplete answer.
+            msg = Message(
+                role=Role.ASSISTANT,
+                content="They are the same.",
+                metadata={"remote_worker": worker.id, "tokens": 5, "tps": 5.0},
+            )
+            session.conversation.messages.append(msg)
+            return msg
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        # Force chat intent so the verify path runs.
+        async def fake_route(_msg, _sid):
+            return gateway._workers.get("primary"), "chat"
+
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "list.append vs extend?", "session_id": "v-corr", "verify": True},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # The corrected answer wins, not the primary's wrong one.
+        assert "Corrected" in body["response"]
+        # Metadata exposes the verifier worker id and the correction flag.
+        assert body.get("verified_by") == "verifier"
+        assert body.get("verifier_corrected") is True
+        assert body.get("primary_worker") == "primary"
+
+    def test_ask_verify_keeps_primary_when_verifier_confirms(
+        self, gateway, client,
+    ):
+        """When the verifier returns exactly 'VERIFIED', the primary's
+        answer is kept and the response metadata flags
+        verifier_corrected=False so the caller can tell two-worker
+        verification ran."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "primary", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"], "tools": False},
+        )
+        gateway._workers.register(
+            "verifier", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"], "tools": False},
+        )
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            if session_id.startswith("_verify_"):
+                return Message(
+                    role=Role.ASSISTANT,
+                    content="VERIFIED",
+                    metadata={"remote_worker": worker.id, "tokens": 1, "tps": 5.0},
+                )
+            msg = Message(
+                role=Role.ASSISTANT,
+                content="A correct answer here.",
+                metadata={"remote_worker": worker.id, "tokens": 5, "tps": 5.0},
+            )
+            session.conversation.messages.append(msg)
+            return msg
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        async def fake_route(_msg, _sid):
+            return gateway._workers.get("primary"), "chat"
+
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "what?", "session_id": "v-ok", "verify": True},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["response"] == "A correct answer here."
+        assert body.get("verified_by") == "verifier"
+        assert body.get("verifier_corrected") is False
+
     def test_ask_accepts_session_id_key(self, gateway, client):
         """Clients reasonably pass ``session_id`` (the convention used
         everywhere else in towel — path params, internal APIs, the

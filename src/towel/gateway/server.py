@@ -920,6 +920,94 @@ class GatewayServer:
             ],
         }
 
+    async def _verify_pass(
+        self,
+        session_id: str,
+        question: str,
+        primary_answer: str,
+        primary_worker_id: str,
+    ) -> tuple[str, bool, str | None]:
+        """Run a second-worker verifier on a (question, answer) pair.
+
+        Picks an alternate worker (not the primary), poses the
+        question + answer in a verification prompt, and returns
+        ``(final_answer, was_corrected, verifier_worker_id)``.
+
+        - If no alternate is available, returns the primary answer
+          unchanged with was_corrected=False, verifier_worker_id=None.
+        - If the verifier says "VERIFIED" (case-insensitive, allowing
+          trailing punctuation), returns the primary answer with
+          was_corrected=False.
+        - Otherwise returns the verifier's text as the corrected
+          answer with was_corrected=True.
+
+        This is the smallest piece of real multi-worker collaboration:
+        two workers acting on a single user request rather than the
+        dispatcher routing one request to one worker. Opt-in via
+        ``verify=true`` on /api/ask so operators trade latency for
+        accuracy only when they want to.
+        """
+        alt = self._pick_alternate_chat_worker(exclude={primary_worker_id})
+        if alt is None:
+            return primary_answer, False, None
+
+        # Build a short conversation that's just the verification
+        # prompt. We don't reuse the user's session — the verifier
+        # gets a focused, single-turn ask.
+        from towel.agent.conversation import Conversation, Role as _Role
+
+        verify_conv = Conversation(id=f"_verify_{session_id}")
+        verify_conv.add(
+            _Role.USER,
+            (
+                "Review this question/answer pair. If the answer is "
+                "correct and complete, respond with EXACTLY the word "
+                "VERIFIED (uppercase, no other text). If incorrect or "
+                "incomplete, respond with the corrected answer only "
+                "(no explanation, no preamble).\n\n"
+                f"Question: {question}\n\nProposed answer: {primary_answer}"
+            ),
+        )
+        # Reuse the gateway's Session class so _quick_remote_infer
+        # has the right shape to work with. The Session is ephemeral
+        # — never registered in self.sessions.
+        from towel.gateway.sessions import Session as _Session
+
+        verify_session = _Session(
+            id=f"_verify_{session_id}", conversation=verify_conv,
+        )
+        try:
+            verify_response = await self._quick_remote_infer(
+                f"_verify_{session_id}", verify_session, alt,
+                max_tokens=512,
+            )
+        except Exception as exc:
+            log.warning(
+                "verify pass on %s failed (%s); keeping primary answer",
+                alt.id, exc,
+            )
+            return primary_answer, False, None
+        # Clean up the ephemeral verifier session state — same
+        # leak class fixed for OpenAI-compat in fffdc1e.
+        try:
+            self.cleanup_ephemeral_session(f"_verify_{session_id}")
+        except Exception:
+            pass
+
+        verifier_text = (verify_response.content or "").strip()
+        # Strip trailing punctuation that some models add.
+        stripped = verifier_text.rstrip(".!? \t\n")
+        if stripped.upper() == "VERIFIED":
+            return primary_answer, False, alt.id
+        # If the verifier returned an empty-text fallback placeholder
+        # or an obvious failure, don't replace a working answer with
+        # nothing.
+        if not verifier_text or (
+            verify_response.metadata or {}
+        ).get("empty_text_fallback"):
+            return primary_answer, False, alt.id
+        return verifier_text, True, alt.id
+
     def cleanup_ephemeral_session(self, session_id: str) -> None:
         """Drop in-memory state for a one-shot session.
 
@@ -4456,6 +4544,19 @@ class GatewayServer:
                 return JSONResponse(
                     {"error": "system must be a string"}, status_code=400,
                 )
+            # Opt-in two-worker verifier pass: after the primary
+            # response lands, a second worker reviews (question,
+            # answer) and either confirms or returns a corrected
+            # version. This is genuine multi-worker collaboration on a
+            # single user request — not just routing one request to
+            # one worker. Trades latency for accuracy; the operator
+            # toggles per-request.
+            verify_raw = body.get("verify", False)
+            if not isinstance(verify_raw, bool):
+                return JSONResponse(
+                    {"error": "verify must be true or false"}, status_code=400,
+                )
+            verify = bool(verify_raw)
 
             session = self.sessions.get_or_create(session_id)
             session.conversation.channel = "api"
@@ -4640,6 +4741,59 @@ class GatewayServer:
                 else:
                     response = await self.agent.step(session.conversation)
                     session.conversation.messages.append(response)
+
+                # Two-worker verifier pass (opt-in via verify=true).
+                # The primary worker's answer becomes the input to a
+                # SECOND worker that either confirms it or replaces it
+                # with a corrected version. Genuine collaboration: two
+                # workers acting on one request. Skipped when:
+                # - operator didn't ask
+                # - the primary failed (no answer to verify)
+                # - the response is a placeholder from dual-empty
+                #   (verifying an "I couldn't respond" doesn't help)
+                # - no alternate worker exists
+                verified_by: str | None = None
+                if verify and worker is not None:
+                    primary_meta = response.metadata or {}
+                    has_real_answer = bool(
+                        response.content
+                        and not primary_meta.get("empty_text_fallback")
+                    )
+                    if has_real_answer:
+                        final_answer, was_corrected, verifier_id = (
+                            await self._verify_pass(
+                                session_id, message,
+                                response.content, worker.id,
+                            )
+                        )
+                        verified_by = verifier_id
+                        if was_corrected and final_answer != response.content:
+                            log.info(
+                                "Verifier %s corrected primary %s answer for session %s",
+                                verifier_id, worker.id, session_id,
+                            )
+                            # Replace the last assistant message with
+                            # the corrected version so the persisted
+                            # transcript reflects what the user
+                            # actually got back.
+                            if (
+                                session.conversation.messages
+                                and session.conversation.messages[-1].role
+                                == Role.ASSISTANT
+                            ):
+                                session.conversation.messages[-1].content = final_answer
+                            response.content = final_answer
+                            response.metadata = (response.metadata or {}) | {
+                                "verified_by": verifier_id,
+                                "verifier_corrected": True,
+                                "primary_worker": worker.id,
+                            }
+                        elif verifier_id is not None:
+                            response.metadata = (response.metadata or {}) | {
+                                "verified_by": verifier_id,
+                                "verifier_corrected": False,
+                                "primary_worker": worker.id,
+                            }
                 # Auto-title parity with the WS path so api-channel
                 # conversations don't end up with title="" on disk —
                 # which was making every /api/ask session render as a
@@ -4701,6 +4855,16 @@ class GatewayServer:
                 if meta.get("fallback_from_worker"):
                     body["fallback_from_worker"] = meta["fallback_from_worker"]
                     body["fallback_reason"] = meta.get("fallback_reason", "")
+                # Surface the verifier pass so the caller can tell
+                # the answer went through two-worker collaboration.
+                if meta.get("verified_by"):
+                    body["verified_by"] = meta["verified_by"]
+                    body["verifier_corrected"] = bool(
+                        meta.get("verifier_corrected", False)
+                    )
+                    body["primary_worker"] = meta.get(
+                        "primary_worker", body.get("worker", ""),
+                    )
                 return JSONResponse(body)
             except Exception as e:
                 # Persist the partial session even on inference failure
