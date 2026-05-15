@@ -86,6 +86,30 @@ class TestCosineTopK:
         top = emb.cosine_topk(q, [ok, bad], k=2)
         assert [k for k, _ in top] == ["ok"]
 
+    def test_min_score_filters_low_similarity(self):
+        """Default behavior keeps everything (preserves direct-caller
+        contract); an explicit min_score drops noise matches so
+        unrelated candidates don't sneak into vector_search /
+        fused_search results."""
+        pytest.importorskip("numpy")
+        q = _vec([1.0, 0.0, 0.0])
+        candidates = [
+            ("strong",    _vec([0.95, 0.31, 0.0])),  # cos ≈ 0.95
+            ("medium",    _vec([0.5,  0.87, 0.0])),  # cos ≈ 0.5
+            ("noise",     _vec([0.0,  1.0, 0.0])),   # cos ≈ 0.0
+        ]
+        # No threshold: all three returned, ordered by score.
+        out = emb.cosine_topk(q, candidates, k=3)
+        assert [k for k, _ in out] == ["strong", "medium", "noise"]
+
+        # Threshold 0.3: noise drops, strong + medium remain.
+        out = emb.cosine_topk(q, candidates, k=3, min_score=0.3)
+        assert [k for k, _ in out] == ["strong", "medium"]
+
+        # Threshold 0.9: only strong survives.
+        out = emb.cosine_topk(q, candidates, k=3, min_score=0.9)
+        assert [k for k, _ in out] == ["strong"]
+
 
 # ── store integration ────────────────────────────────────────────────
 
@@ -149,6 +173,39 @@ class TestVectorSearch:
         assert results[0].content == "Python is great"
         # "snake handling" should beat "stamp collecting" / "scientist".
         assert results[1].content in {"snake handling"}
+
+    def test_filters_below_min_score(self, store, monkeypatch):
+        """Live behaviour seen on the running coordinator: a query like
+        'hi' against a corpus of unrelated memories was pulling EVERY
+        memory into vector_search via the top-k path. With no
+        threshold, cosine ≈ 0 noise matches RRF-blended into
+        fused_search and every /api/ask call recall-bumped all
+        memories. The default threshold rejects that noise so genuinely
+        unrelated queries surface no vector hits and fall through to
+        the prompt-block fallback (which doesn't bump recall stats)."""
+        canned = {
+            "favorite_number": _vec([1.0, 0.0, 0.0]),
+            "user_name":       _vec([0.0, 1.0, 0.0]),
+            "preferred_lang":  _vec([0.0, 0.0, 1.0]),
+        }
+        def fake_encode(text):
+            # Query "hi" — orthogonal to all stored memories.
+            if text == "hi":
+                return _vec([0.0, 0.0, 0.0])
+            return canned.get(text)
+        monkeypatch.setattr(emb, "encode", fake_encode)
+        monkeypatch.setattr(emb, "is_available", lambda: True)
+
+        for key, _vec_data in canned.items():
+            store.remember(key, key, "fact")
+
+        # Unrelated query → no matches survive the floor.
+        assert store.vector_search("hi") == []
+
+        # A related query still works.
+        results = store.vector_search("favorite_number", limit=3)
+        assert len(results) == 1
+        assert results[0].key == "favorite_number"
 
 
 class TestEmbeddingDims:

@@ -1039,13 +1039,28 @@ class MemoryStore:
             )
         return len(updates)
 
+    # Floor for cosine similarity in vector_search. Below this the
+    # match is essentially noise — for sentence-transformer style
+    # models (all-MiniLM-L6-v2 and similar 384-d encoders), unrelated
+    # text typically scores 0.0–0.3 and genuine paraphrases score 0.4+.
+    # Without this floor, a tiny corpus (e.g. 7 unrelated test memories)
+    # made every query "match" every memory via the top-k path —
+    # fused_search then RRF-blended noise into real results, every
+    # /api/ask call recall-bumped all memories, and the recall log
+    # showed identical 7-key results for "hi", "List three colors",
+    # and "Respond with just: OK". Threshold rejects that noise so
+    # genuinely-unrelated queries fall through to the prompt-block
+    # fallback path (which doesn't bump recall stats).
+    VECTOR_SEARCH_MIN_SCORE = 0.30
+
     def vector_search(self, query: str, limit: int = 5) -> list[MemoryEntry]:
         """Cosine-rank memories against ``query`` via stored embeddings.
 
-        Returns ``[]`` whenever the embeddings extra isn't installed
-        or when no entry in the corpus has an embedding yet — callers
-        should fall back to BM25 in those cases (``fused_search``
-        does this for you).
+        Returns ``[]`` whenever the embeddings extra isn't installed,
+        no entry in the corpus has an embedding yet, or no candidate
+        clears :attr:`VECTOR_SEARCH_MIN_SCORE`. Callers fall back to
+        BM25 / graph in those cases (``fused_search`` does this for
+        you).
         """
         from towel.memory import embeddings as _emb
 
@@ -1068,6 +1083,7 @@ class MemoryStore:
             query_blob,
             [(r["key"], r["embedding"]) for r in rows],
             k=limit,
+            min_score=self.VECTOR_SEARCH_MIN_SCORE,
         )
         if not scored:
             return []

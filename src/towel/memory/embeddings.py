@@ -109,6 +109,7 @@ def cosine_topk(
     query_blob: bytes,
     candidates: list[tuple[str, bytes]],
     k: int = 5,
+    min_score: float | None = None,
 ) -> list[tuple[str, float]]:
     """Rank ``candidates`` by cosine similarity to ``query_blob``.
 
@@ -116,6 +117,12 @@ def cosine_topk(
     so cosine reduces to a dot product. ``candidates`` is a list of
     (key, blob) — entries missing a stored embedding are skipped, not
     a crash. Returns a list of (key, score) sorted high-to-low.
+
+    ``min_score`` (default None — no filtering, preserves the
+    original behavior for direct callers) drops candidates whose
+    cosine score is below the threshold. ``vector_search`` sets this
+    to a sane lower bound so noise matches don't pollute fused_search
+    and cause every memory to look "relevant" to every query.
     """
     if not query_blob or not candidates:
         return []
@@ -143,4 +150,8 @@ def cosine_topk(
     scores = matrix @ q  # (N,) dot products; both pre-normalized → cosine
     # argsort descending without copying the full array.
     top = np.argsort(-scores)[:k]
-    return [(keys[i], float(scores[i])) for i in top]
+    return [
+        (keys[i], float(scores[i]))
+        for i in top
+        if min_score is None or float(scores[i]) >= min_score
+    ]
