@@ -294,6 +294,25 @@ class TestResponseFormat:
         assert "message" in choice
         assert "finish_reason" in choice
 
+    def test_completion_includes_system_fingerprint(self):
+        """`system_fingerprint` is what OpenAI clients use for cache
+        invalidation — some LangChain caches and eval harnesses
+        depend on it. Towel emits a per-process value derived from
+        the package version so the fingerprint flips on coordinator
+        upgrades (matching OpenAI's behaviour of changing it on
+        model revisions) but stays stable within a process."""
+        from towel.gateway.openai_compat import _format_completion
+
+        result = _format_completion("id", 0, "m", "content", 5)
+        assert "system_fingerprint" in result
+        fp = result["system_fingerprint"]
+        assert isinstance(fp, str)
+        assert fp.startswith("fp_")
+        # Second call within the same process must produce the same
+        # value — caches keyed on this would thrash otherwise.
+        result2 = _format_completion("id-2", 1, "m", "different", 3)
+        assert result2["system_fingerprint"] == fp
+
     def test_prompt_tokens_uses_supplied_value(self):
         """When the caller provides prompt_tokens (e.g. from the worker's
         usage data, or an estimate over the input messages), the formatter

@@ -44,6 +44,28 @@ if TYPE_CHECKING:
 _OPENAI_MODELS_CREATED = int(time.time())
 
 
+def _system_fingerprint() -> str:
+    """Stable per-process system_fingerprint for ChatCompletion responses.
+
+    Modern OpenAI clients read `system_fingerprint` to detect when
+    the underlying inference system has changed — e.g. for cache
+    invalidation. A response without the field is technically valid
+    but breaks clients that rely on it (some LangChain caches, eval
+    harnesses). Derive from the towel package version so the
+    fingerprint flips on coordinator upgrades, matching OpenAI's
+    behaviour of changing fingerprints on model revisions.
+    """
+    try:
+        from towel import __version__ as _v
+    except Exception:
+        _v = "0"
+    import hashlib as _hash
+    return "fp_towel_" + _hash.sha256(_v.encode("utf-8")).hexdigest()[:10]
+
+
+_SYSTEM_FINGERPRINT = _system_fingerprint()
+
+
 def build_openai_routes(
     agent: AgentRuntime,
     config: TowelConfig,
@@ -850,6 +872,11 @@ def _format_completion(
         "object": "chat.completion",
         "created": created,
         "model": model,
+        # `system_fingerprint` is what OpenAI clients use for cache
+        # invalidation — a stable per-process derivation from the
+        # towel version flips it on coordinator upgrades, which is
+        # the right signal for downstream caches.
+        "system_fingerprint": _SYSTEM_FINGERPRINT,
         "choices": [
             {
                 "index": 0,
