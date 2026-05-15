@@ -136,3 +136,21 @@ def test_qwen_chatml_dict_arguments():
 def test_tool_call_to_dict():
     tc = ToolCall(name="test", arguments={"a": 1}, raw="raw")
     assert tc.to_dict() == {"name": "test", "arguments": {"a": 1}}
+
+
+def test_parse_tool_calls_handles_none_defensively():
+    """A backend that returns GenerationResult(text=None) used to
+    crash callers inside re.finditer. The parser now coerces non-
+    str input to "" so every caller naturally falls through to the
+    "no tool calls, empty remaining" path."""
+    calls, remaining = parse_tool_calls(None)  # type: ignore[arg-type]
+    assert calls == []
+    assert remaining == ""
+
+
+def test_parse_tool_calls_handles_non_string_defensively():
+    """Same guard applies to any non-string input, not just None."""
+    for bad in (42, [], {}, object()):
+        calls, remaining = parse_tool_calls(bad)  # type: ignore[arg-type]
+        assert calls == []
+        assert remaining == ""

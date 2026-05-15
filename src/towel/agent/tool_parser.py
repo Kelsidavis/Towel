@@ -80,7 +80,14 @@ def parse_tool_calls(text: str) -> tuple[list[ToolCall], str]:
     Returns:
         A tuple of (tool_calls, remaining_text) where remaining_text
         is the model output with tool call blocks stripped out.
+
+    Defensive: a buggy backend can pass None even though the type
+    says str. Coerce to "" at the boundary so callers don't have to
+    sprinkle their own isinstance guards. (Catches the same class
+    of crash _synthesize_ensemble had to guard against externally.)
     """
+    if not isinstance(text, str):
+        text = ""
     calls: list[ToolCall] = []
     remaining = text
 
