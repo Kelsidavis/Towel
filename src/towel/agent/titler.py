@@ -57,13 +57,23 @@ def generate_title(user_message: str, assistant_message: str = "") -> str:
     keywords = [w for w in words if w not in STOP_WORDS and len(w) > 1]
 
     if len(keywords) < MIN_TITLE_WORDS:
-        # Fall back to first meaningful words from original, still filtering stops
-        words = re.sub(r"[^\w\s]", " ", user_message).lower().split()
+        # Fall back to a more permissive pass over the SAME cleaned
+        # text — keep short words this time but still drop stops.
+        # Using `text` (not raw `user_message`) so @file references,
+        # code blocks, and URLs that the earlier passes already
+        # stripped don't sneak back in via the looser regex —
+        # otherwise a message like "@file.py please explain" titled
+        # as "File Py" (with the @file ref reintroduced) and
+        # "explain `code` here" titled as "Code Here" (with the
+        # already-stripped code block back in).
+        words = re.sub(r"[^\w\s]", " ", text).lower().split()
         keywords = [w for w in words if w not in STOP_WORDS and len(w) > 1][:MAX_TITLE_WORDS]
 
     if not keywords:
-        # Last resort: just take first non-trivial words
-        words = re.sub(r"[^\w\s]", " ", user_message).lower().split()
+        # Last resort: same cleaned text, just take first non-trivial
+        # words even if they're stop-words. Still uses `text` (not
+        # the raw input) for the same reason as above.
+        words = re.sub(r"[^\w\s]", " ", text).lower().split()
         keywords = [w for w in words if len(w) > 2][:MAX_TITLE_WORDS]
 
     if not keywords:

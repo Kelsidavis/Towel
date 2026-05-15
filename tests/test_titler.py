@@ -29,10 +29,35 @@ class TestGenerateTitle:
         title = generate_title("explain @src/main.py and @utils/helpers.py")
         assert "@" not in title
 
+    def test_file_ref_components_dont_leak_via_fallback(self):
+        """When the primary keyword pass yields too few words, the
+        function falls back to a more permissive scan. That fallback
+        must NOT reach back into the raw user_message and reintroduce
+        content the first pass already stripped — otherwise
+        `@file.py please explain` titled as `File Py` (with the @file
+        ref's broken-up tokens back in)."""
+        title = generate_title("@file.py please explain this")
+        lower = title.lower()
+        # The @file's broken-up tokens must not reappear.
+        assert "file" not in lower, f"@file leaked through fallback: {title!r}"
+        assert ".py" not in lower
+        assert "@" not in title
+
     def test_url_stripped(self):
         title = generate_title("summarize https://example.com/article")
         assert "https" not in title
         assert title
+
+    def test_url_components_dont_leak_via_fallback(self):
+        """Same fallback bug applied to URLs — a message whose
+        non-URL words are all stop-words would title as the URL's
+        host/path tokens."""
+        title = generate_title("see https://example.com/path for it")
+        lower = title.lower()
+        # URL components must not reappear in the fallback.
+        assert "example" not in lower, f"URL leaked: {title!r}"
+        assert "path" not in lower
+        assert "http" not in lower
 
     def test_code_block_stripped(self):
         title = generate_title("fix this:\n```python\nprint('hello')\n```")
