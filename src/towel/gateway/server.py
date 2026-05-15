@@ -4150,6 +4150,15 @@ class GatewayServer:
             log_status["empty_text_retries_by_worker"] = (
                 self._dispatcher.empty_text_retry_counts()
             )
+            # Quality-degraded count across the full buffer. Same
+            # always-present shape as the retry tally so doctor /
+            # UI can render "0 degraded" without a missing-field
+            # check. A high count means the fleet's capability
+            # profile doesn't match the workload — operators should
+            # see it without curl-ing every decision.
+            log_status["quality_degraded_count"] = sum(
+                1 for d in full_history if d.quality_degraded
+            )
             return JSONResponse(
                 {
                     "decisions": entries[-limit:],

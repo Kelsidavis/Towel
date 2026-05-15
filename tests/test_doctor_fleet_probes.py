@@ -390,6 +390,85 @@ class TestProbeFleetEndpoints:
         joined_warnings = " | ".join(c.warnings)
         assert "Empty-text retries" not in joined_warnings
 
+    def test_quality_degraded_count_becomes_a_warning(self):
+        """When the dispatcher has had to route to under-spec workers
+        repeatedly (≥5 quality_degraded decisions in the buffer), the
+        fleet's capability profile doesn't match the workload —
+        doctor warns so operators see "why is code-gen slow" without
+        grepping /dispatch/recent for the flag."""
+        responses = {
+            "/workers": {"workers": []},
+            "/skills": {"skills": [], "total_tools": 0},
+            "/fleet/inventory": {
+                "models": [], "total_unique": 0, "total_workers": 0,
+                "fleet_max_param_b": 0.0,
+            },
+            "/dispatch/recent?limit=1": {
+                "decisions": [],
+                "log_status": {
+                    "empty_text_retries_by_worker": {},
+                    "quality_degraded_count": 7,
+                },
+            },
+            "/cluster/handoffs": {
+                "stats": {"total": 0, "failed": 0, "pending": 0}, "recent": [],
+            },
+        }
+
+        def fake_get(url, timeout=None):
+            for suffix, payload in responses.items():
+                if url.endswith(suffix):
+                    return _mock_response(payload)
+            raise AssertionError(f"unexpected url: {url}")
+
+        c = Check("test")
+        with patch("httpx.get", side_effect=fake_get):
+            _probe_fleet_endpoints(c, "localhost", 18743)
+
+        joined_warnings = " | ".join(c.warnings)
+        assert "7 quality-degraded" in joined_warnings
+        assert "under-spec workers" in joined_warnings
+        # Operator guidance accompanies the warn.
+        joined_suggestions = " | ".join(c.suggestions)
+        assert "bigger worker" in joined_suggestions
+
+    def test_quality_degraded_below_threshold_is_silent(self):
+        """A small number of degraded dispatches is a transient
+        condition (the big worker briefly busy) — only ≥5 in the
+        buffer trips the warn, otherwise the signal loses
+        meaning."""
+        responses = {
+            "/workers": {"workers": []},
+            "/skills": {"skills": [], "total_tools": 0},
+            "/fleet/inventory": {
+                "models": [], "total_unique": 0, "total_workers": 0,
+                "fleet_max_param_b": 0.0,
+            },
+            "/dispatch/recent?limit=1": {
+                "decisions": [],
+                "log_status": {
+                    "empty_text_retries_by_worker": {},
+                    "quality_degraded_count": 3,
+                },
+            },
+            "/cluster/handoffs": {
+                "stats": {"total": 0, "failed": 0, "pending": 0}, "recent": [],
+            },
+        }
+
+        def fake_get(url, timeout=None):
+            for suffix, payload in responses.items():
+                if url.endswith(suffix):
+                    return _mock_response(payload)
+            raise AssertionError(f"unexpected url: {url}")
+
+        c = Check("test")
+        with patch("httpx.get", side_effect=fake_get):
+            _probe_fleet_endpoints(c, "localhost", 18743)
+
+        joined_warnings = " | ".join(c.warnings)
+        assert "quality-degraded" not in joined_warnings
+
     def test_handoff_failures_become_a_warning(self):
         """A nonzero failed-handoff count is exactly the kind of thing
         operators don't notice until something breaks. Doctor surfaces it

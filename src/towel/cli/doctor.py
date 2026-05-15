@@ -473,6 +473,28 @@ def _probe_fleet_endpoints(c: Check, host: str, http_port: int) -> None:
                 "calls instead of chat — consider pinning chat sessions "
                 "away from it or disabling it for chat intent"
             )
+        # Quality-degraded count: dispatches forced onto an
+        # under-spec worker because no better-fit candidate was
+        # available. Threshold ≥5 distinguishes a recurring fleet/
+        # workload mismatch from a one-off ("the big worker was
+        # briefly busy"). Surfacing this answers the operator
+        # question "why is my code-gen taking forever?" without
+        # them having to grep /dispatch/recent for the flag.
+        degraded_count = int(
+            (data.get("log_status") or {}).get("quality_degraded_count", 0) or 0
+        )
+        if degraded_count >= 5:
+            c.warn(
+                f"{degraded_count} quality-degraded dispatch(es) in the "
+                "current buffer — tasks are landing on under-spec workers"
+            )
+            c.suggestions.append(
+                "Either the workload needs a bigger worker (more VRAM / "
+                "context), or the existing big worker is too often busy "
+                "with idle tasks — the bigger-is-better preempt fix "
+                "(commit 881031c) reroutes quality tasks onto the big "
+                "worker when idle tasks are running there"
+            )
     except Exception as exc:
         c.warn(f"/dispatch/recent probe failed: {exc.__class__.__name__}")
 
