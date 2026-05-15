@@ -157,6 +157,24 @@ class TestGatewayCancel:
         assert "isinstance(raw_id, str)" in src
         assert "256" in src
 
+    def test_gateway_ws_supports_ensemble_for_nonstreaming(self):
+        """Web UI / WS clients can opt into multi-worker ensemble on
+        non-streaming requests. Streaming is intentionally not
+        supported (synthesis can't be streamed). Source-level check
+        guards the wiring."""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._handle_ws)
+        # Opt-in field is read from the WS message frame.
+        assert "ensemble_flag" in src
+        assert 'msg.get("ensemble"' in src
+        # Wires through to the shared helper.
+        assert "_ensemble_dispatch" in src
+        # Streaming requests still fall through to single-worker path.
+        assert "ensemble_flag and not stream" in src
+
     def test_gateway_ws_message_coerces_bad_field_types(self):
         """A client sending {"type":"message","session":42} previously
         crashed deep in ConversationStore._path_for (iterating the int

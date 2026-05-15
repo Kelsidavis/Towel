@@ -460,6 +460,17 @@ class GatewayServer:
                     if not isinstance(channel, str):
                         channel = "unknown"
                     stream = bool(msg.get("stream", True))
+                    # Opt-in ensemble collaboration on the WS path.
+                    # Same semantics as /api/ask?ensemble=true — fan
+                    # out to all idle inference workers, synthesize
+                    # via local agent. Requires stream=false because
+                    # the synthesis step is non-streaming; if a WS
+                    # client sets ensemble=true with stream=true we
+                    # silently fall back to streaming single-worker
+                    # (mirrors the openai-compat reject, but quieter
+                    # since the WS protocol doesn't carry HTTP error
+                    # codes).
+                    ensemble_flag = bool(msg.get("ensemble", False))
 
                     session = self.sessions.get_or_create(session_id)
                     session.conversation.add(Role.USER, content, channel=channel)
@@ -473,6 +484,41 @@ class GatewayServer:
                     # save() at the bottom got skipped when the
                     # inference call raised.
                     try:
+                        # Ensemble short-circuit (non-streaming only):
+                        # fan out, synthesize, send one response event.
+                        # Streaming clients fall through to the normal
+                        # single-worker path — synthesis can't be
+                        # streamed.
+                        if ensemble_flag and not stream:
+                            arbitrated, _contribs = await self._ensemble_dispatch(
+                                session_id, content, user_session=session,
+                            )
+                            if arbitrated:
+                                from towel.agent.conversation import Message as _M
+                                response = _M(
+                                    role=Role.ASSISTANT,
+                                    content=arbitrated,
+                                    metadata={
+                                        "ensemble": True,
+                                        "remote_worker": "ensemble",
+                                    },
+                                )
+                                session.conversation.messages.append(response)
+                                await ws.send(
+                                    json.dumps(
+                                        {
+                                            "type": "response",
+                                            "session": session_id,
+                                            "content": response.content,
+                                            "metadata": response.metadata,
+                                        }
+                                    )
+                                )
+                                self._maybe_set_auto_title(session)
+                                continue
+                            # Ensemble produced nothing useful — fall
+                            # through to the normal single-worker
+                            # path so the user isn't left empty-handed.
                         worker, intent = await self._route_by_role(content, session_id)
                         if stream:
                             if worker:
