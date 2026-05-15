@@ -1372,6 +1372,14 @@ class GatewayServer:
             return "", contributions, "none"
         if len(real_answers) == 1:
             return real_answers[0]["answer"], contributions, "single"
+        # Trivial-agreement short-circuit: if every answer is the
+        # same string (case-folded, stripped), there's literally
+        # nothing to arbitrate. Catches the case Jaccard misses —
+        # very short answers ("42", "Berlin.", "yes") where the
+        # tokens-≥3-chars filter strips everything.
+        normalized = {a["answer"].strip().lower() for a in real_answers}
+        if len(normalized) == 1:
+            return real_answers[0]["answer"], contributions, "consensus"
         if _answers_in_near_consensus(real_answers):
             # Workers basically agreed — skip the synthesis call.
             # The longest answer usually has the most detail; pick it.

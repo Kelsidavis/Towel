@@ -1471,6 +1471,62 @@ class TestSimpleAskAPI:
         # Consensus path fired (no synthesis).
         assert body.get("ensemble_arbitration") == "consensus"
 
+    def test_ask_ensemble_trivial_agreement_skips_synthesis(
+        self, gateway, client,
+    ):
+        """For very short answers ("42", "Berlin."), the Jaccard
+        consensus check sees empty token sets (after the ≥3-char
+        filter) and won't fire. The trivial-agreement short-circuit
+        catches that case: if every answer is the same string
+        (case-folded, stripped), there's nothing to arbitrate."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "a", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "b", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        # Identical short answers — Jaccard would see empty sets
+        # after the 3-char filter and not declare consensus.
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            return Message(
+                role=Role.ASSISTANT, content="42",
+                metadata={"remote_worker": worker.id, "tokens": 1, "tps": 5.0},
+            )
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        synth_called = []
+        async def fake_step(conv):
+            synth_called.append(True)
+            return Message(role=Role.ASSISTANT, content="should not appear")
+
+        gateway.agent.step = fake_step  # type: ignore[method-assign]
+
+        async def fake_gen(conv):
+            synth_called.append(True)
+            from towel.agent.runtime import GenerationResult
+            return GenerationResult(text="should not appear")
+
+        gateway.agent.generate = fake_gen  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "answer?", "session_id": "ens-trivial", "ensemble": True},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # Synthesis must NOT have run.
+        assert synth_called == [], "synthesis ran on trivial-agreement"
+        assert body["response"] == "42"
+        assert body["ensemble_arbitration"] == "consensus"
+
     def test_ask_ensemble_consensus_skips_synthesis(self, gateway, client):
         """When workers basically agree (Jaccard ≥ 0.7 on
         lowercased word tokens), skip the ~30s local-agent synthesis
