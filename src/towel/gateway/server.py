@@ -1210,10 +1210,19 @@ class GatewayServer:
                 empty_text_fallback = False
                 if not text:
                     empty_text_fallback = True
+                    # User-facing placeholder. The previous text
+                    # ("the worker returned no text") read like an
+                    # operator error message — confusing for end
+                    # users who don't know what a worker is and
+                    # blamed the model instead of suggesting a path
+                    # forward. The retry-on-empty path may replace
+                    # this with the alt worker's response; the
+                    # operator-facing diagnostic lives in the
+                    # `empty_text_fallback: True` metadata flag, not
+                    # the prose.
                     text = (
-                        "(The worker returned no text — "
-                        "likely emitted tool calls instead. "
-                        "Update the worker if this repeats.)"
+                        "I wasn't able to put together a response that "
+                        "turn — try rephrasing or asking again."
                     )
                 # Hoist the worker's reported tokens/tps/etc. into the
                 # Message metadata so API callers and the UI see real
