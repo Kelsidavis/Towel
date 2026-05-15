@@ -143,6 +143,22 @@ class TestBM25Ranking:
         results = store.search("sample", limit=3)
         assert len(results) == 3
 
+    def test_search_handles_huge_query(self, store):
+        """A user pasting 1MB of text into /api/ask flows that whole
+        body into to_prompt_block(query=last_user_msg) → fused_search
+        → search(), where the LIKE substring fallback used to build a
+        pattern beyond SQLite's SQLITE_MAX_LIKE_PATTERN_LENGTH (50000)
+        and crash with "LIKE or GLOB pattern too complex" — that
+        bubbled up as HTTP 500 from /api/ask. Search must not crash
+        on long input; truncate the LIKE-bound query to a safe size."""
+        store.remember("normal", "some sample memory content")
+        # Build a query bigger than SQLITE_MAX_LIKE_PATTERN_LENGTH.
+        huge = "a" * 60000
+        # Must not raise — graceful empty result is fine; the BM25
+        # path may also pull no rows for nonsense tokens.
+        results = store.search(huge)
+        assert isinstance(results, list)
+
 
 class TestQueryRelevantPromptBlock:
     """to_prompt_block(query=…) must surface the right memories AND

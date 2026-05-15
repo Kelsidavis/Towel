@@ -688,6 +688,17 @@ class MemoryStore:
         query = (query or "").strip()
         if not query:
             return []
+        # SQLite's LIKE pattern length limit (SQLITE_MAX_LIKE_PATTERN_LENGTH,
+        # default 50000) raises "LIKE or GLOB pattern too complex" when the
+        # pattern overflows. A user message pasted into /api/ask (a long
+        # log dump, a code paste, etc.) flowed into to_prompt_block →
+        # fused_search → search() with the full body as the query, and
+        # the LIKE substring fallback then crashed the request with HTTP
+        # 500. Cap the LIKE-bound query at well under the SQLite limit;
+        # the BM25/FTS5 path handles long queries fine and gets the full
+        # text via its tokenization.
+        _MAX_LIKE_QUERY = 2000
+        like_query = query if len(query) <= _MAX_LIKE_QUERY else query[:_MAX_LIKE_QUERY]
         con = self._connect()
         try:
             fts_query = _fts5_query(query)
@@ -706,7 +717,7 @@ class MemoryStore:
                     # quoting). Fall through to substring.
                     log.debug("FTS5 query failed (%s); falling back", exc)
             if not rows:
-                like = f"%{query.lower()}%"
+                like = f"%{like_query.lower()}%"
                 rows = con.execute(
                     "SELECT * FROM memories "
                     "WHERE lower(key) LIKE ? OR lower(content) LIKE ? "
