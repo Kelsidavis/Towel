@@ -499,6 +499,60 @@ class TestCollaborationOnOpenAICompat:
         assert resp.status_code == 400
         assert "ensemble" in resp.json()["error"]["message"]
 
+    def test_ensemble_returns_arbitrated_answer(self, tmp_path):
+        """End-to-end ensemble through /v1/chat/completions:
+        non-streaming request with `ensemble: true` fans the prompt
+        to every idle worker and returns the arbitrated answer in
+        standard OpenAI shape. The collaboration is invisible to a
+        spec-strict OpenAI client (just better quality), but works."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        store = ConversationStore(store_dir=tmp_path)
+        config = TowelConfig()
+        agent = AgentRuntime(config)
+        sessions = SessionManager(store=store)
+        gw = GatewayServer(config=config, agent=agent, sessions=sessions)
+        client = TestClient(gw._build_http_app())
+
+        gw._workers.register(
+            "a", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gw._workers.register(
+            "b", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            answers = {
+                "a": "Paris is the capital of France.",
+                "b": "Paris, capital of France, is also its largest city.",
+            }
+            return Message(
+                role=Role.ASSISTANT, content=answers[worker.id],
+                metadata={"remote_worker": worker.id, "tokens": 8, "tps": 5.0},
+            )
+
+        gw._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "default",
+                "messages": [{"role": "user", "content": "What is the capital of France?"}],
+                "ensemble": True,
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        # Standard OpenAI shape — collaboration is invisible at the
+        # response shape level.
+        assert data["object"] == "chat.completion"
+        assert len(data["choices"]) == 1
+        assert "Paris" in data["choices"][0]["message"]["content"]
+
     def test_streaming_rejects_collaboration_modes(self, client):
         """Streaming can't carry synthesis (the arbiter waits for all
         contributions, which is inherently non-streaming). Reject
