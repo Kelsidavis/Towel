@@ -1413,13 +1413,30 @@ class GatewayServer:
         # being primed by raw worker_ids (which encode hardware
         # specs the model shouldn't anchor on).
         labels = "ABCDEFGHIJKLMN"
+        # Prompt that biases toward concrete grounded text: prefer
+        # specifics over averaging, copy whichever phrasing is more
+        # precise rather than rewriting in the arbiter's voice, and
+        # keep length proportional to the workers' (don't expand
+        # short factual answers into prose). The "do NOT average"
+        # line targets a common LLM-as-judge failure mode — blending
+        # two specific answers into one vague answer that has neither
+        # set of facts.
         lines = [
             "You are arbitrating between answers from multiple AI workers "
             "to a single question. Produce the best final answer for the "
-            "user. Synthesize where the workers agree, resolve disagreements "
-            "in favor of correctness and completeness, and prefer concrete "
-            "specifics over vague generalities. Output only the final "
-            "answer — no meta-commentary, no 'Worker A said...' framing.",
+            "user.",
+            "",
+            "Rules:",
+            "1. Where the workers agree, keep that. Where they disagree, "
+            "pick the answer with concrete specifics over vague "
+            "generalities. Do NOT average — averaging two precise "
+            "answers gives one vague answer.",
+            "2. If one answer is clearly wrong or incomplete, drop it.",
+            "3. Match the workers' format and length. Don't expand "
+            "a short factual answer into prose; don't trim a code "
+            "block into a one-liner.",
+            "4. Output ONLY the final answer — no preamble, no "
+            "'Worker A said...' framing, no meta-commentary.",
             "",
             f"Question: {question}",
             "",
