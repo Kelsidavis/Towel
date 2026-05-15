@@ -34,9 +34,9 @@ MCP_PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "towel-memory"
 # Match towel's package version so MCP clients can pin or warn.
 try:
-    from towel import __version__ as _TOWEL_VERSION
+    from towel import __version__ as _towel_version
 except Exception:
-    _TOWEL_VERSION = "0.0.0"
+    _towel_version = "0.0.0"
 
 
 # ── tool schemas ──────────────────────────────────────────────────────
@@ -565,7 +565,7 @@ class MemoryMCPServer:
                 result = {
                     "protocolVersion": MCP_PROTOCOL_VERSION,
                     "capabilities": {"tools": {"listChanged": False}},
-                    "serverInfo": {"name": SERVER_NAME, "version": _TOWEL_VERSION},
+                    "serverInfo": {"name": SERVER_NAME, "version": _towel_version},
                 }
             elif method == "notifications/initialized":
                 return None  # ack-only notification
@@ -627,7 +627,7 @@ def serve_stdio(store: MemoryStore | None = None) -> None:
     server = MemoryMCPServer(store=store)
     log.info(
         "Towel MCP server starting on stdio (protocol=%s, version=%s)",
-        MCP_PROTOCOL_VERSION, _TOWEL_VERSION,
+        MCP_PROTOCOL_VERSION, _towel_version,
     )
     for line in sys.stdin:
         line = line.strip()

@@ -58,7 +58,9 @@ def _vec(values: list[float]) -> bytes:
 
 class TestCosineTopK:
     def test_orders_by_cosine_descending(self):
-        np = pytest.importorskip("numpy")
+        # numpy is a hard dep of the cosine top-k path; skip the
+        # whole test if it isn't installed in this env.
+        pytest.importorskip("numpy")
         # 3-dim unit vectors; query is [1,0,0]. Closest should be
         # the candidate that aligns best with the x-axis.
         q = _vec([1.0, 0.0, 0.0])

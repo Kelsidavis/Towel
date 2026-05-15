@@ -323,7 +323,7 @@ class TestErrors:
         assert "error" in reply
         assert reply["error"]["code"] == -32602
 
-    def test_tool_runtime_error_is_isError(self, server, monkeypatch):
+    def test_tool_runtime_error_uses_is_error_field(self, server, monkeypatch):
         # Force the store to blow up so we can verify the convention
         # that tool errors come back via result.isError, not the
         # JSON-RPC error frame.
