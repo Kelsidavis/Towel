@@ -143,6 +143,15 @@ class TowelConfig(BaseModel):
     # reconnect cycle.
     worker_inference_timeout: float = 300.0
 
+    # Chat-fast timeout — how long `_quick_remote_infer` waits for the
+    # worker's non-streaming response on the /api/ask chat path and
+    # /v1/chat/completions non-streaming. Chat is meant to feel
+    # interactive, so this is shorter than `worker_inference_timeout`.
+    # On worker timeout we surface a structured error to the caller
+    # rather than holding the HTTP connection open. Bump higher on
+    # fleets where small models cold-start slowly.
+    chat_fast_timeout: float = 60.0
+
     # Override the IP address advertised via mDNS. Empty means
     # auto-detect via the "connect to 8.8.8.8" trick, which on
     # machines with Tailscale / WireGuard / multiple interfaces

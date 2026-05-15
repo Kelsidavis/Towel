@@ -993,9 +993,12 @@ class GatewayServer:
             )
         )
 
+        chat_fast_timeout = float(
+            getattr(self.config, "chat_fast_timeout", 60.0) or 60.0
+        )
         try:
             try:
-                msg = await asyncio.wait_for(queue.get(), timeout=60.0)
+                msg = await asyncio.wait_for(queue.get(), timeout=chat_fast_timeout)
             except TimeoutError as exc:
                 # asyncio.TimeoutError stringifies to "" — bubble up a
                 # message the API caller can actually act on. Otherwise
@@ -1003,7 +1006,8 @@ class GatewayServer:
                 # `{"error": ""}` HTTP 500 with no indication that
                 # the worker timed out.
                 raise RuntimeError(
-                    f"worker {worker.id} did not respond within 60s"
+                    f"worker {worker.id} did not respond within "
+                    f"{chat_fast_timeout:.0f}s"
                 ) from exc
             if msg.get("type") == "job_done":
                 result = msg.get("result", {}) or {}
