@@ -717,11 +717,28 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
             }).join(', ')
           + '</span>'
         : '';
+      // Quality-degraded + timeout counts. Same trio of fleet-
+      // health signals doctor warns on at the CLI level — surface
+      // them in the dispatch panel so the operator looking at
+      // routing decisions can see all three failure modes
+      // (flaky / under-spec / hung) in one view.
+      const degCount = (ls && typeof ls.quality_degraded_count === 'number')
+        ? ls.quality_degraded_count : 0;
+      const degStr = degCount >= 5
+        ? ' · <span class="fleet-badge warn">degraded ×' + degCount + '</span>'
+        : '';
+      const timeoutCount = (ls && typeof ls.timeout_count === 'number')
+        ? ls.timeout_count : 0;
+      const timeoutStr = timeoutCount >= 5
+        ? ' · <span class="fleet-badge err">timeouts ×' + timeoutCount + '</span>'
+        : '';
       statusStrip = '<div class="fleet-route-meta" style="margin-bottom:6px">'
         + '<span class="fleet-badge ' + cls + '">log ' + ls.size + '/' + ls.cap + '</span>'
         + (ageStr ? ' · oldest ' + escHtml(ageStr) + ' ago' : '')
         + (ls.saturated ? ' · <span style="color:var(--yellow)">audit data being dropped — bump TowelConfig.dispatch_history_size</span>' : '')
         + flakyStr
+        + degStr
+        + timeoutStr
         + '</div>';
     }
     if (!decisions.length) {
