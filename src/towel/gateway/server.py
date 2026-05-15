@@ -1400,7 +1400,18 @@ class GatewayServer:
         chunk_timeout = float(getattr(self.config, "worker_inference_timeout", 300.0) or 300.0)
         try:
             while True:
-                msg = await asyncio.wait_for(queue.get(), timeout=chunk_timeout)
+                try:
+                    msg = await asyncio.wait_for(queue.get(), timeout=chunk_timeout)
+                except (asyncio.TimeoutError, TimeoutError) as exc:
+                    # asyncio.TimeoutError stringifies to "" — convert to
+                    # a RuntimeError carrying the worker id and timeout
+                    # so the caller's generic except renders something
+                    # the API user can act on. Mirrors the chat-fast
+                    # path's fix in 2bab006.
+                    raise RuntimeError(
+                        f"worker {worker.id} stalled mid-stream "
+                        f"after {chunk_timeout:.0f}s"
+                    ) from exc
                 msg_type = msg.get("type")
                 if msg_type == "job_event":
                     event = msg.get("event", {})
