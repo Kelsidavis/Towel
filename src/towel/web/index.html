@@ -699,10 +699,29 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         : ageS < 3600 ? (Math.round(ageS / 60) + 'm')
         : (Math.round(ageS / 3600) + 'h');
       const cls = ls.saturated ? 'warn' : 'ok';
+      // Per-primary empty-text retry tally — flaky chat workers
+      // make every routed turn cost the user the primary's full
+      // latency before the retry runs. Show the offenders inline
+      // ordered most-flaky first so operators see them in the
+      // same view as the rest of the dispatch context. Silent
+      // when the dict is empty or missing.
+      const flaky = (ls && ls.empty_text_retries_by_worker) || {};
+      const flakyEntries = Object.keys(flaky)
+        .filter(function(k) { return flaky[k] > 0; })
+        .map(function(k) { return [k, flaky[k]]; })
+        .sort(function(a, b) { return b[1] - a[1]; });
+      const flakyStr = flakyEntries.length
+        ? ' · <span class="fleet-badge warn">flaky chat: '
+          + flakyEntries.map(function(e) {
+              return escHtml(e[0]) + '×' + e[1];
+            }).join(', ')
+          + '</span>'
+        : '';
       statusStrip = '<div class="fleet-route-meta" style="margin-bottom:6px">'
         + '<span class="fleet-badge ' + cls + '">log ' + ls.size + '/' + ls.cap + '</span>'
         + (ageStr ? ' · oldest ' + escHtml(ageStr) + ' ago' : '')
         + (ls.saturated ? ' · <span style="color:var(--yellow)">audit data being dropped — bump TowelConfig.dispatch_history_size</span>' : '')
+        + flakyStr
         + '</div>';
     }
     if (!decisions.length) {
