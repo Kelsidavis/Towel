@@ -233,19 +233,38 @@ def build_openai_routes(
                         )
                         if worker is not None:
                             if intent == "chat":
-                                response = await gateway._quick_remote_infer(
-                                    session_id, sess, worker,
-                                    max_tokens=req_max_tokens,
-                                    temperature=req_temperature,
-                                )
+                                # Wrap primary call so a timeout / worker
+                                # error also gets a retry on the alternate
+                                # — same as /api/ask in commit 92c5c1b.
+                                try:
+                                    response = await gateway._quick_remote_infer(
+                                        session_id, sess, worker,
+                                        max_tokens=req_max_tokens,
+                                        temperature=req_temperature,
+                                    )
+                                    v1_primary_failed = False
+                                    v1_primary_exc: Exception | None = None
+                                except Exception as v1_exc:
+                                    import logging as _v1_log
+                                    _v1_log.getLogger("towel.openai_compat").info(
+                                        "primary worker %s raised %s; will try alternate",
+                                        worker.id, v1_exc,
+                                    )
+                                    response = None
+                                    v1_primary_failed = True
+                                    v1_primary_exc = v1_exc
                                 # Same retry-on-empty path /api/ask uses
                                 # (see commit 534e40f). When the small
                                 # worker returns no text, try the next
                                 # idle worker before surfacing the
                                 # diagnostic placeholder.
-                                if (response.metadata or {}).get(
-                                    "empty_text_fallback"
-                                ):
+                                v1_needs_retry = v1_primary_failed or (
+                                    response is not None
+                                    and (response.metadata or {}).get(
+                                        "empty_text_fallback"
+                                    )
+                                )
+                                if v1_needs_retry:
                                     alt = gateway._pick_alternate_chat_worker(
                                         exclude={worker.id},
                                     )
@@ -263,13 +282,14 @@ def build_openai_routes(
                                             )
                                         # Pop the placeholder so the alt
                                         # worker doesn't see it as a prior
-                                        # assistant turn. Remember it in
-                                        # case the retry crashes — same
-                                        # cleanup pattern as /api/ask in
-                                        # commit ce26cb8.
+                                        # assistant turn. Only the empty-
+                                        # text path has a placeholder to
+                                        # pop — primary_failed never appended.
                                         popped: Any = None
-                                        if sess.conversation.messages and (
-                                            sess.conversation.messages[-1].role.value
+                                        if (
+                                            not v1_primary_failed
+                                            and sess.conversation.messages
+                                            and sess.conversation.messages[-1].role.value
                                             == "assistant"
                                         ):
                                             popped = sess.conversation.messages.pop()
@@ -284,21 +304,39 @@ def build_openai_routes(
                                             logging.getLogger(
                                                 "towel.openai_compat"
                                             ).warning(
-                                                "retry on %s failed (%s); keeping "
-                                                "original empty-text response from %s",
-                                                alt.id, retry_exc, worker.id,
+                                                "retry on %s failed (%s); keeping %s",
+                                                alt.id, retry_exc,
+                                                "primary exception" if v1_primary_failed
+                                                else f"empty-text response from {worker.id}",
                                             )
                                             if popped is not None:
                                                 sess.conversation.messages.append(popped)
+                                            # If primary also failed and we
+                                            # have no response, let the outer
+                                            # except catch and fall through
+                                            # to local agent.
+                                            if v1_primary_failed:
+                                                raise v1_primary_exc  # type: ignore[misc]
                                         else:
-                                            if not (retry.metadata or {}).get(
-                                                "empty_text_fallback"
-                                            ):
+                                            alt_was_empty = (
+                                                retry.metadata or {}
+                                            ).get("empty_text_fallback")
+                                            if (not alt_was_empty) or v1_primary_failed:
                                                 retry.metadata = (retry.metadata or {}) | {
                                                     "fallback_from_worker": worker.id,
-                                                    "fallback_reason": "empty_text",
+                                                    "fallback_reason": (
+                                                        "primary_failed"
+                                                        if v1_primary_failed
+                                                        else "empty_text"
+                                                    ),
                                                 }
                                                 response = retry
+                                    elif v1_primary_failed:
+                                        # No alt; let the outer except
+                                        # catch this and fall through to
+                                        # local agent (existing behavior).
+                                        assert v1_primary_exc is not None
+                                        raise v1_primary_exc
                             else:
                                 response = await gateway._step_remote_inference(
                                     session_id, sess, worker,
