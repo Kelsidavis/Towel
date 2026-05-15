@@ -847,6 +847,28 @@ class TestConversationsAPI:
         assert "text/plain" in resp.headers["content-type"]
         assert "[you]" in resp.text
 
+    def test_export_html(self, store, client):
+        """export_html already shipped in the persistence layer (and
+        is tested in test_export.py for the rendering itself) but
+        the gateway route only exposed markdown/json/text. Operators
+        wanting to share a conversation as a single openable file
+        had to either run a python repl or drop down to the library
+        directly; now `format=html` returns the same dark-themed
+        page the export tests already validate."""
+        conv = Conversation(id="exp-4", channel="api")
+        conv.add(Role.USER, "what is towel?")
+        conv.add(Role.ASSISTANT, "an agent runtime — don't panic")
+        store.save(conv)
+
+        resp = client.get("/conversations/exp-4/export?format=html")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+        assert "<!DOCTYPE html>" in resp.text
+        assert "an agent runtime" in resp.text
+        # Filename uses the .html extension so saving in a browser
+        # produces a sensible name.
+        assert ".html" in resp.headers.get("content-disposition", "")
+
     def test_export_nonexistent(self, client):
         resp = client.get("/conversations/nope/export")
         assert resp.status_code == 404
@@ -861,9 +883,10 @@ class TestConversationsAPI:
 
         resp = client.get("/conversations/exp-fmt/export?format=evil")
         assert resp.status_code == 400
-        assert "markdown" in resp.json()["error"]
-        assert "json" in resp.json()["error"]
-        assert "text" in resp.json()["error"]
+        # All four supported formats listed in the error so the
+        # caller can fix the typo without checking docs.
+        for f in ("markdown", "json", "text", "html"):
+            assert f in resp.json()["error"]
 
     def test_export_filename_strips_quotes_and_other_unsafe_chars(
         self, store, client,

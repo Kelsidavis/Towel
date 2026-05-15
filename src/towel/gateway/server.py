@@ -5146,10 +5146,12 @@ class GatewayServer:
             return JSONResponse({"deleted": count})
 
         async def conversation_export(request: Request) -> HTMLResponse:
-            """Export a conversation to markdown."""
+            """Export a conversation to markdown / json / text / html."""
             from starlette.responses import Response
 
-            from towel.persistence.export import export_json, export_markdown, export_text
+            from towel.persistence.export import (
+                export_html, export_json, export_markdown, export_text,
+            )
 
             conv_id = request.path_params["conv_id"]
             fmt = request.query_params.get("format", "markdown")
@@ -5157,9 +5159,9 @@ class GatewayServer:
             # falling back to markdown — a client passing `format=evil`
             # got markdown back with no indication of the typo, which
             # made it hard to spot config errors.
-            if fmt not in ("markdown", "json", "text"):
+            if fmt not in ("markdown", "json", "text", "html"):
                 return JSONResponse(
-                    {"error": "format must be one of: markdown, json, text"},
+                    {"error": "format must be one of: markdown, json, text, html"},
                     status_code=400,
                 )
             store = self.sessions.store
@@ -5177,6 +5179,18 @@ class GatewayServer:
                 content = export_text(conv)
                 media_type = "text/plain"
                 ext = "txt"
+            elif fmt == "html":
+                # export_html produces a self-contained dark-themed
+                # standalone page with collaboration metadata
+                # (verified-by, ensemble) surfaced in line — same
+                # source the markdown export uses, just rendered.
+                # Operators were already using the function via
+                # test_export; the gateway route was the missing
+                # piece for sharing a conversation as a single
+                # file someone can open in a browser.
+                content = export_html(conv, include_metadata=True)
+                media_type = "text/html"
+                ext = "html"
             else:
                 content = export_markdown(conv, include_metadata=True)
                 media_type = "text/markdown"
