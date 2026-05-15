@@ -246,6 +246,14 @@ async def _save_handler(request: Request) -> JSONResponse:
         form = await request.json()
     except json.JSONDecodeError as exc:
         return JSONResponse({"error": f"Invalid JSON: {exc}"}, status_code=400)
+    # Top-level body must be an object — an array / string / null body
+    # would crash inside `_apply_form_to_config` on `form.get(...)`
+    # with an AttributeError and surface as HTTP 500. Same defensive
+    # shape every other JSON-body endpoint applies.
+    if not isinstance(form, dict):
+        return JSONResponse(
+            {"error": "body must be a JSON object"}, status_code=400,
+        )
 
     config = TowelConfig.load()
     ok, err = _apply_form_to_config(config, form)

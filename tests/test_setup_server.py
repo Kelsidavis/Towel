@@ -130,6 +130,21 @@ class TestStandaloneApp:
             )
         assert resp.status_code == 400
 
+    def test_save_rejects_non_dict_body(self):
+        """An array / string / null body was crashing inside
+        `_apply_form_to_config` on form.get(...) and surfacing as
+        HTTP 500. Same defensive shape every other JSON-body
+        endpoint applies — reject at the boundary with a clear 400."""
+        with TestClient(build_app()) as client:
+            for raw in (b"[1,2,3]", b'"just a string"', b"null", b"42"):
+                resp = client.post(
+                    "/api/setup/save",
+                    content=raw,
+                    headers={"Content-Type": "application/json"},
+                )
+                assert resp.status_code == 400, f"accepted {raw!r}"
+                assert "JSON object" in resp.json().get("error", "")
+
     def test_mlx_models_endpoint_returns_list(self):
         with TestClient(build_app()) as client:
             resp = client.get("/api/setup/backends/mlx/models")
