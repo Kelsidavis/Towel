@@ -1583,22 +1583,25 @@ class TestDispatchRecentEphemeralFilter:
         — a client sending `{"type": "messsage"}` (typo) got no
         response and no log entry, leaving the operator with no
         clue why the message disappeared. Confirm the known-types
-        allowlist + unknown-type debug log exist in the handler."""
+        allowlist + unknown-type debug log exist."""
         import inspect
 
+        from towel.gateway import server as server_mod
         from towel.gateway.server import GatewayServer
 
-        src = inspect.getsource(GatewayServer._handle_ws)
-        # Allowlist of known types appears as a set literal.
-        assert "_WS_KNOWN_TYPES" in src
-        # Each known type is listed.
-        for known in (
+        # Module-level allowlist contains every type the handler
+        # dispatches on.
+        known = server_mod._WS_KNOWN_TYPES
+        for t in (
             "register", "heartbeat", "memory_sync",
             "job_event", "job_done", "job_error",
             "cancel", "message",
         ):
-            assert f'"{known}"' in src, f"missing {known} from allowlist"
-        # The unknown branch logs at debug.
+            assert t in known, f"missing {t!r} from allowlist"
+
+        # The handler checks against it and logs unknowns.
+        src = inspect.getsource(GatewayServer._handle_ws)
+        assert "_WS_KNOWN_TYPES" in src
         assert "unknown type" in src
 
     def test_ws_stream_with_collab_logs_warning(self):

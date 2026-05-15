@@ -89,6 +89,17 @@ def _err_str(exc: BaseException) -> str:
     return s if s else type(exc).__name__
 
 
+# Allowlist of WS message types the dispatch loop knows how to
+# handle. Lives at module scope so the function-local-uppercase
+# (N806) lint complains nothing, and the set is built once at
+# import rather than on every WS message.
+_WS_KNOWN_TYPES: frozenset[str] = frozenset({
+    "register", "heartbeat", "memory_sync",
+    "job_event", "job_done", "job_error",
+    "cancel", "message",
+})
+
+
 def _memory_entry_dict(entry: Any) -> dict[str, Any]:
     """Render a MemoryEntry with consistent optional fields filled in.
 
@@ -346,15 +357,11 @@ class GatewayServer:
                 # ("messsage", "msg") nearly impossible to diagnose.
                 # Log at debug so a probing client doesn't flood the
                 # log, but the trail is at least there for operators
-                # looking for the message that disappeared. Known
-                # types are listed inline rather than dispatched via
-                # a table so the per-branch comments above each
-                # handler stay readable.
-                _WS_KNOWN_TYPES = {
-                    "register", "heartbeat", "memory_sync",
-                    "job_event", "job_done", "job_error",
-                    "cancel", "message",
-                }
+                # looking for the message that disappeared. The
+                # allowlist itself lives at module scope so it's
+                # built once at import (and the dispatch loop above
+                # keeps using inline per-type handlers — adding a
+                # type means an `if` here AND an entry there).
                 if msg_type not in _WS_KNOWN_TYPES:
                     log.debug(
                         "WS msg from %s: unknown type %r (ignored)",
