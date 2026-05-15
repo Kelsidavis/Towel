@@ -455,6 +455,68 @@ class TestRemoteStreamFallback:
         assert '"error"' in joined or "finish_reason\": \"error\"" in joined
 
 
+class TestCollaborationOnOpenAICompat:
+    """The verify/ensemble collaboration primitives are also reachable
+    via /v1/chat/completions so OpenAI-API clients (LangChain,
+    llm-cli, OpenAI SDK with extra_body=) can opt into multi-worker
+    flows without changing endpoint. Streaming intentionally rejects
+    these modes — the synthesis step is non-streaming."""
+
+    def test_verify_and_ensemble_mutually_exclusive(self, client):
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "default",
+                "messages": [{"role": "user", "content": "hi"}],
+                "verify": True,
+                "ensemble": True,
+            },
+        )
+        assert resp.status_code == 400
+        assert "mutually exclusive" in resp.json()["error"]["message"]
+
+    def test_verify_must_be_bool(self, client):
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "default",
+                "messages": [{"role": "user", "content": "hi"}],
+                "verify": "yes",
+            },
+        )
+        assert resp.status_code == 400
+        assert "verify" in resp.json()["error"]["message"]
+
+    def test_ensemble_must_be_bool(self, client):
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "default",
+                "messages": [{"role": "user", "content": "hi"}],
+                "ensemble": 1,
+            },
+        )
+        assert resp.status_code == 400
+        assert "ensemble" in resp.json()["error"]["message"]
+
+    def test_streaming_rejects_collaboration_modes(self, client):
+        """Streaming can't carry synthesis (the arbiter waits for all
+        contributions, which is inherently non-streaming). Reject
+        explicitly rather than silently degrade to non-collaboration."""
+        for field in ("verify", "ensemble"):
+            resp = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "default",
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "stream": True,
+                    field: True,
+                },
+            )
+            assert resp.status_code == 400, f"accepted stream+{field}"
+            assert "stream=false" in resp.json()["error"]["message"]
+
+
 class TestEphemeralSessionCleanup:
     """OpenAI-compat creates a one-shot session_id per request
     (`openai-<random>`). Without cleanup every call leaked both an

@@ -120,6 +120,37 @@ def build_openai_routes(
                 status_code=400,
             )
 
+        # OpenAI's spec allows extra body fields. Surface the two
+        # collaboration modes here so non-towel clients (LangChain,
+        # llm-cli, OpenAI Python SDK with extra_body=) can opt in
+        # to multi-worker collaboration on the same endpoint they
+        # already use. Mutually exclusive, same as /api/ask. Streaming
+        # is intentionally not supported for these modes (the
+        # synthesis step is inherently non-streaming), so they're
+        # rejected for stream=true requests.
+        verify_raw = body.get("verify", False)
+        if not isinstance(verify_raw, bool):
+            return JSONResponse(
+                {"error": {"message": "verify must be true or false", "type": "invalid_request_error"}},
+                status_code=400,
+            )
+        ensemble_raw = body.get("ensemble", False)
+        if not isinstance(ensemble_raw, bool):
+            return JSONResponse(
+                {"error": {"message": "ensemble must be true or false", "type": "invalid_request_error"}},
+                status_code=400,
+            )
+        if verify_raw and ensemble_raw:
+            return JSONResponse(
+                {"error": {"message": "ensemble and verify are mutually exclusive", "type": "invalid_request_error"}},
+                status_code=400,
+            )
+        if stream and (verify_raw or ensemble_raw):
+            return JSONResponse(
+                {"error": {"message": "verify/ensemble require stream=false (synthesis can't be streamed)", "type": "invalid_request_error"}},
+                status_code=400,
+            )
+
         if not messages:
             return JSONResponse(
                 {"error": {"message": "messages is required", "type": "invalid_request_error"}},
@@ -277,10 +308,35 @@ def build_openai_routes(
                     openai_session_id = session_id
                     sess = gateway.sessions.get_or_create(session_id)
                     sess.conversation = conv
-                    try:
-                        worker, intent = await gateway._route_by_role(
-                            last_user, session_id,
+
+                    # Ensemble: parallel fan-out + LLM-as-judge
+                    # synthesis. Bypasses single-worker routing — same
+                    # mechanism as /api/ask?ensemble=true (see commits
+                    # c81f481, 7614e9f, b396319). Short-circuits when
+                    # the fan-out produces a real answer; otherwise
+                    # falls through to the normal single-worker route.
+                    if ensemble_raw:
+                        arbitrated, _contribs = await gateway._ensemble_dispatch(
+                            session_id, last_user, user_session=sess,
                         )
+                        if arbitrated:
+                            from towel.agent.conversation import Message as _M
+                            from towel.agent.conversation import Role as _R
+                            response = _M(
+                                role=_R.ASSISTANT, content=arbitrated,
+                                metadata={"ensemble": True, "remote_worker": "ensemble"},
+                            )
+                            sess.conversation.messages.append(response)
+
+                    try:
+                        # Skip the single-worker route if ensemble
+                        # already produced an arbitrated answer.
+                        if response is not None:
+                            worker, intent = None, "task"
+                        else:
+                            worker, intent = await gateway._route_by_role(
+                                last_user, session_id,
+                            )
                         if worker is not None:
                             if intent == "chat":
                                 # Wrap primary call so a timeout / worker
@@ -400,6 +456,48 @@ def build_openai_routes(
                         )
                 if response is None:
                     response = await agent.step(conv)
+
+                # Verify pass: opt-in second-worker review of the
+                # primary's answer. Same mechanism as /api/ask's verify
+                # flag — skipped on ensemble (the modes are mutually
+                # exclusive, see the boundary check), on empty
+                # placeholders, and when no alternate worker exists.
+                if (
+                    verify_raw
+                    and gateway is not None
+                    and response.content
+                    and not (response.metadata or {}).get("empty_text_fallback")
+                ):
+                    # Primary worker id lives in the response metadata
+                    # under remote_worker (set by _quick_remote_infer
+                    # / _step_remote_inference).
+                    primary_id = (response.metadata or {}).get("remote_worker")
+                    if primary_id and primary_id != "ensemble":
+                        last_user_text = next(
+                            (m.get("content", "") for m in reversed(messages)
+                             if m.get("role") == "user"),
+                            "",
+                        )
+                        final, was_corrected, verifier_id = (
+                            await gateway._verify_pass(
+                                session_id, last_user_text,
+                                response.content, primary_id,
+                            )
+                        )
+                        if was_corrected and final != response.content:
+                            response.content = final
+                            response.metadata = (response.metadata or {}) | {
+                                "verified_by": verifier_id,
+                                "verifier_corrected": True,
+                                "primary_worker": primary_id,
+                            }
+                        elif verifier_id is not None:
+                            response.metadata = (response.metadata or {}) | {
+                                "verified_by": verifier_id,
+                                "verifier_corrected": False,
+                                "primary_worker": primary_id,
+                            }
+
                 meta = response.metadata or {}
                 # Workers occasionally emit `tokens: None` /
                 # `output_tokens: None` after a job_error or
