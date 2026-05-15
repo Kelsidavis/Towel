@@ -3398,6 +3398,32 @@ class TestApiSessions:
         assert resp.status_code == 200
         assert len(resp.json()["sessions"]) == 3
 
+    def test_api_sessions_channel_filter(self, store, client):
+        """Same `?channel=` semantics /conversations exposes, mirrored
+        here so an operator can switch between the two list endpoints
+        without losing the filter UX."""
+        for sid, ch in (("api-a", "api"), ("cli-a", "cli"), ("api-b", "api")):
+            conv = Conversation(id=sid, channel=ch)
+            conv.add(Role.USER, "hi")
+            store.save(conv)
+
+        resp = client.get("/api/sessions?channel=cli")
+        assert resp.status_code == 200
+        ids = {s["id"] for s in resp.json()["sessions"]}
+        assert ids == {"cli-a"}
+
+    def test_api_sessions_tag_filter(self, store, client):
+        """Same `?tag=` semantics /conversations exposes."""
+        for sid, tags in (("a", ["x"]), ("b", ["y"]), ("c", ["x", "y"])):
+            conv = Conversation(id=sid, channel="api")
+            conv.tags = tags
+            conv.add(Role.USER, "hi")
+            store.save(conv)
+
+        resp = client.get("/api/sessions?tag=y")
+        ids = {s["id"] for s in resp.json()["sessions"]}
+        assert ids == {"b", "c"}
+
     def test_api_sessions_includes_worker_routing_state(
         self, gateway, store, client,
     ):

@@ -5959,7 +5959,18 @@ class GatewayServer:
                 return JSONResponse({"error": _err_str(e)}, status_code=500)
 
         async def api_sessions(request: Request) -> JSONResponse:
-            """GET /api/sessions — list active and stored sessions with tags."""
+            """GET /api/sessions — list active and stored sessions with tags.
+
+            Query params:
+              ``limit`` — cap on entries scanned (default 50, max 500).
+              ``channel`` — narrow to sessions created on this channel.
+              ``tag``     — narrow to sessions carrying this tag.
+
+            Channel + tag filters apply *after* the scan, mirroring the
+            shape /conversations exposes — the two list endpoints stay
+            symmetrical so callers can switch between them without
+            field-name surprises.
+            """
             store = self.sessions.store
             if not store:
                 return JSONResponse({"sessions": []})
@@ -5970,7 +5981,26 @@ class GatewayServer:
                     {"error": "limit must be an integer"}, status_code=400
                 )
             limit = max(1, min(limit, 500))
+            # Filter validation matches /conversations: 64-char cap,
+            # 400 on overlong, post-scan filtering so the response
+            # shape stays uniform.
+            channel_filter = request.query_params.get("channel")
+            if channel_filter is not None and len(channel_filter) > 64:
+                return JSONResponse(
+                    {"error": "channel must be 64 chars or fewer"},
+                    status_code=400,
+                )
+            tag_filter = request.query_params.get("tag")
+            if tag_filter is not None and len(tag_filter) > 64:
+                return JSONResponse(
+                    {"error": "tag must be 64 chars or fewer"},
+                    status_code=400,
+                )
             summaries = store.list_conversations(limit=limit)
+            if channel_filter is not None:
+                summaries = [s for s in summaries if s.channel == channel_filter]
+            if tag_filter is not None:
+                summaries = [s for s in summaries if tag_filter in (s.tags or [])]
             items = []
             for s in summaries:
                 # Tags now ride on the summary itself — no second
