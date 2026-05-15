@@ -340,6 +340,27 @@ class GatewayServer:
                     )
                     continue
                 msg_type = msg.get("type", "message")
+                # Unknown msg_types silently fell through to the end
+                # of the loop — a WS client sending `{"type": "foo"}`
+                # got no response and no log entry, making typos
+                # ("messsage", "msg") nearly impossible to diagnose.
+                # Log at debug so a probing client doesn't flood the
+                # log, but the trail is at least there for operators
+                # looking for the message that disappeared. Known
+                # types are listed inline rather than dispatched via
+                # a table so the per-branch comments above each
+                # handler stay readable.
+                _WS_KNOWN_TYPES = {
+                    "register", "heartbeat", "memory_sync",
+                    "job_event", "job_done", "job_error",
+                    "cancel", "message",
+                }
+                if msg_type not in _WS_KNOWN_TYPES:
+                    log.debug(
+                        "WS msg from %s: unknown type %r (ignored)",
+                        conn_id, msg_type,
+                    )
+                    continue
 
                 if msg_type == "register":
                     raw_id = msg.get("id")

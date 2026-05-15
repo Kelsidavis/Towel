@@ -1386,6 +1386,29 @@ class TestDispatchRecentEphemeralFilter:
         # "candidates ran but failed" in the operator UI.
         assert entry["candidates_considered"] == 0
 
+    def test_ws_unknown_msg_type_logged(self):
+        """Unknown WS message types previously fell through silently
+        — a client sending `{"type": "messsage"}` (typo) got no
+        response and no log entry, leaving the operator with no
+        clue why the message disappeared. Confirm the known-types
+        allowlist + unknown-type debug log exist in the handler."""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._handle_ws)
+        # Allowlist of known types appears as a set literal.
+        assert "_WS_KNOWN_TYPES" in src
+        # Each known type is listed.
+        for known in (
+            "register", "heartbeat", "memory_sync",
+            "job_event", "job_done", "job_error",
+            "cancel", "message",
+        ):
+            assert f'"{known}"' in src, f"missing {known} from allowlist"
+        # The unknown branch logs at debug.
+        assert "unknown type" in src
+
     def test_ws_stream_with_collab_logs_warning(self):
         """WS doesn't have an HTTP-style 400 path, so the openai-
         compat-equivalent 'verify/ensemble with stream=true is
