@@ -6100,6 +6100,22 @@ class GatewayServer:
                 if verify and not meta.get("verified_by"):
                     body["verify_skipped"] = True
                     body["verify_skip_reason"] = "no alternate worker available"
+                # Symmetric to verify_skipped: when ensemble was
+                # requested but the fan-out returned no usable
+                # arbitrated answer (no idle candidates, or every
+                # worker returned empty), the response uses the
+                # single-worker fallback shape — clients couldn't
+                # tell their `ensemble=true` request silently
+                # degraded. Surface the skip reason mirroring the
+                # dispatch-log entry's text ("skipped (no idle
+                # workers available)" vs "all workers tool-looped").
+                if ensemble and "ensemble" not in body:
+                    body["ensemble_skipped"] = True
+                    body["ensemble_skip_reason"] = (
+                        "no idle workers available"
+                        if not ensemble_contributions
+                        else "all workers tool-looped"
+                    )
                 return JSONResponse(body)
             except Exception as e:
                 # Persist the partial session even on inference failure

@@ -1577,6 +1577,13 @@ class TestDispatchRecentEphemeralFilter:
         # candidates_considered=0 distinguishes "no candidates" from
         # "candidates ran but failed" in the operator UI.
         assert entry["candidates_considered"] == 0
+        # The response body itself must surface the skip too —
+        # symmetric to verify_skipped. Clients that don't read the
+        # dispatch log still get a signal that their `ensemble=true`
+        # silently degraded.
+        body = resp.json()
+        assert body.get("ensemble_skipped") is True
+        assert "no idle workers" in body.get("ensemble_skip_reason", "")
 
     def test_ws_unknown_msg_type_logged(self):
         """Unknown WS message types previously fell through silently
