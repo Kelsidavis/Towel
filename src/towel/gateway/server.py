@@ -2683,9 +2683,19 @@ class GatewayServer:
             try:
                 body = await request.json() if await request.body() else {}
             except Exception:
-                body = {}
+                return JSONResponse(
+                    {"error": "Invalid JSON body"}, status_code=400,
+                )
+            # Reject non-dict bodies loud rather than silently coercing
+            # to `{}` — an operator passing `[1,2,3]` or `"pip"` as the
+            # body almost certainly meant something specific and would
+            # be confused if we treated it as "no body, use default".
+            # Empty body still falls through to default `strategy=pip`
+            # via the existing `or {}` path above.
             if not isinstance(body, dict):
-                body = {}
+                return JSONResponse(
+                    {"error": "body must be a JSON object"}, status_code=400,
+                )
             strategy = (body.get("strategy") or "pip").strip()
             # Allowlist of upgrade strategies. Anything else gets
             # rejected with a clear error — the worker side dispatches
@@ -3429,9 +3439,18 @@ class GatewayServer:
                 return JSONResponse({"error": "No store"}, status_code=500)
             try:
                 body = await request.json()
-                title = body.get("title", "").strip()
             except Exception:
                 return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+            if not isinstance(body, dict):
+                return JSONResponse(
+                    {"error": "body must be a JSON object"}, status_code=400,
+                )
+            raw_title = body.get("title", "")
+            if not isinstance(raw_title, str):
+                return JSONResponse(
+                    {"error": "title must be a string"}, status_code=400,
+                )
+            title = raw_title.strip()
             if not title:
                 return JSONResponse({"error": "Title required"}, status_code=400)
             # Titles surface in the web UI sidebar, /api/sessions output,

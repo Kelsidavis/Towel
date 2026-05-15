@@ -180,6 +180,58 @@ class TestGatewayRename:
         assert resp.status_code == 400
         assert "200" in resp.json()["error"]
 
+    def test_rename_rejects_non_dict_body(self, tmp_path):
+        """An array/string body crashed `body.get(...)` and surfaced
+        as generic "Invalid JSON body" — confusing because the JSON
+        is fine, it's the shape that's wrong. Reject precisely."""
+        from starlette.testclient import TestClient
+
+        from towel.agent.runtime import AgentRuntime
+        from towel.config import TowelConfig
+        from towel.gateway.server import GatewayServer
+        from towel.gateway.sessions import SessionManager
+
+        store = ConversationStore(store_dir=tmp_path)
+        conv = Conversation(id="bad-body")
+        conv.add(Role.USER, "test")
+        store.save(conv)
+        config = TowelConfig()
+        agent = AgentRuntime(config)
+        gw = GatewayServer(config=config, agent=agent, sessions=SessionManager(store=store))
+        client = TestClient(gw._build_http_app())
+
+        for raw in (b"[1,2]", b'"hi"', b"42"):
+            resp = client.post(
+                "/conversations/bad-body/rename",
+                content=raw,
+                headers={"content-type": "application/json"},
+            )
+            assert resp.status_code == 400, f"accepted {raw!r}"
+            assert "JSON object" in resp.json()["error"]
+
+    def test_rename_rejects_non_string_title(self, tmp_path):
+        from starlette.testclient import TestClient
+
+        from towel.agent.runtime import AgentRuntime
+        from towel.config import TowelConfig
+        from towel.gateway.server import GatewayServer
+        from towel.gateway.sessions import SessionManager
+
+        store = ConversationStore(store_dir=tmp_path)
+        conv = Conversation(id="nonstr-title")
+        conv.add(Role.USER, "test")
+        store.save(conv)
+        config = TowelConfig()
+        agent = AgentRuntime(config)
+        gw = GatewayServer(config=config, agent=agent, sessions=SessionManager(store=store))
+        client = TestClient(gw._build_http_app())
+
+        for bad in (42, [1, 2], {"x": 1}, True):
+            resp = client.post(
+                "/conversations/nonstr-title/rename", json={"title": bad}
+            )
+            assert resp.status_code == 400, f"accepted {bad!r}"
+
     def test_rename_rejects_control_chars(self, tmp_path):
         """Multi-line titles break list-view rendering and log readability."""
         from starlette.testclient import TestClient

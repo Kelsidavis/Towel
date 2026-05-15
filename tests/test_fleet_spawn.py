@@ -285,6 +285,22 @@ class TestWorkerSelfUpgrade:
             sent = json.loads(ws.send.call_args.args[0])
             assert sent["strategy"] == strategy
 
+    def test_non_dict_body_rejected(self, gateway):
+        """A list/string body previously got silently coerced to `{}`
+        and the upgrade proceeded with default strategy=pip. An
+        operator who passed a malformed body almost certainly meant
+        something specific — fail loud instead."""
+        self._register_worker(gateway, "host-x")
+        client = TestClient(gateway._build_http_app())
+        for raw in (b"[1,2]", b'"pip"', b"42"):
+            resp = client.post(
+                "/workers/host-x/upgrade",
+                content=raw,
+                headers={"content-type": "application/json"},
+            )
+            assert resp.status_code == 400, f"accepted {raw!r}"
+            assert "JSON object" in resp.json()["error"]
+
     def test_unknown_strategy_rejected(self, gateway):
         """An unrecognized strategy gets sent down the wire and either
         no-ops silently or surfaces a worker-side error well after the
