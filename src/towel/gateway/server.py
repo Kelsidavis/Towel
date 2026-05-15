@@ -3792,6 +3792,7 @@ class GatewayServer:
 
               ``?reason=<code>``       — exact reason-code match
               ``?worker=<id>``         — only decisions that picked this worker
+              ``?previous_worker=<id>`` — only decisions that replaced/migrated FROM this worker
               ``?session=<id>``        — only decisions for this session
               ``?only_degraded=1``     — only quality_degraded decisions
               ``?only_affinity_missed=1`` — only affinity_missed decisions
@@ -3809,6 +3810,16 @@ class GatewayServer:
                 return JSONResponse({"error": "limit must be an integer"}, status_code=400)
             reason = request.query_params.get("reason")
             worker_filter = request.query_params.get("worker")
+            # `previous_worker` complements `worker`: where `worker=X`
+            # surfaces decisions that PICKED X, `previous_worker=X`
+            # surfaces decisions that BYPASSED or REPLACED X (the
+            # retry_empty_text rows whose primary was X, the
+            # affinity_missed rows whose previous host was X, the
+            # pin_missed rows whose pin pointed at X). Operators
+            # triaging "why does my fleet keep retrying off worker
+            # X?" had to eyeball every entry without it — this
+            # filter answers the question in one call.
+            previous_worker_filter = request.query_params.get("previous_worker")
             session_filter = request.query_params.get("session")
             # Length caps on the string filters: bogus inputs just
             # match nothing today, but a 100KB `?worker=` would
@@ -3818,6 +3829,7 @@ class GatewayServer:
             # / session_id length.
             for fname, fval in (
                 ("reason", reason), ("worker", worker_filter),
+                ("previous_worker", previous_worker_filter),
                 ("session", session_filter),
             ):
                 if fval is not None and len(fval) > 256:
@@ -3894,6 +3906,11 @@ class GatewayServer:
                 entries = [e for e in entries if e.get("reason") == reason]
             if worker_filter:
                 entries = [e for e in entries if e.get("worker_id") == worker_filter]
+            if previous_worker_filter:
+                entries = [
+                    e for e in entries
+                    if e.get("previous_worker_id") == previous_worker_filter
+                ]
             if session_filter:
                 entries = [e for e in entries if e.get("session_id") == session_filter]
             if intent_filter:

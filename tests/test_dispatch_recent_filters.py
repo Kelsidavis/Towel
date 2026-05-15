@@ -115,6 +115,60 @@ class TestDispatchRecentFilters:
         for d in resp["decisions"]:
             assert d["session_id"] == "sess-1"
 
+    def test_previous_worker_filter(self, gateway):
+        """`previous_worker=X` complements `worker=X`: where the
+        latter surfaces decisions that PICKED X, this one surfaces
+        decisions that BYPASSED or REPLACED X (retry_empty_text rows
+        whose primary was X, affinity_missed rows whose previous
+        host was X, pin_missed rows whose pin pointed at X).
+
+        Operators triaging "why does my fleet keep retrying off
+        worker X?" had to eyeball every entry without this filter —
+        the previous_worker_id field was already in the response,
+        just not filterable."""
+        assert gateway._dispatcher is not None
+        # Three retry decisions: two from gpu-host as primary, one
+        # from pi-host. The chosen worker (alt) is the same in both
+        # cases — the question is "which primary did we fall off of?"
+        from towel.gateway.dispatcher import REASON_RETRY_EMPTY
+        for prev in ("gpu-host", "gpu-host", "pi-host"):
+            d = DispatchDecision(
+                worker=_stub_worker("alt"),
+                intent="chat",
+                reason=REASON_RETRY_EMPTY,
+                notes=f"retry after empty response from {prev}",
+                session_id=f"sess-{prev}",
+                candidates_considered=1,
+                previous_worker_id=prev,
+            )
+            gateway._dispatcher._record(d)
+
+        client = TestClient(gateway._build_http_app())
+        resp = client.get("/dispatch/recent?previous_worker=gpu-host").json()
+        assert len(resp["decisions"]) == 2
+        for d in resp["decisions"]:
+            assert d["previous_worker_id"] == "gpu-host"
+            assert d["worker_id"] == "alt"
+
+        resp = client.get("/dispatch/recent?previous_worker=pi-host").json()
+        assert len(resp["decisions"]) == 1
+        assert resp["decisions"][0]["previous_worker_id"] == "pi-host"
+
+        # Unknown previous_worker matches nothing — no false positives.
+        resp = client.get("/dispatch/recent?previous_worker=ghost-host").json()
+        assert resp["decisions"] == []
+
+    def test_previous_worker_length_cap(self, gateway):
+        """Same 256-char cap as the other string filters — bogus
+        100KB inputs would otherwise bloat the request line in any
+        access log even though they match nothing."""
+        client = TestClient(gateway._build_http_app())
+        resp = client.get(
+            "/dispatch/recent?previous_worker=" + "x" * 257
+        )
+        assert resp.status_code == 400
+        assert "256 chars" in resp.json().get("error", "")
+
     def test_only_degraded(self, gateway):
         _seed_decisions(gateway)
         client = TestClient(gateway._build_http_app())
