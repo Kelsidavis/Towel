@@ -5007,6 +5007,15 @@ class GatewayServer:
             d = conv.to_dict()
             d.setdefault("title", "")
             d.setdefault("tags", [])
+            # Surface live routing state alongside the persisted
+            # conversation so a UI that opens a single conversation
+            # sees pin/affinity in one fetch — parity with
+            # /api/sessions and /sessions, which started exposing
+            # these fields in the recent observability round. Both
+            # values are None when the session isn't actively routed
+            # or pinned (most of the conversation archive).
+            d["worker_id"] = self._session_workers.get(conv_id)
+            d["pinned_worker_id"] = self._session_pins.get(conv_id)
             return JSONResponse(d)
 
         async def conversation_rename(request: Request) -> JSONResponse:

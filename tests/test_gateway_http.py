@@ -571,6 +571,34 @@ class TestConversationsAPI:
         assert "tags" in body
         assert body["tags"] == []
 
+    def test_get_conversation_includes_routing_state(
+        self, gateway, store, client,
+    ):
+        """Conversation detail mirrors /api/sessions / /sessions and
+        surfaces routing state (current worker + pin) alongside the
+        persisted conversation. Without this, a UI opening a single
+        conversation had to issue a second call to one of the list
+        endpoints just to render the pin badge — and the answer was
+        sometimes missing entirely because /sessions only carries
+        live in-memory entries."""
+        from unittest.mock import MagicMock
+
+        conv = Conversation(id="routing-detail", channel="api")
+        conv.add(Role.USER, "hi")
+        store.save(conv)
+
+        gateway._workers.register(
+            "alpha", MagicMock(), {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._session_pins["routing-detail"] = "alpha"
+
+        resp = client.get("/conversations/routing-detail")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["pinned_worker_id"] == "alpha"
+        # Not currently routed (no live affinity entry).
+        assert body["worker_id"] is None
+
     def test_get_conversation(self, store, client):
         conv = Conversation(id="detail-1", channel="webchat")
         conv.add(Role.USER, "question")
