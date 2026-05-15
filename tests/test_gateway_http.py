@@ -385,6 +385,25 @@ class TestConversationsAPI:
         assert len(data["conversations"]) == 1
         assert data["conversations"][0]["tags"] == ["work", "urgent"]
 
+    def test_get_conversation_includes_title_and_tags(self, store, client):
+        """Conversation.to_dict omits title/tags when empty, but the
+        detail endpoint always emits them so API clients don't have
+        to special-case detail vs list shapes."""
+        conv = Conversation(id="shape-1", channel="cli")
+        conv.add(Role.USER, "hi")
+        # No title, no tags — defaults.
+        store.save(conv)
+
+        resp = client.get("/conversations/shape-1")
+        assert resp.status_code == 200
+        body = resp.json()
+        # Both fields present even though the underlying conversation
+        # had neither set.
+        assert "title" in body
+        assert body["title"] == ""
+        assert "tags" in body
+        assert body["tags"] == []
+
     def test_get_conversation(self, store, client):
         conv = Conversation(id="detail-1", channel="webchat")
         conv.add(Role.USER, "question")

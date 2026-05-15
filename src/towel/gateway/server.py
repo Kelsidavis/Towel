@@ -3686,7 +3686,16 @@ class GatewayServer:
             conv = store.load(conv_id)
             if not conv:
                 return JSONResponse({"error": "Not found"}, status_code=404)
-            return JSONResponse(conv.to_dict())
+            # Always emit `title` and `tags` (possibly empty) so the
+            # detail shape matches the list view. `Conversation.to_dict`
+            # conditionally omits these when empty — fine for storage,
+            # but it forced API clients to special-case detail responses
+            # vs list responses (KeyError on `data["title"]` for an
+            # untitled conversation).
+            d = conv.to_dict()
+            d.setdefault("title", "")
+            d.setdefault("tags", [])
+            return JSONResponse(d)
 
         async def conversation_rename(request: Request) -> JSONResponse:
             """Rename a conversation."""
