@@ -1096,12 +1096,43 @@ class GatewayServer:
                 except Exception:
                     pass
 
-        # Fire all candidates in parallel. `return_exceptions=False`
-        # because _ask_one already wraps each worker; nothing should
-        # raise out.
-        contributions = await asyncio.gather(
-            *(_ask_one(w) for w in candidates),
-        )
+        # Fire all candidates in parallel with an outer deadline.
+        # Each _ask_one already has its own per-worker timeout via
+        # _quick_remote_infer (chat_fast_timeout, default 60s) — the
+        # outer asyncio.wait deadline is a safety net so one wedged
+        # worker can't extend the ensemble run beyond the slowest
+        # honest worker. Stragglers past the deadline are recorded as
+        # timeout contributions so the operator can see who lagged.
+        ensemble_timeout = float(
+            getattr(self.config, "chat_fast_timeout", 60.0) or 60.0
+        ) * 1.5  # 50% slack over the per-worker bound
+        tasks = [asyncio.create_task(_ask_one(w)) for w in candidates]
+        try:
+            done, pending = await asyncio.wait(tasks, timeout=ensemble_timeout)
+        except asyncio.CancelledError:
+            for t in tasks:
+                t.cancel()
+            raise
+        contributions: list[dict[str, Any]] = []
+        for t in tasks:
+            if t in done:
+                try:
+                    contributions.append(t.result())
+                except Exception as exc:
+                    # _ask_one wraps everything but be defensive.
+                    contributions.append({
+                        "worker_id": "?", "answer": "",
+                        "ms": 0.0, "error": _err_str(exc),
+                    })
+            else:
+                # Straggler — cancel and record as timeout.
+                t.cancel()
+                contributions.append({
+                    "worker_id": candidates[tasks.index(t)].id,
+                    "answer": "",
+                    "ms": round(ensemble_timeout * 1000.0, 1),
+                    "error": "ensemble_timeout",
+                })
 
         # Arbitration:
         # - 0 real answers → caller falls through to single-worker dispatch

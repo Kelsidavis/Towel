@@ -1132,6 +1132,57 @@ class TestSimpleAskAPI:
         ids = {c["worker_id"] for c in body["ensemble_contributions"]}
         assert ids == {"a", "b"}
 
+    def test_ask_ensemble_records_straggler_as_timeout(self, gateway, client):
+        """A wedged worker can't extend the ensemble run beyond the
+        slowest honest worker. The outer deadline cancels stragglers
+        and records them as timeout contributions so the operator
+        sees who lagged."""
+        import asyncio
+
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "fast", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "slow", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        # Shorten the deadline so the test doesn't take 90s.
+        gateway.config.chat_fast_timeout = 0.2  # → ensemble bound ~0.3s
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            if worker.id == "slow":
+                # Hang forever (will be cancelled by the deadline).
+                await asyncio.sleep(60)
+            return Message(
+                role=Role.ASSISTANT,
+                content="quick answer",
+                metadata={"remote_worker": worker.id, "tokens": 3, "tps": 5.0},
+            )
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "q", "session_id": "ens-slow", "ensemble": True},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # Fast worker's answer wins (only one to contribute in time).
+        assert "quick answer" in body["response"]
+        # Straggler recorded with error="ensemble_timeout".
+        contributions = body["ensemble_contributions"]
+        slow_contrib = next(
+            (c for c in contributions if c["worker_id"] == "slow"), None
+        )
+        assert slow_contrib is not None
+        assert slow_contrib["error"] == "ensemble_timeout"
+
     def test_ask_ensemble_single_contribution_skips_synthesis(
         self, gateway, client,
     ):
