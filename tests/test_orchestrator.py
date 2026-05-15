@@ -271,6 +271,44 @@ class TestOrchestratorWithDispatcher:
         # Final error message reflects the last failure.
         assert "fail #3" in tasks[0].result
 
+    def test_workspace_dir_injected_into_prompts(self):
+        """When workspace_dir is set, every subtask must see a
+        workspace directive — that's how a `coder` subtask knows where
+        to write so the next subtask can read from the same place."""
+        from towel.config import TowelConfig
+        dispatcher = _RecordingDispatcher()
+        orch = Orchestrator(TowelConfig(), dispatcher=dispatcher)
+        tasks = [
+            AgentTask(role="coder", prompt="write game.py"),
+            AgentTask(role="tester", prompt="read game.py and add tests"),
+        ]
+        asyncio.run(orch.run("g", tasks, workspace_dir="/tmp/orch-test"))
+        for call in dispatcher.calls:
+            assert "/tmp/orch-test" in call["prompt"]
+            assert "Shared workspace" in call["prompt"]
+
+    def test_workspace_dir_absent_no_preamble(self):
+        from towel.config import TowelConfig
+        dispatcher = _RecordingDispatcher()
+        orch = Orchestrator(TowelConfig(), dispatcher=dispatcher)
+        tasks = [AgentTask(role="coder", prompt="x")]
+        asyncio.run(orch.run("g", tasks))
+        assert "Shared workspace" not in dispatcher.calls[0]["prompt"]
+
+    def test_workspace_dir_parallel_too(self):
+        from towel.config import TowelConfig
+        dispatcher = _RecordingDispatcher()
+        orch = Orchestrator(TowelConfig(), dispatcher=dispatcher)
+        tasks = [
+            AgentTask(role="coder", prompt="file a"),
+            AgentTask(role="coder", prompt="file b"),
+        ]
+        asyncio.run(
+            orch.run_parallel("g", tasks, workspace_dir="/tmp/orch-par"),
+        )
+        for call in dispatcher.calls:
+            assert "/tmp/orch-par" in call["prompt"]
+
     def test_retry_max_attempts_floor_is_one(self):
         """max_attempts<=0 should clamp to 1 — orchestrator must always
         try at least once per subtask, never zero-attempts."""

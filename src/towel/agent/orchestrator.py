@@ -210,12 +210,40 @@ class Orchestrator:
             task.status = "failed"
         task.elapsed = time.perf_counter() - task_start
 
-    async def run(self, goal: str, tasks: list[AgentTask]) -> OrchestratorResult:
+    @staticmethod
+    def _workspace_preamble(workspace_dir: str | None) -> str:
+        """Prefix subtask prompts with a workspace-directive when set.
+
+        Subtasks share state via files in this directory: a coder writes
+        ``game.py`` there, and a downstream tester reads it back. Tool
+        execution happens on the coordinator, so a single absolute path
+        works for every subtask regardless of which worker runs it.
+        """
+        if not workspace_dir:
+            return ""
+        return (
+            f"Shared workspace: {workspace_dir}\n"
+            "Use the filesystem tools (write_file, read_file, edit_file, "
+            "list_directory) against this directory so other subtasks "
+            "in this orchestration can see your work. Prefer relative "
+            "paths under the workspace; absolute paths outside it should "
+            "be avoided unless the goal explicitly requires it.\n\n"
+        )
+
+    async def run(
+        self,
+        goal: str,
+        tasks: list[AgentTask],
+        *,
+        workspace_dir: str | None = None,
+    ) -> OrchestratorResult:
         """Execute a sequence of agent tasks, respecting dependencies."""
         start = time.perf_counter()
         result = OrchestratorResult(tasks=tasks)
 
         log.info(f"Orchestrating {len(tasks)} tasks for: {goal[:80]}")
+
+        workspace_preamble = self._workspace_preamble(workspace_dir)
 
         for i, task in enumerate(tasks):
             # Wait for dependencies
@@ -237,7 +265,7 @@ class Orchestrator:
                     dep_context = "\n\n".join(dep_results) + "\n\n"
 
             # Build the agent prompt
-            full_prompt = ""
+            full_prompt = workspace_preamble
             if dep_context:
                 full_prompt += f"Context from previous tasks:\n{dep_context}\n"
             if task.context:
@@ -262,12 +290,21 @@ class Orchestrator:
 
         return result
 
-    async def run_parallel(self, goal: str, tasks: list[AgentTask]) -> OrchestratorResult:
+    async def run_parallel(
+        self,
+        goal: str,
+        tasks: list[AgentTask],
+        *,
+        workspace_dir: str | None = None,
+    ) -> OrchestratorResult:
         """Execute independent tasks in parallel."""
         start = time.perf_counter()
+        workspace_preamble = self._workspace_preamble(workspace_dir)
 
         async def _exec(i: int, task: AgentTask) -> None:  # noqa: ARG001
-            full_prompt = f"Goal: {goal}\n\nYour task: {task.prompt}"
+            full_prompt = (
+                f"{workspace_preamble}Goal: {goal}\n\nYour task: {task.prompt}"
+            )
             await self._execute_with_retry(task, full_prompt)
 
         await asyncio.gather(*[_exec(i, t) for i, t in enumerate(tasks)])

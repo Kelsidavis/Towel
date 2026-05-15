@@ -7003,6 +7003,35 @@ class GatewayServer:
 
             parallel = bool(body.get("parallel", False))
 
+            workspace_dir_raw = body.get("workspace_dir")
+            workspace_dir: str | None = None
+            if workspace_dir_raw is not None:
+                if not isinstance(workspace_dir_raw, str) or not workspace_dir_raw.strip():
+                    return JSONResponse(
+                        {"error": "workspace_dir must be a non-empty string"},
+                        status_code=400,
+                    )
+                # Reject path-traversal in user input. The orchestrator
+                # will mkdir this path, so a `..` segment could end up
+                # creating something far from where the caller intended.
+                # Operators who genuinely want a parent-relative path
+                # can pass an explicit absolute path.
+                from pathlib import Path as _Path
+                wd_path = _Path(workspace_dir_raw).expanduser()
+                if ".." in wd_path.parts:
+                    return JSONResponse(
+                        {"error": "workspace_dir must not contain '..'"},
+                        status_code=400,
+                    )
+                try:
+                    wd_path.mkdir(parents=True, exist_ok=True)
+                except OSError as exc:
+                    return JSONResponse(
+                        {"error": f"workspace_dir mkdir failed: {exc}"},
+                        status_code=400,
+                    )
+                workspace_dir = str(wd_path.resolve())
+
             max_attempts_raw = body.get("max_attempts", 2)
             if not isinstance(max_attempts_raw, int) or isinstance(max_attempts_raw, bool):
                 # `isinstance(True, int)` is True in Python — reject
@@ -7030,9 +7059,13 @@ class GatewayServer:
             )
             try:
                 if parallel:
-                    result = await orch.run_parallel(goal, tasks)
+                    result = await orch.run_parallel(
+                        goal, tasks, workspace_dir=workspace_dir,
+                    )
                 else:
-                    result = await orch.run(goal, tasks)
+                    result = await orch.run(
+                        goal, tasks, workspace_dir=workspace_dir,
+                    )
             except Exception as exc:
                 log.exception("orchestrator run failed: %s", exc)
                 return JSONResponse(
@@ -7043,6 +7076,7 @@ class GatewayServer:
                 "goal": goal,
                 "success": result.success,
                 "total_elapsed_ms": round(result.total_elapsed * 1000.0, 1),
+                "workspace_dir": workspace_dir,
                 "synthesis": result.synthesis,
                 "tasks": [
                     {

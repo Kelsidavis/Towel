@@ -177,6 +177,54 @@ class TestOrchestrateEndpoint:
         assert captured[0]["with_tools"] is False
         assert captured[1]["with_tools"] is True
 
+    def test_orchestrate_workspace_dir_created_and_surfaced(self, gateway, client, tmp_path):
+        """workspace_dir must be auto-created and the resolved absolute
+        path returned in the response so callers can locate artifacts
+        the orchestrator produced."""
+        captured: list[str] = []
+
+        async def fake_dispatch(
+            role, role_system, prompt, *,
+            session_id, max_tokens, temperature, with_tools,  # noqa: ARG001
+        ):
+            captured.append(prompt)
+            return f"{role}-done"
+
+        gateway.dispatch_role_task = fake_dispatch  # type: ignore[method-assign]
+
+        target = tmp_path / "nested" / "ws"
+        assert not target.exists()
+        resp = client.post("/api/orchestrate", json={
+            "goal": "build",
+            "tasks": [{"role": "coder", "prompt": "make x"}],
+            "workspace_dir": str(target),
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert target.exists()
+        # Resolved (absolute) path lands in the response.
+        assert body["workspace_dir"] == str(target.resolve())
+        # And in the subtask prompt.
+        assert str(target.resolve()) in captured[0]
+
+    def test_orchestrate_workspace_dir_rejects_dotdot(self, client):
+        resp = client.post("/api/orchestrate", json={
+            "goal": "g",
+            "tasks": [{"role": "coder", "prompt": "x"}],
+            "workspace_dir": "../escape",
+        })
+        assert resp.status_code == 400
+        assert ".." in resp.json()["error"]
+
+    def test_orchestrate_workspace_dir_must_be_string(self, client):
+        resp = client.post("/api/orchestrate", json={
+            "goal": "g",
+            "tasks": [{"role": "coder", "prompt": "x"}],
+            "workspace_dir": 123,
+        })
+        assert resp.status_code == 400
+        assert "workspace_dir" in resp.json()["error"]
+
     def test_orchestrate_max_attempts_validated(self, client):
         # Non-int rejected
         resp = client.post("/api/orchestrate", json={
