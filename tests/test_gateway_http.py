@@ -824,6 +824,48 @@ class TestSearch:
             assert "control" in resp.json()["error"].lower()
 
 
+class TestDispatchRecentEphemeralFilter:
+    """/dispatch/recent hides ephemeral collaboration sessions by
+    default — each ensemble run records one decision per fan-out
+    worker, which would otherwise dominate the view and confuse
+    operators looking for actual user sessions. Opt-in via
+    `?include_ephemeral=1`."""
+
+    def _record_decision(self, gateway, session_id: str):
+        from towel.gateway.dispatcher import DispatchDecision
+        d = DispatchDecision(
+            worker=None, intent="task", reason="test",
+            session_id=session_id,
+        )
+        gateway._dispatcher._history.append(d)
+
+    def test_ephemeral_sessions_hidden_by_default(self, gateway, client):
+        # Mix user-facing and ephemeral session ids.
+        self._record_decision(gateway, "user-session-1")
+        self._record_decision(gateway, "_ens_user-session-1_worker-a_abc")
+        self._record_decision(gateway, "_verify_user-session-1_xyz")
+        self._record_decision(gateway, "_synth_ensemble")
+
+        resp = client.get("/dispatch/recent")
+        assert resp.status_code == 200
+        ids = {d["session_id"] for d in resp.json()["decisions"]}
+        # Only the user-facing one survives the default filter.
+        assert "user-session-1" in ids
+        assert all(not s.startswith(("_ens_", "_verify_", "_synth_")) for s in ids)
+
+    def test_include_ephemeral_opt_in_surfaces_all(self, gateway, client):
+        self._record_decision(gateway, "user-session-2")
+        self._record_decision(gateway, "_ens_user-session-2_worker-a_abc")
+        self._record_decision(gateway, "_verify_user-session-2_xyz")
+
+        resp = client.get("/dispatch/recent?include_ephemeral=1")
+        ids = {d["session_id"] for d in resp.json()["decisions"]}
+        # All three present.
+        assert "user-session-2" in ids
+        assert "_ens_user-session-2_worker-a_abc" in ids
+        assert "_verify_user-session-2_xyz" in ids
+
+
 class TestDispatchExplain:
     """`/dispatch/explain` is a previewing endpoint — it shouldn't
     silently fall through bogus inputs (typo'd intent, negative

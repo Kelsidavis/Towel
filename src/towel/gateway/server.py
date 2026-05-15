@@ -3361,6 +3361,22 @@ class GatewayServer:
 
             assert self._dispatcher is not None
             entries = [d.to_dict() for d in self._dispatcher.history()]
+            # Hide ephemeral collaboration sessions by default — each
+            # ensemble run records one decision per fan-out worker,
+            # which would otherwise dominate the recent-decisions
+            # view and confuse operators looking for their actual
+            # user-facing sessions. Opt-in via `?include_ephemeral=1`
+            # so the audit trail remains accessible.
+            include_ephemeral = request.query_params.get(
+                "include_ephemeral",
+            ) in {"1", "true"}
+            if not include_ephemeral:
+                entries = [
+                    e for e in entries
+                    if not str(e.get("session_id") or "").startswith(
+                        ("_ens_", "_verify_", "_synth_")
+                    )
+                ]
             if reason:
                 entries = [e for e in entries if e.get("reason") == reason]
             if worker_filter:
