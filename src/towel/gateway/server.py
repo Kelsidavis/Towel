@@ -3630,6 +3630,21 @@ class GatewayServer:
             reason = request.query_params.get("reason")
             worker_filter = request.query_params.get("worker")
             session_filter = request.query_params.get("session")
+            # Length caps on the string filters: bogus inputs just
+            # match nothing today, but a 100KB `?worker=` would
+            # still be echoed in any access log and bloat the
+            # request line. 256 chars matches the session_id cap
+            # used elsewhere — far above any legitimate worker_id
+            # / session_id length.
+            for fname, fval in (
+                ("reason", reason), ("worker", worker_filter),
+                ("session", session_filter),
+            ):
+                if fval is not None and len(fval) > 256:
+                    return JSONResponse(
+                        {"error": f"{fname} must be 256 chars or fewer"},
+                        status_code=400,
+                    )
             # `intent` filter: chat | tool | task. Matches the intent
             # field on each decision so operators can ask "show me
             # only chat traffic" or "only tool dispatches". Bogus

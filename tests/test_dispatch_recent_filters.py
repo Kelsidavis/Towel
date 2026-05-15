@@ -276,6 +276,17 @@ class TestDispatchRecentFilters:
         tool = client.get("/dispatch/recent?intent=tool").json()
         assert {d["session_id"] for d in tool["decisions"]} == {"tool-1"}
 
+    def test_filter_lengths_capped(self, gateway):
+        """String filters (`reason`, `worker`, `session`) cap at
+        256 chars to keep absurd inputs out of access logs. Each
+        rejects with a clear 400."""
+        client = TestClient(gateway._build_http_app())
+        long = "a" * 300
+        for f in ("reason", "worker", "session"):
+            resp = client.get(f"/dispatch/recent?{f}={long}")
+            assert resp.status_code == 400, f"accepted long {f}"
+            assert "256 chars" in resp.json()["error"]
+
     def test_intent_filter_rejects_unknown(self, gateway):
         """A typo like ?intent=tools would otherwise silently match
         nothing and look like an empty log — fail fast with 400."""
