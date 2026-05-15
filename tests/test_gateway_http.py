@@ -632,6 +632,25 @@ class TestSearch:
         assert resp.status_code == 400
         assert "limit" in resp.json()["error"]
 
+    def test_search_rejects_overlong_q(self, client):
+        """A 2000-char `q` wastes CPU on a full-archive FTS scan,
+        bloats the echoed response, and bloats every access-log
+        line. Match the 256-char rule applied to session_id and
+        memory keys."""
+        resp = client.get("/search?q=" + "a" * 1000)
+        assert resp.status_code == 400
+        assert "256" in resp.json()["error"]
+
+    def test_search_rejects_control_chars(self, client):
+        """Null bytes / embedded newlines in `q` break log
+        readability and surface in the echoed `query` JSON field."""
+        # URL-encode control characters so the test client accepts
+        # them; the handler validates after the URL parser decodes.
+        for encoded in ("%00", "hello%0aworld", "tab%09here"):
+            resp = client.get(f"/search?q={encoded}")
+            assert resp.status_code == 400, f"accepted q={encoded!r}"
+            assert "control" in resp.json()["error"].lower()
+
 
 class TestSimpleAskAPI:
     def test_ask_missing_message(self, client):

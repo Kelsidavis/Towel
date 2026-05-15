@@ -3826,6 +3826,25 @@ class GatewayServer:
             query = query.strip()
             if not query:
                 return JSONResponse({"error": "Missing ?q= parameter"}, status_code=400)
+            # Cap query length. A 2000-char query wastes CPU on a
+            # full-archive FTS scan, bloats the echoed response and
+            # any access log, and is almost never a legitimate
+            # search ("paste the entire stack trace" isn't what this
+            # endpoint is for). Same 256-char rule as session_id /
+            # memory key.
+            if len(query) > 256:
+                return JSONResponse(
+                    {"error": "q must be 256 chars or fewer"},
+                    status_code=400,
+                )
+            # Reject control characters — null bytes and embedded
+            # newlines break log readability and would surface in
+            # the echoed `query` field of the JSON response.
+            if any(ord(c) < 0x20 or ord(c) == 0x7F for c in query):
+                return JSONResponse(
+                    {"error": "q must not contain control characters"},
+                    status_code=400,
+                )
             # Sanitize limit: int() raises on non-numeric, and an
             # uncapped value could scan an entire archive on a busy
             # coordinator. Clamp to 1..200.
