@@ -1295,6 +1295,16 @@ class MemoryStore:
         """
         if not query or not keys:
             return
+        # Cap the stored query so a 1MB user message (a paste of logs,
+        # a code dump, etc.) doesn't bloat the recall_log table — the
+        # operator's actual question text is captured in the first
+        # couple hundred chars, and /memory/recalls renders this
+        # column in a list view that's unreadable past one line
+        # anyway. Same conceptual cap the search path uses (eb86631).
+        _MAX_LOGGED_QUERY = 500
+        logged_query = query if len(query) <= _MAX_LOGGED_QUERY else (
+            query[:_MAX_LOGGED_QUERY] + "…"
+        )
         effective_cap = cap if cap is not None else self.RECALL_LOG_CAP
         now_iso = datetime.now(UTC).isoformat()
         scope_str = scope if scope is not None else self.default_scope
@@ -1302,7 +1312,7 @@ class MemoryStore:
             with self._txn() as con:
                 con.execute(
                     "INSERT INTO recall_log (ts, query, keys, scope) VALUES (?, ?, ?, ?)",
-                    (now_iso, query, json.dumps(keys), scope_str or ""),
+                    (now_iso, logged_query, json.dumps(keys), scope_str or ""),
                 )
                 # Trim: keep the most recent `cap` rows. Cheaper than
                 # COUNT-then-DELETE; sqlite optimizes this pattern.

@@ -735,6 +735,23 @@ class TestRecallLog:
         # Newest queries survive.
         assert rows[0]["query"] == "q4"
 
+    def test_record_recall_truncates_huge_query(self, store):
+        """A user pasting 1MB of text into /api/ask flowed the whole
+        body into record_recall as the `query` column. Each recall
+        row then took ~1MB instead of the typical ~150 bytes,
+        bloating the recall_log table and slowing /memory/recalls
+        reads. Cap the stored query string."""
+        store.remember("k", "v")
+        huge = "a" * 100_000
+        store.record_recall(huge, ["k"])
+        rows = store.recent_recalls(limit=1)
+        assert rows, "recall row not written"
+        stored_query = rows[0]["query"]
+        # Well under the original 100k, and ends in the truncation
+        # ellipsis so operators can see it was cut.
+        assert len(stored_query) < 1000
+        assert stored_query.endswith("…")
+
 
 class TestRecallLogCap:
     def test_uses_class_attr_cap_when_none_passed(self, tmp_path):
