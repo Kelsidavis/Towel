@@ -730,6 +730,71 @@ class TestCollaborationOnOpenAICompat:
         # ones see whether ensemble actually ran.
         assert data.get("towel", {}).get("ensemble") is True
 
+    def test_fallback_from_worker_surfaces_in_towel_field(self, tmp_path):
+        """When the primary worker returns empty text and the
+        coordinator successfully retries on an alternate, the
+        response carries `towel.fallback_from_worker` +
+        `fallback_reason` so OpenAI-aware clients can see the
+        retry happened. Without this, an answer that came from
+        the alt looks like a normal primary response."""
+        from unittest.mock import AsyncMock
+
+        from towel.agent.conversation import Message, Role
+        from towel.gateway.workers import WorkerInfo
+
+        store = ConversationStore(store_dir=tmp_path)
+        config = TowelConfig()
+        agent = AgentRuntime(config)
+        sessions = SessionManager(store=store)
+        gw = GatewayServer(config=config, agent=agent, sessions=sessions)
+        client = TestClient(gw._build_http_app())
+
+        primary = WorkerInfo(id="fb-primary", ws=AsyncMock(), capabilities={})
+        alt = WorkerInfo(
+            id="fb-alt", ws=AsyncMock(),
+            capabilities={"total_vram_mb": 16000},
+        )
+        gw._workers._workers["fb-primary"] = primary
+        gw._workers._workers["fb-alt"] = alt
+
+        async def fake_route(_msg, _sid):
+            return primary, "chat"
+        gw._route_by_role = fake_route  # type: ignore[method-assign]
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            if worker.id == "fb-primary":
+                return Message(
+                    role=Role.ASSISTANT,
+                    content="(empty text placeholder)",
+                    metadata={
+                        "remote_worker": worker.id,
+                        "empty_text_fallback": True,
+                    },
+                )
+            # Alt returns a real answer.
+            return Message(
+                role=Role.ASSISTANT,
+                content="real answer from alt",
+                metadata={"remote_worker": worker.id, "tokens": 4, "tps": 5.0},
+            )
+        gw._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "default",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        # The successful retry's answer is the response content.
+        assert "real answer from alt" in data["choices"][0]["message"]["content"]
+        # Towel-namespaced fields surface the retry path.
+        towel_meta = data.get("towel", {})
+        assert towel_meta.get("fallback_from_worker") == "fb-primary"
+        assert towel_meta.get("fallback_reason") == "empty_text"
+
     def test_dual_empty_text_surfaces_in_towel_field(self, tmp_path):
         """When both the primary and the retry worker return the
         empty-text fallback (every worker tool-loops on the prompt),
