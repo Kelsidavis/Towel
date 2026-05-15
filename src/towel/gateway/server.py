@@ -995,9 +995,19 @@ class GatewayServer:
             pass
 
         verifier_text = (verify_response.content or "").strip()
-        # Strip trailing punctuation that some models add.
-        stripped = verifier_text.rstrip(".!? \t\n")
-        if stripped.upper() == "VERIFIED":
+        # Confirmation detection. Models routinely add casing /
+        # punctuation / leading remarks to the literal VERIFIED token
+        # we asked for ("Verified.", "verified", "yes — VERIFIED",
+        # "## VERIFIED"). Treat a SHORT response that contains
+        # VERIFIED as a confirmation; reserve "long, substantive
+        # text" for the corrected-answer branch. Threshold is
+        # forgiving but bounded — a 30-char response with VERIFIED
+        # in it isn't trying to deliver a corrected answer.
+        if (
+            verifier_text
+            and len(verifier_text) <= 30
+            and "VERIFIED" in verifier_text.upper()
+        ):
             return primary_answer, False, alt.id
         # If the verifier returned an empty-text fallback placeholder
         # or an obvious failure, don't replace a working answer with

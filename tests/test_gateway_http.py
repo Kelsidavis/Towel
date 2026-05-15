@@ -1407,6 +1407,125 @@ class TestSimpleAskAPI:
         assert body.get("verifier_corrected") is True
         assert body.get("primary_worker") == "primary"
 
+    def test_ask_verify_accepts_lenient_verified_forms(self, gateway, client):
+        """Models routinely add casing / punctuation / brief
+        commentary around the literal VERIFIED token we ask for.
+        Treat any short response containing VERIFIED as a
+        confirmation; long substantive text means correction."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "primary", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "verifier", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        for verifier_output in (
+            "VERIFIED",
+            "verified",
+            "Verified.",
+            "VERIFIED!",
+            "Yes, VERIFIED",
+            "## VERIFIED",
+        ):
+            def make_fake_quick(out: str):
+                async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+                    if session_id.startswith("_verify_"):
+                        return Message(
+                            role=Role.ASSISTANT, content=out,
+                            metadata={"remote_worker": worker.id, "tokens": 1, "tps": 5.0},
+                        )
+                    msg = Message(
+                        role=Role.ASSISTANT, content="primary answer",
+                        metadata={"remote_worker": worker.id, "tokens": 2, "tps": 5.0},
+                    )
+                    session.conversation.messages.append(msg)
+                    return msg
+                return fake_quick
+
+            gateway._quick_remote_infer = make_fake_quick(verifier_output)  # type: ignore[method-assign]
+
+            async def fake_route(_msg, _sid):
+                return gateway._workers.get("primary"), "chat"
+
+            gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+            sid = f"v-lenient-{abs(hash(verifier_output))}"
+            resp = client.post(
+                "/api/ask",
+                json={"message": "q", "session_id": sid, "verify": True},
+            )
+            assert resp.status_code == 200, f"failed for {verifier_output!r}"
+            body = resp.json()
+            assert body["response"] == "primary answer", (
+                f"verifier output {verifier_output!r} did not confirm "
+                f"primary; got response={body['response']!r}"
+            )
+            assert body.get("verifier_corrected") is False, (
+                f"verifier output {verifier_output!r} treated as correction"
+            )
+
+    def test_ask_verify_long_response_treated_as_correction(
+        self, gateway, client,
+    ):
+        """A long response from the verifier (even one that mentions
+        VERIFIED) is a substantive correction, not a confirmation —
+        we shouldn't drop the verifier's effort just because the
+        word VERIFIED appears in passing."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "primary", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "verifier", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            if session_id.startswith("_verify_"):
+                # Looks like a correction even though it mentions VERIFIED.
+                return Message(
+                    role=Role.ASSISTANT,
+                    content=(
+                        "The previous answer says Paris but the question "
+                        "asked about Germany. The capital is Berlin. "
+                        "(Not VERIFIED — corrected.)"
+                    ),
+                    metadata={"remote_worker": worker.id, "tokens": 30, "tps": 5.0},
+                )
+            msg = Message(
+                role=Role.ASSISTANT, content="The capital is Paris.",
+                metadata={"remote_worker": worker.id, "tokens": 5, "tps": 5.0},
+            )
+            session.conversation.messages.append(msg)
+            return msg
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        async def fake_route(_msg, _sid):
+            return gateway._workers.get("primary"), "chat"
+
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "What is the capital of Germany?", "session_id": "v-long", "verify": True},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # The substantive correction wins.
+        assert "Berlin" in body["response"]
+        assert body.get("verifier_corrected") is True
+
     def test_ask_verify_keeps_primary_when_verifier_confirms(
         self, gateway, client,
     ):
