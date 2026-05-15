@@ -4609,14 +4609,27 @@ class GatewayServer:
                 # from the response body so /api/ask doesn't lie about
                 # what got generated. Worker's reported count still
                 # wins when it's non-zero.
-                reported_tokens = meta.get("tokens", 0)
+                reported_tokens_raw = meta.get("tokens", 0)
+                reported_tokens = (
+                    int(reported_tokens_raw)
+                    if isinstance(reported_tokens_raw, (int, float))
+                    else 0
+                )
                 if reported_tokens == 0 and response.content:
                     reported_tokens = count_tokens_fallback(response.content)
+                # tps may arrive as explicit None from a worker that
+                # didn't measure (e.g. job_error before any tokens, or
+                # an empty-text response). `round(None, 1)` raises
+                # TypeError, which would 500 the whole /api/ask after
+                # an otherwise-recoverable empty-text fallback. Coerce
+                # to 0 at the boundary.
+                tps_raw = meta.get("tps")
+                tps_val = float(tps_raw) if isinstance(tps_raw, (int, float)) else 0.0
                 body: dict[str, Any] = {
                     "response": response.content,
                     "session": session_id,
                     "tokens": reported_tokens,
-                    "tps": round(meta.get("tps", 0), 1),
+                    "tps": round(tps_val, 1),
                     "worker": meta.get("remote_worker", "coordinator"),
                 }
                 if isinstance(meta.get("ttft_ms"), (int, float)):

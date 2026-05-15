@@ -936,6 +936,38 @@ class TestSimpleAskAPI:
         contents = [m.content for m in loaded.messages]
         assert "this should survive" in contents
 
+    def test_ask_handles_none_tps_in_metadata(self, gateway, client):
+        """A worker job_error / empty-text fallback can produce a
+        response whose metadata has `tps: None` (no measurement was
+        taken). `round(None, 1)` raises TypeError, which used to 500
+        the whole /api/ask after an otherwise-recoverable empty-text
+        path. Coerce non-numeric tps/tokens to 0 at the response
+        boundary."""
+        from towel.agent.conversation import Message, Role
+
+        # Stub the local-agent path so we return a response whose
+        # metadata carries the problematic shapes.
+        async def fake_step(conv):
+            return Message(
+                role=Role.ASSISTANT,
+                content="hello there",
+                metadata={"tps": None, "tokens": None},
+            )
+
+        gateway.agent.step = fake_step  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "hi", "session_id": "tps-none"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # tps coerced to a real number (0.0).
+        assert body["tps"] == 0
+        # tokens coerced to 0 and then back-estimated from content.
+        assert isinstance(body["tokens"], int)
+        assert body["tokens"] > 0
+
     def test_ask_accepts_session_id_key(self, gateway, client):
         """Clients reasonably pass ``session_id`` (the convention used
         everywhere else in towel — path params, internal APIs, the
