@@ -907,6 +907,35 @@ class TestSimpleAskAPI:
         session = gateway.sessions.get_or_create("test-ask")
         assert len(session.conversation) >= 1  # at least the user message
 
+    def test_ask_persists_user_message_on_inference_failure(
+        self, gateway, store, client,
+    ):
+        """A brand-new /api/ask session that errors before any reply
+        used to disappear: the user turn was added to the in-memory
+        Conversation but the save() at the end of the try block was
+        skipped when inference raised. The user opened
+        /conversations later and saw no record of having asked the
+        question. Now the save runs in a finally so the partial
+        session is persisted."""
+        # No model loaded → the inference call will raise and the
+        # endpoint returns 500. The user message must STILL be on
+        # disk afterwards.
+        resp = client.post(
+            "/api/ask",
+            json={"message": "this should survive", "session_id": "errored-session"},
+        )
+        # Inference failed (no model / no workers), so we expect 500.
+        # The exact status code matters less than what's on disk.
+        assert resp.status_code in (200, 500)
+
+        loaded = store.load("errored-session")
+        assert loaded is not None, (
+            "session was lost — the partial-save guard is missing"
+        )
+        # The user message must be in the persisted record.
+        contents = [m.content for m in loaded.messages]
+        assert "this should survive" in contents
+
     def test_ask_accepts_session_id_key(self, gateway, client):
         """Clients reasonably pass ``session_id`` (the convention used
         everywhere else in towel — path params, internal APIs, the

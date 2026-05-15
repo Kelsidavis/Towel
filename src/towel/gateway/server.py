@@ -458,62 +458,77 @@ class GatewayServer:
                     session.conversation.add(Role.USER, content, channel=channel)
 
                     # ── Role-based dispatch ─────────────────────────────
-                    worker, intent = await self._route_by_role(content, session_id)
-                    if stream:
-                        if worker:
-                            task = asyncio.create_task(
-                                self._stream_remote_inference(
-                                    ws, session_id, session, worker
+                    # try/finally so the save runs even on inference
+                    # failure. Without it, a brand-new session that
+                    # errored before any reply showed up later in
+                    # /conversations as if the user had never asked
+                    # — the user turn was added in memory but the
+                    # save() at the bottom got skipped when the
+                    # inference call raised.
+                    try:
+                        worker, intent = await self._route_by_role(content, session_id)
+                        if stream:
+                            if worker:
+                                task = asyncio.create_task(
+                                    self._stream_remote_inference(
+                                        ws, session_id, session, worker
+                                    )
                                 )
-                            )
+                            else:
+                                task = asyncio.create_task(
+                                    self._stream_response(ws, session_id, session)
+                                )
+                            self._active_tasks[session_id] = task
+                            try:
+                                await task
+                            except asyncio.CancelledError:
+                                await ws.send(
+                                    json.dumps(
+                                        {
+                                            "type": "cancelled",
+                                            "session": session_id,
+                                            "content": "",
+                                            "metadata": {"reason": "user_cancelled"},
+                                        }
+                                    )
+                                )
+                            finally:
+                                self._active_tasks.pop(session_id, None)
                         else:
-                            task = asyncio.create_task(
-                                self._stream_response(ws, session_id, session)
-                            )
-                        self._active_tasks[session_id] = task
-                        try:
-                            await task
-                        except asyncio.CancelledError:
+                            if worker and intent == "chat":
+                                response = await self._quick_remote_infer(
+                                    session_id, session, worker, max_tokens=256
+                                )
+                            elif worker:
+                                response = await self._step_remote_inference(
+                                    session_id, session, worker
+                                )
+                            else:
+                                response = await self.agent.step(session.conversation)
+                                session.conversation.messages.append(response)
                             await ws.send(
                                 json.dumps(
                                     {
-                                        "type": "cancelled",
+                                        "type": "response",
                                         "session": session_id,
-                                        "content": "",
-                                        "metadata": {"reason": "user_cancelled"},
+                                        "content": response.content,
+                                        "metadata": response.metadata,
                                     }
                                 )
                             )
-                        finally:
-                            self._active_tasks.pop(session_id, None)
-                    else:
-                        if worker and intent == "chat":
-                            response = await self._quick_remote_infer(
-                                session_id, session, worker, max_tokens=256
-                            )
-                        elif worker:
-                            response = await self._step_remote_inference(
-                                session_id, session, worker
-                            )
-                        else:
-                            response = await self.agent.step(session.conversation)
-                            session.conversation.messages.append(response)
-                        await ws.send(
-                            json.dumps(
-                                {
-                                    "type": "response",
-                                    "session": session_id,
-                                    "content": response.content,
-                                    "metadata": response.metadata,
-                                }
-                            )
-                        )
 
-                    # Auto-title after first exchange.
-                    self._maybe_set_auto_title(session)
-
-                    # Persist conversation after each exchange
-                    self.sessions.save(session_id)
+                        # Auto-title after first exchange.
+                        self._maybe_set_auto_title(session)
+                    finally:
+                        # Persist after each exchange — including
+                        # partial state on inference failure.
+                        try:
+                            self.sessions.save(session_id)
+                        except Exception as save_exc:
+                            log.debug(
+                                "Failed to persist session %s: %s",
+                                session_id, save_exc,
+                            )
 
         except websockets.ConnectionClosed:
             pass
@@ -4611,6 +4626,20 @@ class GatewayServer:
                     body["fallback_reason"] = meta.get("fallback_reason", "")
                 return JSONResponse(body)
             except Exception as e:
+                # Persist the partial session even on inference failure
+                # so the user message isn't lost — without this, a new
+                # /api/ask session that errored before any reply showed
+                # up later in /conversations as if the user had never
+                # asked anything (the in-memory user turn was added at
+                # line 4410, but the save() inside the try was skipped
+                # when the inference raised).
+                try:
+                    self.sessions.save(session_id)
+                except Exception as save_exc:
+                    log.debug(
+                        "Failed to persist session %s after inference error: %s",
+                        session_id, save_exc,
+                    )
                 return JSONResponse({"error": _err_str(e)}, status_code=500)
 
         async def api_sessions(request: Request) -> JSONResponse:
