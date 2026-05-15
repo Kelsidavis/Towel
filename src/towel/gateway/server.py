@@ -1460,14 +1460,34 @@ class GatewayServer:
             from towel.agent.tool_parser import parse_tool_calls
 
             import time as _time
+            # Bound synthesis time so a stuck local agent can't
+            # extend an ensemble run forever. 90s is generous —
+            # synthesis is short (one focused prompt → one focused
+            # answer). Anything past that is the model wedged on the
+            # synthesis step itself.
+            synth_timeout = float(
+                getattr(self.config, "chat_fast_timeout", 60.0) or 60.0
+            ) * 1.5
             t0 = _time.monotonic()
-            result = await self.agent.generate(synth_conv)
+            result = await asyncio.wait_for(
+                self.agent.generate(synth_conv), timeout=synth_timeout,
+            )
             if timing_sink is not None:
                 timing_sink["synthesis_ms"] = round(
                     (_time.monotonic() - t0) * 1000.0, 1,
                 )
             _tool_calls, remaining_text = parse_tool_calls(result.text)
             return (remaining_text or "").strip()
+        except asyncio.TimeoutError:
+            log.warning(
+                "Ensemble synthesis timed out after %.0fs; "
+                "falling back to deterministic pick",
+                synth_timeout,
+            )
+            if timing_sink is not None:
+                timing_sink["synthesis_ms"] = round(synth_timeout * 1000.0, 1)
+                timing_sink["synthesis_timeout"] = True
+            return ""
         except Exception as exc:
             log.warning(
                 "Ensemble synthesis on local agent failed (%s); "

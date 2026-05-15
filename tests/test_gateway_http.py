@@ -1199,6 +1199,67 @@ class TestSimpleAskAPI:
                 f"worker {wid} missing latest turn: {hist}"
             )
 
+    def test_ask_ensemble_synthesis_timeout_falls_back(
+        self, gateway, client,
+    ):
+        """A wedged local-agent synthesis can't extend the ensemble
+        run forever. With a tight timeout, hanging synthesis
+        triggers the longest-fallback deterministic pick — and the
+        response surfaces arbitration mode 'longest_fallback' so
+        the operator can see the synthesis hop bailed."""
+        import asyncio
+
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "a", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "b", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        # Shorten the bound so the test doesn't take 90s.
+        gateway.config.chat_fast_timeout = 0.1  # synthesis bound ~0.15s
+
+        # Divergent answers → synthesis would normally fire.
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            answers = {
+                "a": "Trees photosynthesize using sunlight.",
+                "b": "Cars run on gasoline as fuel.",
+            }
+            return Message(
+                role=Role.ASSISTANT, content=answers[worker.id],
+                metadata={"remote_worker": worker.id, "tokens": 5, "tps": 5.0},
+            )
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        # Synthesis hangs forever — outer timeout must cancel it.
+        async def fake_generate(conv):
+            await asyncio.sleep(60)
+            from towel.agent.runtime import GenerationResult
+            return GenerationResult(text="never returns")
+
+        gateway.agent.generate = fake_generate  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "q", "session_id": "ens-synth-timeout", "ensemble": True},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # Synthesis bailed → longest_fallback arbitration mode.
+        assert body.get("ensemble_arbitration") == "longest_fallback"
+        # One of the worker answers won (longest wins on tie).
+        assert any(
+            phrase in body["response"]
+            for phrase in ("Trees photosynthesize", "Cars run on gasoline")
+        )
+
     def test_ask_ensemble_concurrent_requests_dont_collide(
         self, gateway, client,
     ):
