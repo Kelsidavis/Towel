@@ -893,6 +893,27 @@ class GatewayServer:
                                         ensemble_skip_contribs
                                     ),
                                 }
+                            # Surface quality_degraded — parity with
+                            # /api/ask body field (commit 89bfa86)
+                            # and OpenAI-compat towel.quality_degraded.
+                            # Without this, WS clients had no signal
+                            # that their request landed on a worker
+                            # under-spec for the task — they got an
+                            # answer and assumed it was the best the
+                            # fleet could do.
+                            if self._dispatcher is not None:
+                                last_dec = (
+                                    self._dispatcher.last_decision_for_session(
+                                        session_id,
+                                    )
+                                )
+                                if (
+                                    last_dec is not None
+                                    and last_dec.quality_degraded
+                                ):
+                                    response.metadata = (
+                                        response.metadata or {}
+                                    ) | {"quality_degraded": True}
                             await ws.send(
                                 json.dumps(
                                     {

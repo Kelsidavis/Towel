@@ -1878,6 +1878,23 @@ class TestDispatchRecentEphemeralFilter:
         assert "no idle workers available" in src
         assert "all workers tool-looped" in src
 
+    def test_ws_quality_degraded_surfaced_in_metadata(self):
+        """Parity with /api/ask's quality_degraded body field and
+        OpenAI-compat's towel.quality_degraded — when the dispatcher
+        routes a WS chat to an under-spec worker, the response
+        metadata flags it so WS clients can render the same
+        "answered on a lower-tier worker" badge."""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._handle_ws)
+        # The check looks up the last decision and propagates the
+        # flag to response metadata.
+        assert "last_decision_for_session" in src
+        assert '"quality_degraded": True' in src
+        assert "quality_degraded" in src
+
     def test_ws_verify_skipped_surfaced_in_metadata(self):
         """Parity with /api/ask's verify_skipped response field: when
         verify=true was set on a WS message but the verify pass
