@@ -2924,6 +2924,131 @@ class TestSimpleAskAPI:
             assert isinstance(c["synthesis_ms"], (int, float))
             assert c["synthesis_ms"] >= 0
 
+    def test_verify_pass_uses_code_aware_prompt_for_code_questions(
+        self, gateway, client,
+    ):
+        """A generic "is this correct" verifier review is the wrong
+        tool for code — it doesn't prompt the reviewer to check
+        syntax, edge cases, or fitness to the ask. Detect code
+        questions heuristically (matches "write a function",
+        "implement", "refactor", etc. in the prompt, OR code-fence
+        / multiple `def`/`class` lines in the answer) and use a
+        prompt that lists the things the reviewer actually needs
+        to check."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "primary", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"], "tools": False},
+        )
+        gateway._workers.register(
+            "verifier", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"], "tools": False},
+        )
+
+        captured: dict = {}
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            if session_id.startswith("_verify_"):
+                # Grab the prompt the verifier was sent.
+                captured["verify_prompt"] = (
+                    session.conversation.messages[0].content
+                    if session.conversation.messages else ""
+                )
+                return Message(
+                    role=Role.ASSISTANT, content="VERIFIED",
+                    metadata={"remote_worker": worker.id, "tokens": 1, "tps": 5.0},
+                )
+            msg = Message(
+                role=Role.ASSISTANT,
+                # Code-shaped answer triggers the heuristic too.
+                content="def fib(n):\n    return [0, 1]",
+                metadata={"remote_worker": worker.id, "tokens": 5, "tps": 5.0},
+            )
+            session.conversation.messages.append(msg)
+            return msg
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        async def fake_route(_msg, _sid):
+            return gateway._workers.get("primary"), "chat"
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={
+                "message": "Write a Python function that returns Fibonacci",
+                "session_id": "verify-code-q",
+                "verify": True,
+            },
+        )
+        assert resp.status_code == 200
+        prompt = captured["verify_prompt"]
+        # Code-specific checks the verifier is now asked to perform.
+        assert "Syntax" in prompt
+        assert "Correctness" in prompt
+        assert "Edge cases" in prompt
+
+    def test_verify_pass_uses_generic_prompt_for_factual_questions(
+        self, gateway, client,
+    ):
+        """Non-code questions should still get the original
+        question/answer review prompt — no false-positive on
+        a factual question like "capital of France"."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "primary", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"], "tools": False},
+        )
+        gateway._workers.register(
+            "verifier", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"], "tools": False},
+        )
+
+        captured: dict = {}
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            if session_id.startswith("_verify_"):
+                captured["verify_prompt"] = (
+                    session.conversation.messages[0].content
+                    if session.conversation.messages else ""
+                )
+                return Message(
+                    role=Role.ASSISTANT, content="VERIFIED",
+                    metadata={"remote_worker": worker.id, "tokens": 1, "tps": 5.0},
+                )
+            msg = Message(
+                role=Role.ASSISTANT, content="Paris",
+                metadata={"remote_worker": worker.id, "tokens": 1, "tps": 5.0},
+            )
+            session.conversation.messages.append(msg)
+            return msg
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        async def fake_route(_msg, _sid):
+            return gateway._workers.get("primary"), "chat"
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={
+                "message": "What is the capital of France?",
+                "session_id": "verify-factual",
+                "verify": True,
+            },
+        )
+        assert resp.status_code == 200
+        prompt = captured["verify_prompt"]
+        # The factual prompt doesn't list the code-specific checks.
+        assert "Syntax" not in prompt
+        assert "Edge cases" not in prompt
+        # It still asks for VERIFIED on confirmation.
+        assert "VERIFIED" in prompt
+
     def test_verify_pass_uses_low_temperature(self, gateway, client):
         """Symmetric to the ensemble-synthesis temperature override:
         the verifier should be decisive (return VERIFIED or a

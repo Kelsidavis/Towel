@@ -1385,18 +1385,79 @@ class GatewayServer:
             else primary_answer[:verify_field_cap] + "…"
         )
 
-        verify_conv = Conversation(id=verify_sess_id)
-        verify_conv.add(
-            _Role.USER,
-            (
+        # Detect code-generation prompts so the verifier prompt
+        # can focus on the things that actually matter for code
+        # (syntax, edge cases, fitness to the ask) instead of
+        # vague "is this correct" prose review. Heuristic match
+        # on the question keeps the API surface unchanged; no
+        # task_type plumbing required to get the win.
+        #
+        # Regex over substring matching so "Write a Python
+        # function..." matches the same way "write a function..."
+        # does — language keywords between "write" and the
+        # target word are common in real prompts and shouldn't
+        # defeat detection.
+        import re as _re_codeq
+        question_lower = capped_q.lower()
+        _code_verbs_re = _re_codeq.compile(
+            r"\b(write|create|implement|refactor|generate|build|add)\b"
+            r"[\w\s]{0,40}?"
+            r"\b(function|class|script|code|module|method|"
+            r"endpoint|handler|test|tests|helper)\b"
+        )
+        is_code_task = bool(_code_verbs_re.search(question_lower))
+        if not is_code_task:
+            # Fixes / refactors don't always name the target ("fix
+            # this", "refactor this") — catch the verb+pronoun
+            # shape directly.
+            is_code_task = any(
+                sig in question_lower
+                for sig in (
+                    "fix the bug", "fix this code", "fix this function",
+                    "fix this script",
+                )
+            )
+        # Also signal-detect via the answer shape: a response with
+        # code fences or a substantial run of `def `/`function `/
+        # `class ` lines is almost certainly code, even if the
+        # original prompt was phrased vaguely.
+        if not is_code_task:
+            is_code_task = (
+                "```" in capped_a
+                or capped_a.count("def ") >= 2
+                or capped_a.count("function ") >= 2
+                or capped_a.count("class ") >= 2
+            )
+
+        if is_code_task:
+            verify_prompt = (
+                "Review this code answer for the question. Check:\n"
+                "  1. Syntax — does it parse?\n"
+                "  2. Correctness — does it actually do what the "
+                "question asked?\n"
+                "  3. Edge cases — empty input, zero, negative, "
+                "very large — are they handled?\n"
+                "\n"
+                "If the code is correct AND handles obvious edge "
+                "cases, respond with EXACTLY the word VERIFIED "
+                "(uppercase, no other text).\n"
+                "If incorrect or missing edge-case handling, respond "
+                "with the corrected code only (no explanation, no "
+                "preamble, no markdown fences unless they were in "
+                "the original).\n\n"
+                f"Question: {capped_q}\n\nProposed code:\n{capped_a}"
+            )
+        else:
+            verify_prompt = (
                 "Review this question/answer pair. If the answer is "
                 "correct and complete, respond with EXACTLY the word "
                 "VERIFIED (uppercase, no other text). If incorrect or "
                 "incomplete, respond with the corrected answer only "
                 "(no explanation, no preamble).\n\n"
                 f"Question: {capped_q}\n\nProposed answer: {capped_a}"
-            ),
-        )
+            )
+        verify_conv = Conversation(id=verify_sess_id)
+        verify_conv.add(_Role.USER, verify_prompt)
         # Reuse the gateway's Session class so _quick_remote_infer
         # has the right shape to work with. The Session is ephemeral
         # — never registered in self.sessions.
