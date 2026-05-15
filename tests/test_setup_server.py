@@ -147,8 +147,21 @@ class TestStandaloneApp:
         assert resp.status_code == 400
         body = resp.json()
         assert "supported" in body
-        assert "mlx" in body["supported"]
-        assert "ollama" in body["supported"]
+        # All four backends supported by the save handler should be
+        # listed in the error so the operator can fix the typo.
+        for b in ("mlx", "ollama", "llama", "claude"):
+            assert b in body["supported"], b
+
+    def test_llama_and_claude_backends_return_empty_list(self):
+        """llama and claude are valid backends per the save handler
+        but neither has a list-installed-models concept — return
+        `{"models": []}` (not 400) so the wizard UI can still query
+        without breaking."""
+        with TestClient(build_app()) as client:
+            for backend in ("llama", "claude"):
+                resp = client.get(f"/api/setup/backends/{backend}/models")
+                assert resp.status_code == 200, backend
+                assert resp.json() == {"models": []}, backend
 
     def test_setup_page_served_at_root(self):
         with TestClient(build_app()) as client:

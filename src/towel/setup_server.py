@@ -221,16 +221,21 @@ async def _models_handler(request: Request) -> JSONResponse:
     if backend == "ollama":
         url = config.ollama_url or "http://localhost:11434"
         return JSONResponse({"models": await _list_ollama_models(url)})
-    # Unknown backend (typo, future backend, hand-rolled curl).
-    # Returning an empty `models` list silently made it look like
-    # the backend was supported but had nothing installed —
-    # confusing for an operator wiring the setup wizard against a
-    # custom backend handle. Fail loud with the list of supported
-    # values instead.
+    # llama-server and claude are valid backends in _VALID_BACKENDS
+    # but neither has a meaningful "list installed models" concept
+    # the wizard can probe — llama-server picks its model at
+    # startup, claude is selected via the claude_model config field.
+    # Return an empty list (not an error) so the wizard UI can
+    # still query without tripping on these.
+    if backend in {"llama", "claude"}:
+        return JSONResponse({"models": []})
+    # Unknown backend (typo, hand-rolled curl). Fail loud with the
+    # list of supported values — otherwise an empty `models` list
+    # silently masks a typo as "you have no models installed."
     return JSONResponse(
         {
             "error": f"unknown backend {backend!r}",
-            "supported": ["mlx", "ollama"],
+            "supported": ["mlx", "ollama", "llama", "claude"],
         },
         status_code=400,
     )
