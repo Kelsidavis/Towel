@@ -2203,42 +2203,52 @@ class GatewayServer:
             )
         session.conversation.add(_Role.USER, prompt)
 
-        worker, _intent = await self._route_by_role(prompt, session_id)
-        if worker is None:
-            # Coordinator-local fallback isn't useful for orchestration —
-            # the whole point is fan-out across the fleet. Raise so the
-            # orchestrator can mark this subtask failed and the operator
-            # sees a clear "no worker" signal in the result summary.
-            raise RuntimeError(
-                f"no worker available for role={role} (session={session_id})"
-            )
+        try:
+            worker, _intent = await self._route_by_role(prompt, session_id)
+            if worker is None:
+                # Coordinator-local fallback isn't useful for
+                # orchestration — the whole point is fan-out across the
+                # fleet. Raise so the orchestrator can mark this subtask
+                # failed and the operator sees a clear "no worker"
+                # signal in the result summary.
+                raise RuntimeError(
+                    f"no worker available for role={role} (session={session_id})"
+                )
 
-        if with_tools:
-            # Tool-loop path: the worker can call write_file, read_file,
-            # edit_file etc. to actually produce artifacts. Note this
-            # uses chunk_timeout (default 300s) per generation pass, so
-            # a multi-iteration coder subtask can easily run several
-            # minutes — long-by-design.
-            response = await self._step_remote_inference(
-                session_id,
-                session,
-                worker,
-            )
-        else:
-            response = await self._quick_remote_infer(
-                session_id,
-                session,
-                worker,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                identity_override=role_system,
-            )
-        text = getattr(response, "content", "") or ""
-        if not text:
-            raise RuntimeError(
-                f"worker {worker.id} returned empty response for role={role}"
-            )
-        return text
+            if with_tools:
+                # Tool-loop path: the worker can call write_file, read_file,
+                # edit_file etc. to actually produce artifacts. Note this
+                # uses chunk_timeout (default 300s) per generation pass, so
+                # a multi-iteration coder subtask can easily run several
+                # minutes — long-by-design.
+                response = await self._step_remote_inference(
+                    session_id,
+                    session,
+                    worker,
+                )
+            else:
+                response = await self._quick_remote_infer(
+                    session_id,
+                    session,
+                    worker,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    identity_override=role_system,
+                )
+            text = getattr(response, "content", "") or ""
+            if not text:
+                raise RuntimeError(
+                    f"worker {worker.id} returned empty response for role={role}"
+                )
+            return text
+        finally:
+            # Orchestrator subtasks are one-shot — each uses a fresh
+            # uuid-suffixed session_id (see Orchestrator._run_agent),
+            # never reused. Without cleanup, every orchestration leaks
+            # one in-memory Session per subtask plus an open context
+            # slot on the worker, mirroring the leak `cleanup_ephemeral_session`
+            # was added for on the /v1/chat/completions path.
+            self.cleanup_ephemeral_session(session_id)
 
     async def _quick_remote_infer(
         self,

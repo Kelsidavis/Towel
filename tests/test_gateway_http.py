@@ -216,6 +216,43 @@ class TestOrchestrateEndpoint:
         assert resp.status_code == 400
         assert ".." in resp.json()["error"]
 
+    def test_dispatch_role_task_cleans_up_ephemeral_session(self, gateway):
+        """Each orchestrator subtask uses a fresh uuid-suffixed session;
+        without cleanup these accumulate in memory after every run."""
+        import asyncio
+
+        cleanups: list[str] = []
+        original_cleanup = gateway.cleanup_ephemeral_session
+
+        def spy(sid: str) -> None:
+            cleanups.append(sid)
+            original_cleanup(sid)
+
+        gateway.cleanup_ephemeral_session = spy  # type: ignore[method-assign]
+
+        # Patch route_by_role to return None so dispatch raises but the
+        # finally still runs cleanup. (Easier than stubbing a fake worker
+        # for the success path.)
+        async def no_worker(*_a, **_kw):
+            return None, "chat"
+        gateway._route_by_role = no_worker  # type: ignore[method-assign]
+
+        async def _run():
+            try:
+                await gateway.dispatch_role_task(
+                    "coder", "you are a coder", "do x",
+                    session_id="orch-coder-cleanup1",
+                    max_tokens=10, temperature=0.1, with_tools=False,
+                )
+            except RuntimeError:
+                pass  # Expected: no worker available
+
+        asyncio.run(_run())
+        assert "orch-coder-cleanup1" in cleanups
+        # Session must also be gone from the session manager — that's
+        # the actual leak we care about.
+        assert gateway.sessions.get("orch-coder-cleanup1") is None
+
     def test_orchestrate_workspace_dir_must_be_string(self, client):
         resp = client.post("/api/orchestrate", json={
             "goal": "g",
