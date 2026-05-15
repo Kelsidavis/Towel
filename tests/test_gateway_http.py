@@ -450,6 +450,32 @@ class TestSimpleAskAPI:
         )
         assert resp.status_code == 400
 
+    def test_ask_non_object_body_rejected(self, client):
+        """Array / string / null bodies crashed `body.get(...)` with
+        an AttributeError that Starlette rendered as plaintext
+        "Internal Server Error" HTTP 500 — not JSON, hard for API
+        clients to handle uniformly. Reject at the boundary.
+
+        Note `json=None` to the test client sends no body at all (so
+        the JSON parse fails with "Invalid JSON" first); explicit
+        non-objects use raw content."""
+        # JSON array / string / number / boolean as the entire body.
+        for raw in (b"[1,2,3]", b'"just a string"', b"42", b"true", b"null"):
+            resp = client.post(
+                "/api/ask",
+                content=raw,
+                headers={"content-type": "application/json"},
+            )
+            assert resp.status_code == 400, f"accepted {raw!r}"
+            assert "JSON object" in resp.json()["error"]
+
+    def test_ask_non_string_message_rejected(self, client):
+        """A message field that isn't a string would crash on
+        `.strip()` after `body.get("message", "")` succeeded."""
+        for bad in (42, [1, 2], {"nested": "x"}, True, None):
+            resp = client.post("/api/ask", json={"message": bad})
+            assert resp.status_code == 400, f"accepted {bad!r}"
+
     def test_ask_creates_session(self, gateway, client):
         # The actual model call will fail (no model loaded), but we test the session creation
         _resp = client.post("/api/ask", json={"message": "hello", "session": "test-ask"})

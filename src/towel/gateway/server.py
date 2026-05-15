@@ -3563,7 +3563,22 @@ class GatewayServer:
             except Exception:
                 return JSONResponse({"error": "Invalid JSON"}, status_code=400)
 
-            message = body.get("message", "").strip()
+            # Body must be a JSON object. Without this, an array /
+            # string / null body crashes on `body.get(...)` with an
+            # AttributeError that Starlette renders as plaintext
+            # "Internal Server Error" HTTP 500 — not even JSON, hard
+            # for API clients to handle uniformly.
+            if not isinstance(body, dict):
+                return JSONResponse(
+                    {"error": "body must be a JSON object"}, status_code=400,
+                )
+
+            raw_message = body.get("message", "")
+            if not isinstance(raw_message, str):
+                return JSONResponse(
+                    {"error": "message must be a string"}, status_code=400,
+                )
+            message = raw_message.strip()
             if not message:
                 return JSONResponse({"error": "message is required"}, status_code=400)
 
