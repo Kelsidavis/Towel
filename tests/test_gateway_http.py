@@ -40,6 +40,28 @@ def client(gateway):
     return TestClient(app)
 
 
+class TestAdminRestart:
+    """`/admin/restart` re-execs the coordinator process; without a
+    confirmation flag a stray curl or misclicked automation can drop
+    all in-memory state (dispatch log, active sessions, in-flight
+    worker assignments). The guard mirrors `DELETE /conversations`."""
+
+    def test_restart_without_confirm_rejected(self, client):
+        resp = client.post("/admin/restart")
+        assert resp.status_code == 400
+        assert "confirm=yes" in resp.json()["error"]
+
+    def test_restart_with_wrong_confirm_rejected(self, client):
+        resp = client.post("/admin/restart?confirm=please")
+        assert resp.status_code == 400
+
+    # NB: we don't test the `?confirm=yes` branch because it triggers
+    # `os.execv` on the test process. The guard logic is straightforward
+    # enough that a unit test of the negative case + the
+    # web UI passing the flag (verified by grep in test_web_ui) is
+    # sufficient.
+
+
 class TestHealthEndpoint:
     def test_health_returns_200(self, client):
         resp = client.get("/health")

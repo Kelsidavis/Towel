@@ -3800,11 +3800,34 @@ class GatewayServer:
                 )
             return JSONResponse({"sessions": items})
 
-        async def admin_restart(_request: Any) -> JSONResponse:
-            """POST /admin/restart — gracefully re-exec this process."""
+        async def admin_restart(request: Request) -> JSONResponse:
+            """POST /admin/restart — gracefully re-exec this process.
+
+            Requires ``?confirm=yes`` to actually restart. Without it,
+            returns a 400 — same footgun guard used by
+            ``DELETE /conversations``. A stray curl in shell history
+            or a misclicked automation shouldn't be one keystroke away
+            from dropping all in-memory state (dispatch log, active
+            sessions, in-flight worker assignments).
+
+            The web UI's restart button passes the flag automatically.
+            """
             import asyncio as _asyncio
             import os as _os
             import sys as _sys
+
+            if request.query_params.get("confirm") != "yes":
+                return JSONResponse(
+                    {
+                        "error": (
+                            "restarting drops all in-memory state "
+                            "(dispatch log, active sessions, in-flight "
+                            "worker assignments); re-issue with "
+                            "?confirm=yes to proceed"
+                        )
+                    },
+                    status_code=400,
+                )
 
             async def _do_restart() -> None:
                 await _asyncio.sleep(0.3)  # let the HTTP response flush

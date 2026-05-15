@@ -1947,7 +1947,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     fleetRestartBtn.textContent = 'restarting…';
     fleetRestartBtn.disabled = true;
     try {
-      await apiPost('/admin/restart', {});
+      await apiPost('/admin/restart?confirm=yes', {});
     } catch(e) { /* connection drops on restart — expected */ }
     // Poll until back online
     const poll = setInterval(async function() {
