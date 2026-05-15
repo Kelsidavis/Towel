@@ -514,10 +514,18 @@ class TestSSEFormat:
         async for chunk in _stream_sse(agent, conv, "test-id", 123, "model"):
             chunks.append(chunk)
 
-        assert len(chunks) == 4  # 2 tokens + finish + [DONE]
+        # 5 chunks: role announce + 2 tokens + finish + [DONE].
+        # The role chunk is part of OpenAI's documented streaming
+        # protocol — clients keying on `delta.role` to start an
+        # assistant turn were misbehaving without it.
+        assert len(chunks) == 5
         assert chunks[0].startswith("data: ")
-        assert '"Hello"' in chunks[0]
-        assert '"Hello world"' not in chunks[0]  # streaming sends individual tokens
+        # First chunk is the role announcement (no content yet).
+        role_payload = json.loads(chunks[0].replace("data: ", ""))
+        assert role_payload["choices"][0]["delta"] == {"role": "assistant"}
+        # First content chunk is at index 1.
+        assert '"Hello"' in chunks[1]
+        assert '"Hello world"' not in chunks[1]  # streaming sends individual tokens
         assert chunks[-1] == "data: [DONE]\n\n"
 
         # Parse the finish chunk
@@ -585,6 +593,54 @@ class TestRemoteStreamFallback:
         # fallback runs successfully.
         assert "\"error\"" not in joined
         assert "[DONE]" in joined
+
+    @pytest.mark.asyncio
+    async def test_role_chunk_emitted_only_once_through_fallback(self):
+        """When _stream_sse_remote fails before any token AND falls
+        back to the local agent's _stream_sse, the client must see
+        exactly ONE role-announcement chunk — not one from the
+        remote path AND one from the local fallback. Two role
+        declarations on the same response confuse SDKs that key on
+        the role chunk to start a new assistant turn."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Conversation, Role
+        from towel.agent.events import AgentEvent
+        from towel.gateway.openai_compat import _stream_sse_remote
+
+        async def failing_remote(session_id, session, worker):
+            raise RuntimeError("worker llama-server returned 400")
+            yield  # pragma: no cover
+
+        gateway = MagicMock()
+        gateway.iter_remote_tokens = failing_remote
+
+        async def local_stream(c):
+            yield AgentEvent.token("local-")
+            yield AgentEvent.complete("local-", {"tokens": 1})
+
+        agent = MagicMock()
+        agent.step_streaming = local_stream
+
+        conv = Conversation()
+        conv.add(Role.USER, "hi")
+
+        chunks = []
+        async for chunk in _stream_sse_remote(
+            gateway, "sid", MagicMock(), MagicMock(),
+            "rid", 0, "m",
+            fallback_agent=agent,
+            fallback_conv=conv,
+        ):
+            chunks.append(chunk)
+
+        role_chunks = [
+            c for c in chunks
+            if '"role": "assistant"' in c or '"role":"assistant"' in c
+        ]
+        assert len(role_chunks) == 1, (
+            f"expected exactly 1 role chunk; got {len(role_chunks)}: {role_chunks}"
+        )
 
     @pytest.mark.asyncio
     async def test_mid_stream_error_still_surfaces(self):

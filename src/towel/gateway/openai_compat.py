@@ -847,6 +847,30 @@ async def _stream_sse_remote(
     token has been emitted we can't switch generators silently — at
     that point an error must surface as an error chunk.
     """
+    # Emit the OpenAI role-announcement chunk immediately so the SSE
+    # client sees first-byte activity before the worker has produced
+    # any visible tokens. Without this, a worker that takes 10+
+    # seconds to start emitting (or emits tool calls / empty text
+    # the entire turn) leaves the connection silent past most clients'
+    # first-byte threshold — curl, browsers, and proxy layers all
+    # eventually hang up. The role chunk is also part of OpenAI's
+    # documented streaming protocol; SDKs that key on `delta.role`
+    # to start a new assistant turn were misbehaving without it.
+    role_chunk = {
+        "id": request_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "system_fingerprint": _SYSTEM_FINGERPRINT,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"role": "assistant"},
+                "finish_reason": None,
+            }
+        ],
+    }
+    yield f"data: {json.dumps(role_chunk)}\n\n"
     yielded_any = False
     try:
         async for token in gateway.iter_remote_tokens(session_id, session, worker):
@@ -874,8 +898,13 @@ async def _stream_sse_remote(
                 "falling back to local agent",
                 exc,
             )
+            # Skip the local fallback's role chunk — the remote
+            # path already emitted one before its failure, and
+            # emitting a second would have the client see two
+            # role-announcement chunks on the same response.
             async for chunk in _stream_sse(
                 fallback_agent, fallback_conv, request_id, created, model,
+                emit_role_chunk=False,
             ):
                 yield chunk
             return
@@ -917,6 +946,8 @@ async def _stream_sse(
     request_id: str,
     created: int,
     model: str,
+    *,
+    emit_role_chunk: bool = True,
 ) -> Any:
     """Yield Server-Sent Events in OpenAI streaming format.
 
@@ -926,9 +957,38 @@ async def _stream_sse(
     before flushing would hang. Wrap the iteration so any exception
     becomes a final `finish_reason="error"` chunk + [DONE],
     matching the error-frame shape _stream_sse_remote already uses.
+
+    ``emit_role_chunk`` controls whether the opening
+    ``delta: {"role": "assistant"}`` chunk is sent. Default True for
+    the standalone path; ``_stream_sse_remote`` passes False when it
+    falls back here mid-stream so the client doesn't see two role
+    declarations on the same response.
     """
     from towel.agent.events import EventType
 
+    if emit_role_chunk:
+        # Same first-byte-activity rationale as _stream_sse_remote —
+        # the local agent can also take several seconds to produce
+        # its first token (model load, long context, etc.), and
+        # clients waiting on a first byte would otherwise see
+        # nothing. Also part of OpenAI's documented streaming
+        # protocol: the role chunk announces "an assistant turn is
+        # starting" before any content lands.
+        role_chunk = {
+            "id": request_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "system_fingerprint": _SYSTEM_FINGERPRINT,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"role": "assistant"},
+                    "finish_reason": None,
+                }
+            ],
+        }
+        yield f"data: {json.dumps(role_chunk)}\n\n"
     try:
         async for event in agent.step_streaming(conv):
             if event.type == EventType.TOKEN:
