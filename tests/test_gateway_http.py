@@ -93,6 +93,25 @@ class TestSessionsEndpoint:
         assert data["sessions"][0]["id"] == "test-session"
         assert data["sessions"][0]["worker_id"] is None
 
+    def test_sessions_exposes_message_count_alias(self, gateway, client):
+        """/sessions originally exposed the message count under
+        `messages`, but /api/sessions and /conversations use
+        `message_count` for the same datum. Clients hitting both
+        endpoints had to special-case the field name. Expose
+        `message_count` as an alias on /sessions while keeping
+        `messages` for the existing web-UI / CLI callers."""
+        from towel.agent.conversation import Role
+
+        sess = gateway.sessions.get_or_create("alias-session")
+        sess.conversation.add(Role.USER, "hi")
+        sess.conversation.add(Role.ASSISTANT, "hello")
+
+        data = client.get("/sessions").json()
+        entry = data["sessions"][0]
+        # Both names present, both reflect the same count.
+        assert entry["messages"] == 2
+        assert entry["message_count"] == 2
+
 
 class TestWorkersEndpoint:
     def test_workers_empty(self, client):

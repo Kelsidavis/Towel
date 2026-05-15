@@ -3087,7 +3087,17 @@ class GatewayServer:
                         {
                             "id": s.id,
                             "channel": s.conversation.channel,
+                            # `messages` was the original key (in-memory
+                            # active sessions). Sister endpoints
+                            # /api/sessions and /conversations return
+                            # `message_count` for the same datum —
+                            # clients hitting both had to special-case
+                            # the field name. Expose both here so the
+                            # uniform name works everywhere; keep
+                            # `messages` for backwards compatibility
+                            # with existing web-UI / CLI callers.
                             "messages": len(s.conversation),
+                            "message_count": len(s.conversation),
                             "created_at": s.conversation.created_at.isoformat(),
                             "worker_id": self._session_workers.get(s.id),
                             "pinned_worker_id": self._session_pins.get(s.id),
