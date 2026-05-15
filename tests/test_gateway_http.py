@@ -598,6 +598,49 @@ class TestConversationsAPI:
         assert "json" in resp.json()["error"]
         assert "text" in resp.json()["error"]
 
+    def test_export_filename_strips_quotes_and_other_unsafe_chars(
+        self, store, client,
+    ):
+        """The /api/ask session_id validator only blocks control chars
+        and ≥257-char ids — quotes, semicolons, and backslashes slip
+        through. If the raw id is interpolated into the
+        Content-Disposition filename="..." header, the inner quote
+        truncates the filename and breaks the extension; worse, a
+        sufficiently crafted id could inject extra header parameters.
+        Sanitize the filename to alphanumerics + -_ at the boundary.
+        """
+        # Create a conversation whose id contains a quote — the store
+        # path sanitizer strips it for disk, but the in-memory
+        # `conv.id` keeps it.
+        conv = Conversation(id='nasty"id;evil', channel="cli")
+        conv.add(Role.USER, "hi")
+        store.save(conv)
+
+        resp = client.get(
+            "/conversations/nasty%22id%3Bevil/export?format=json"
+        )
+        # The store sanitizer mapped both raw and URL-decoded
+        # variants to the same disk path, so the load succeeds.
+        assert resp.status_code == 200
+
+        # Content-Disposition must not contain raw quotes or
+        # semicolons inside the filename — the wrapping quotes are
+        # the only ones allowed.
+        cd = resp.headers["content-disposition"]
+        # Header shape: attachment; filename="towel-<alnum>.json"
+        assert cd.startswith("attachment; filename=\"")
+        # Extract everything between the first and last quote, that's
+        # the filename payload.
+        first = cd.index('"')
+        last = cd.rindex('"')
+        payload = cd[first + 1 : last]
+        # Quotes / semicolons / backslashes in the payload would
+        # break the header.
+        for forbidden in ('"', ";", "\\"):
+            assert forbidden not in payload, (
+                f"unsafe char {forbidden!r} in filename payload {payload!r}"
+            )
+
 
 class TestSearch:
     """`/search` walks the conversation archive matching `?q=` against

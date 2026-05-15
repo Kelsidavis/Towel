@@ -4137,7 +4137,18 @@ class GatewayServer:
                 media_type = "text/markdown"
                 ext = "md"
 
-            filename = f"towel-{conv_id[:16]}.{ext}"
+            # Sanitize conv_id for the Content-Disposition filename.
+            # Session IDs may include `"` (the simple_ask validator
+            # only rejects control chars + ≥257 chars), and an
+            # unescaped quote breaks the filename="..." quoting —
+            # browsers truncate at the inner quote and lose the
+            # extension. Same alnum-only rule as the store path
+            # sanitizer (persistence/store.py _path_for); safe by
+            # construction.
+            safe_conv = "".join(
+                c for c in conv_id if c.isalnum() or c in "-_"
+            ) or "conversation"
+            filename = f"towel-{safe_conv[:16]}.{ext}"
             return Response(
                 content,
                 media_type=media_type,
