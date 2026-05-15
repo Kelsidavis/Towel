@@ -72,6 +72,34 @@ def build_openai_routes(
         messages = body.get("messages", [])
         stream = body.get("stream", False)
         model_name = body.get("model", config.model.name)
+        # Honor OpenAI-standard sampling params. max_tokens is clamped
+        # to [1, 4096] so a hostile or accidental request can't burn
+        # the worker's max generation budget; the previous behavior was
+        # to always use 512 regardless of what the caller asked for —
+        # which broke proper OpenAI clients (LangChain, llm-cli, etc.)
+        # that expected the param to flow through.
+        try:
+            req_max_tokens = body.get("max_tokens", 512)
+            if req_max_tokens is None:
+                req_max_tokens = 512
+            req_max_tokens = max(1, min(int(req_max_tokens), 4096))
+        except (TypeError, ValueError):
+            return JSONResponse(
+                {"error": {"message": "max_tokens must be an integer", "type": "invalid_request_error"}},
+                status_code=400,
+            )
+        try:
+            req_temperature = body.get("temperature", 0.7)
+            if req_temperature is None:
+                req_temperature = 0.7
+            req_temperature = float(req_temperature)
+            # Clamp to OpenAI's documented [0, 2] range.
+            req_temperature = max(0.0, min(req_temperature, 2.0))
+        except (TypeError, ValueError):
+            return JSONResponse(
+                {"error": {"message": "temperature must be a number", "type": "invalid_request_error"}},
+                status_code=400,
+            )
 
         if not messages:
             return JSONResponse(
@@ -179,7 +207,9 @@ def build_openai_routes(
                         if worker is not None:
                             if intent == "chat":
                                 response = await gateway._quick_remote_infer(
-                                    session_id, sess, worker, max_tokens=512,
+                                    session_id, sess, worker,
+                                    max_tokens=req_max_tokens,
+                                    temperature=req_temperature,
                                 )
                                 # Same retry-on-empty path /api/ask uses
                                 # (see commit 534e40f). When the small
@@ -218,7 +248,9 @@ def build_openai_routes(
                                             popped = sess.conversation.messages.pop()
                                         try:
                                             retry = await gateway._quick_remote_infer(
-                                                session_id, sess, alt, max_tokens=512,
+                                                session_id, sess, alt,
+                                                max_tokens=req_max_tokens,
+                                                temperature=req_temperature,
                                             )
                                         except Exception as retry_exc:
                                             import logging

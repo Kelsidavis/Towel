@@ -838,6 +838,7 @@ class GatewayServer:
         session: Any,
         worker: WorkerInfo,
         max_tokens: int = 256,
+        temperature: float = 0.7,
     ) -> Any:
         """Lightweight inference on a worker — no tool loop, capped tokens.
 
@@ -912,7 +913,7 @@ class GatewayServer:
                         "system": identity,
                         "messages": messages,
                         "max_tokens": max_tokens,
-                        "temperature": 0.7,
+                        "temperature": temperature,
                         "reasoning_effort": "none",
                     },
                 }

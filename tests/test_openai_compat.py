@@ -92,6 +92,35 @@ class TestChatCompletionsEndpoint:
         assert resp.status_code == 400
         assert "list of objects" in resp.json()["error"]["message"]
 
+    def test_rejects_non_integer_max_tokens(self, client):
+        """OpenAI clients pass `max_tokens` as an integer. Garbage values
+        should fail loud with a structured 400 rather than crashing
+        deep in the dispatch path."""
+        for bad in ("notanumber", [], {}):
+            resp = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "x",
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "max_tokens": bad,
+                },
+            )
+            assert resp.status_code == 400, f"accepted max_tokens={bad!r}"
+            assert "max_tokens" in resp.json()["error"]["message"]
+
+    def test_rejects_non_numeric_temperature(self, client):
+        for bad in ("hot", [], {}):
+            resp = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "x",
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "temperature": bad,
+                },
+            )
+            assert resp.status_code == 400, f"accepted temperature={bad!r}"
+            assert "temperature" in resp.json()["error"]["message"]
+
     def test_rejects_non_object_top_level_body(self, client):
         """Top-level array/string/number body would crash on
         `body.get(...)` and surface as plaintext "Internal Server
