@@ -907,7 +907,18 @@ def pin_worker(session_id: str, worker_id: str) -> None:
     try:
         resp = httpx.post(url, json={"worker_id": worker_id}, timeout=3)
         if resp.status_code >= 400:
-            message = resp.json().get("error", "Failed to pin worker")
+            # Defensive json parse — a misbehaving proxy or
+            # starlette internal-error path can return a non-JSON
+            # body, and the bare .json() crashes with
+            # JSONDecodeError that the outer `except Exception`
+            # then misreports as "Gateway not running".
+            try:
+                message = resp.json().get("error", "Failed to pin worker")
+            except (ValueError, AttributeError):
+                message = (
+                    f"Failed to pin worker (HTTP {resp.status_code}): "
+                    f"{resp.text[:200]}"
+                )
             console.print(f"[red]{message}[/red]")
             sys.exit(1)
         data = resp.json()
@@ -915,7 +926,7 @@ def pin_worker(session_id: str, worker_id: str) -> None:
             f"[green]Pinned[/green] session [bold]{data['session_id']}[/bold] "
             f"to worker [bold]{data['worker_id']}[/bold]"
         )
-    except Exception:
+    except httpx.RequestError:
         console.print("[red]Gateway not running.[/red] Start it with: towel serve")
         sys.exit(1)
 
@@ -932,13 +943,19 @@ def unpin_worker(session_id: str) -> None:
     try:
         resp = httpx.delete(url, timeout=3)
         if resp.status_code >= 400:
-            message = resp.json().get("error", "Failed to unpin worker")
+            try:
+                message = resp.json().get("error", "Failed to unpin worker")
+            except (ValueError, AttributeError):
+                message = (
+                    f"Failed to unpin worker (HTTP {resp.status_code}): "
+                    f"{resp.text[:200]}"
+                )
             console.print(f"[red]{message}[/red]")
             sys.exit(1)
         data = resp.json()
         action = "Unpinned" if data.get("removed") else "No pin found for"
         console.print(f"[green]{action}[/green] session [bold]{data['session_id']}[/bold]")
-    except Exception:
+    except httpx.RequestError:
         console.print("[red]Gateway not running.[/red] Start it with: towel serve")
         sys.exit(1)
 
@@ -950,7 +967,19 @@ def _update_worker_state(worker_id: str, **payload: Any) -> dict[str, Any]:
     url = f"http://{config.gateway.host}:{config.gateway.port + 1}/workers/{worker_id}/state"
     resp = httpx.post(url, json=payload, timeout=3)
     if resp.status_code >= 400:
-        message = resp.json().get("error", "Failed to update worker state")
+        # The gateway returns JSON error bodies, but a misbehaving
+        # proxy / starlette internal-error path can land plain text
+        # here. Without the try/except, the caller's
+        # `except Exception` saw the JSONDecodeError and reported
+        # "Gateway not running" — misleading when the gateway IS
+        # running but rejected the request.
+        try:
+            message = resp.json().get("error", "Failed to update worker state")
+        except (ValueError, AttributeError):
+            message = (
+                f"Failed to update worker state (HTTP {resp.status_code}): "
+                f"{resp.text[:200]}"
+            )
         raise RuntimeError(message)
     return resp.json()
 
@@ -959,13 +988,19 @@ def _update_worker_state(worker_id: str, **payload: Any) -> dict[str, Any]:
 @click.argument("worker_id")
 def drain_worker(worker_id: str) -> None:
     """Mark a worker as draining so it stops receiving new sessions."""
+    import httpx
     try:
         _update_worker_state(worker_id, draining=True)
         console.print(f"[green]Draining[/green] worker [bold]{worker_id}[/bold]")
     except RuntimeError as exc:
         console.print(f"[red]{exc}[/red]")
         sys.exit(1)
-    except Exception:
+    except httpx.RequestError:
+        # httpx.RequestError covers ConnectError, TimeoutException,
+        # ReadError, etc. — the "gateway is unreachable" cases.
+        # Bare Exception used to catch every error class (including
+        # JSONDecodeError inside the helper above), mis-reporting
+        # them all as "Gateway not running".
         console.print("[red]Gateway not running.[/red] Start it with: towel serve")
         sys.exit(1)
 
@@ -974,13 +1009,19 @@ def drain_worker(worker_id: str) -> None:
 @click.argument("worker_id")
 def undrain_worker(worker_id: str) -> None:
     """Allow a draining worker to receive new sessions again."""
+    import httpx
     try:
         _update_worker_state(worker_id, draining=False)
         console.print(f"[green]Undrained[/green] worker [bold]{worker_id}[/bold]")
     except RuntimeError as exc:
         console.print(f"[red]{exc}[/red]")
         sys.exit(1)
-    except Exception:
+    except httpx.RequestError:
+        # httpx.RequestError covers ConnectError, TimeoutException,
+        # ReadError, etc. — the "gateway is unreachable" cases.
+        # Bare Exception used to catch every error class (including
+        # JSONDecodeError inside the helper above), mis-reporting
+        # them all as "Gateway not running".
         console.print("[red]Gateway not running.[/red] Start it with: towel serve")
         sys.exit(1)
 
@@ -989,13 +1030,19 @@ def undrain_worker(worker_id: str) -> None:
 @click.argument("worker_id")
 def disable_worker(worker_id: str) -> None:
     """Disable a worker so the scheduler will not use it."""
+    import httpx
     try:
         _update_worker_state(worker_id, enabled=False)
         console.print(f"[green]Disabled[/green] worker [bold]{worker_id}[/bold]")
     except RuntimeError as exc:
         console.print(f"[red]{exc}[/red]")
         sys.exit(1)
-    except Exception:
+    except httpx.RequestError:
+        # httpx.RequestError covers ConnectError, TimeoutException,
+        # ReadError, etc. — the "gateway is unreachable" cases.
+        # Bare Exception used to catch every error class (including
+        # JSONDecodeError inside the helper above), mis-reporting
+        # them all as "Gateway not running".
         console.print("[red]Gateway not running.[/red] Start it with: towel serve")
         sys.exit(1)
 
@@ -1004,13 +1051,19 @@ def disable_worker(worker_id: str) -> None:
 @click.argument("worker_id")
 def enable_worker(worker_id: str) -> None:
     """Re-enable a disabled worker."""
+    import httpx
     try:
         _update_worker_state(worker_id, enabled=True)
         console.print(f"[green]Enabled[/green] worker [bold]{worker_id}[/bold]")
     except RuntimeError as exc:
         console.print(f"[red]{exc}[/red]")
         sys.exit(1)
-    except Exception:
+    except httpx.RequestError:
+        # httpx.RequestError covers ConnectError, TimeoutException,
+        # ReadError, etc. — the "gateway is unreachable" cases.
+        # Bare Exception used to catch every error class (including
+        # JSONDecodeError inside the helper above), mis-reporting
+        # them all as "Gateway not running".
         console.print("[red]Gateway not running.[/red] Start it with: towel serve")
         sys.exit(1)
 
