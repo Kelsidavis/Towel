@@ -24,14 +24,27 @@ class WorkerStateStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def load(self) -> dict[str, dict[str, Any]]:
-        """Load persisted worker state."""
+        """Load persisted worker state.
+
+        On corruption, rename the bad file to a sibling
+        ``.corrupted-<ts>`` before returning ``{}``. Without this, the
+        next save() overwrote the corrupt file with the current
+        in-memory state — silently destroying every persisted
+        enabled/draining/tasks override. Same pattern adopted in
+        session_pins (this commit), persistence/store.py (98d1c68),
+        and memory/store.py (5512834).
+        """
         if not self.path.exists():
             return {}
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError) as exc:
+            self._back_up_corrupt(exc)
             return {}
         if not isinstance(data, dict):
+            self._back_up_corrupt(
+                ValueError(f"top-level shape is {type(data).__name__}, expected dict"),
+            )
             return {}
 
         result: dict[str, dict[str, Any]] = {}
@@ -66,3 +79,18 @@ class WorkerStateStore:
             json.dumps(states, indent=2, sort_keys=True), encoding="utf-8",
         )
         tmp.replace(self.path)
+
+    def _back_up_corrupt(self, reason: Exception) -> None:
+        from datetime import UTC, datetime
+        backup = self.path.with_name(
+            f"{self.path.name}.corrupted-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}"
+        )
+        try:
+            self.path.replace(backup)
+            import logging
+            logging.getLogger("towel.persistence.worker_state").warning(
+                "Failed to load worker state: %s. Backed up the bad "
+                "file to %s.", reason, backup,
+            )
+        except OSError:
+            pass

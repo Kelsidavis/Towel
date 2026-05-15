@@ -21,6 +21,37 @@ class TestSessionPinStore:
 
         assert store.load() == {}
 
+    def test_load_corrupt_file_backs_up_before_returning_empty(
+        self, tmp_path,
+    ):
+        """If load() returns {} on corruption, the next save() would
+        overwrite the corrupt file with the current (possibly empty)
+        in-memory pins, silently destroying every operator-set pin.
+        Same pattern memory/store and ConversationStore now have."""
+        pins_path = tmp_path / "pins.json"
+        pins_path.write_text("{ not valid json")
+
+        store = SessionPinStore(path=pins_path)
+        assert store.load() == {}
+
+        # Original is renamed aside so save() can't overwrite it.
+        assert not pins_path.exists()
+        backups = list(tmp_path.glob("pins.json.corrupted-*"))
+        assert len(backups) == 1
+        assert backups[0].read_text() == "{ not valid json"
+
+    def test_load_non_dict_shape_backs_up(self, tmp_path):
+        """A valid-JSON-but-wrong-shape file (top-level list instead
+        of dict) also returns {} — and that path must back up too,
+        otherwise a `[1,2,3]` would silently disappear on next save."""
+        pins_path = tmp_path / "pins.json"
+        pins_path.write_text('[1, 2, 3]')
+
+        store = SessionPinStore(path=pins_path)
+        assert store.load() == {}
+        assert not pins_path.exists()
+        assert len(list(tmp_path.glob("pins.json.corrupted-*"))) == 1
+
     def test_save_is_atomic(self, tmp_path, monkeypatch):
         """A kill or disk-full mid-write must not corrupt the on-disk
         file — the previous pins must still load cleanly. Achieved by

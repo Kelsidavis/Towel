@@ -30,6 +30,34 @@ class TestWorkerStateStore:
 
         assert store.load() == {}
 
+    def test_load_corrupt_file_backs_up_before_returning_empty(
+        self, tmp_path,
+    ):
+        """If load() returns {} on corruption, the next save() would
+        overwrite the corrupt file with the current (possibly empty)
+        in-memory state, silently destroying every persisted
+        enabled/draining/tasks override. Same pattern as pin store +
+        memory + ConversationStore."""
+        state_path = tmp_path / "worker_state.json"
+        state_path.write_text("{ not valid json")
+
+        store = WorkerStateStore(path=state_path)
+        assert store.load() == {}
+
+        assert not state_path.exists()
+        backups = list(tmp_path.glob("worker_state.json.corrupted-*"))
+        assert len(backups) == 1
+        assert backups[0].read_text() == "{ not valid json"
+
+    def test_load_non_dict_shape_backs_up(self, tmp_path):
+        state_path = tmp_path / "worker_state.json"
+        state_path.write_text('"a string at the top level"')
+
+        store = WorkerStateStore(path=state_path)
+        assert store.load() == {}
+        assert not state_path.exists()
+        assert len(list(tmp_path.glob("worker_state.json.corrupted-*"))) == 1
+
     def test_save_is_atomic(self, tmp_path, monkeypatch):
         """A kill / disk-full mid-write must not destroy the existing
         on-disk state — the previous enabled / draining / tasks
