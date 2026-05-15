@@ -2912,6 +2912,44 @@ class TestSimpleAskAPI:
         # Consensus path fired (no synthesis).
         assert body.get("ensemble_arbitration") == "consensus"
 
+    def test_ask_ensemble_single_worker_arbitration_mode(self, gateway, client):
+        """When only one inference worker is available, ensemble
+        fans out to that single worker and returns its answer with
+        arbitration_mode="single". Clients can distinguish this
+        from a real multi-worker merge — arbitration="single" means
+        the fleet didn't have a quorum, only one worker contributed.
+        Important signal: operators benchmarking expect to see this
+        when one worker is busy and ensemble degraded to single."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        # Only one inference worker registered.
+        gateway._workers.register(
+            "solo", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            return Message(
+                role=Role.ASSISTANT, content="The answer is 42.",
+                metadata={"remote_worker": worker.id, "tokens": 4, "tps": 5.0},
+            )
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "q", "session_id": "ens-single", "ensemble": True},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # Single-worker arbitration. The answer is the worker's
+        # raw output (no synthesis, no consensus pick).
+        assert body.get("ensemble_arbitration") == "single"
+        assert body["response"] == "The answer is 42."
+        # Contributions list has exactly one entry.
+        assert len(body["ensemble_contributions"]) == 1
+
     def test_ask_ensemble_trivial_agreement_skips_synthesis(
         self, gateway, client,
     ):
