@@ -1132,6 +1132,69 @@ class TestSimpleAskAPI:
         ids = {c["worker_id"] for c in body["ensemble_contributions"]}
         assert ids == {"a", "b"}
 
+    def test_ask_ensemble_passes_session_history_to_each_worker(
+        self, gateway, client,
+    ):
+        """Each fan-out worker must see the full conversation
+        history, not just the latest turn — a follow-up like 'but
+        make it shorter' loses its referent without context. The
+        ephemeral session per worker clones the user's messages."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "a", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "b", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        # Pre-load the user's session with two prior turns.
+        sess = gateway.sessions.get_or_create("ens-history")
+        sess.conversation.add(Role.USER, "Describe a cat in one sentence.")
+        sess.conversation.add(
+            Role.ASSISTANT,
+            "A small carnivorous mammal kept as a pet, known for its independence.",
+        )
+
+        seen_histories: dict[str, list[str]] = {}
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            # Record what each worker received as conversation context.
+            seen_histories[worker.id] = [
+                m.content for m in session.conversation.messages
+            ]
+            return Message(
+                role=Role.ASSISTANT,
+                content=f"shorter from {worker.id}",
+                metadata={"remote_worker": worker.id, "tokens": 4, "tps": 5.0},
+            )
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={
+                "message": "but shorter please",
+                "session_id": "ens-history",
+                "ensemble": True,
+            },
+        )
+        assert resp.status_code == 200
+
+        # Both workers saw the prior turns AND the new user message.
+        for wid in ("a", "b"):
+            hist = seen_histories.get(wid, [])
+            assert any("cat" in m.lower() for m in hist), (
+                f"worker {wid} missing prior context: {hist}"
+            )
+            assert any("shorter" in m.lower() for m in hist), (
+                f"worker {wid} missing latest turn: {hist}"
+            )
+
     def test_ask_ensemble_records_straggler_as_timeout(self, gateway, client):
         """A wedged worker can't extend the ensemble run beyond the
         slowest honest worker. The outer deadline cancels stragglers

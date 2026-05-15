@@ -1012,17 +1012,24 @@ class GatewayServer:
         self,
         session_id: str,
         question: str,
+        user_session: Any = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Fan the same prompt to every idle capable worker in parallel.
+
+        When ``user_session`` is provided, each fan-out worker sees
+        the full conversation history (cloned into an ephemeral
+        session), not just the latest user message — so multi-turn
+        questions don't lose context when the operator opts into
+        ensemble mode. ``question`` is still the latest user turn
+        and is used for the synthesis prompt.
 
         Returns ``(arbitrated_answer, contributions)`` where
         ``contributions`` is a list of ``{worker_id, answer, ms,
         error}`` dicts — one per worker that responded (or errored).
 
-        Coordinator-side arbitration is intentionally simple in this
-        first cut: pick the longest non-empty, non-placeholder answer.
-        Real synthesis (LLM-as-judge, voting, merge) can layer on top
-        of this collection step without changing the fan-out plumbing.
+        Coordinator-side arbitration: when 2+ workers contributed,
+        the local agent synthesizes a final answer. Falls back to
+        longest-non-empty on synthesis failure.
 
         Falls back gracefully:
         - 0 workers idle → returns ``("", [])`` and the caller falls
@@ -1060,7 +1067,16 @@ class GatewayServer:
             import time as _time
             sess_id = f"_ens_{session_id}_{worker.id}"
             conv = Conversation(id=sess_id)
-            conv.add(_Role.USER, question)
+            # Clone the user's conversation so each worker sees prior
+            # turns. Without this, multi-turn questions ("but make it
+            # smaller") lost their referent — workers saw only the
+            # latest message in isolation. The user's session itself
+            # is untouched; we only mutate the ephemeral copy.
+            if user_session is not None:
+                for m in user_session.conversation.messages:
+                    conv.add(m.role, m.content)
+            else:
+                conv.add(_Role.USER, question)
             session = _Session(id=sess_id, conversation=conv)
             t0 = _time.monotonic()
             try:
@@ -4811,7 +4827,9 @@ class GatewayServer:
                 ensemble_contributions: list[dict[str, Any]] = []
                 if ensemble:
                     arbitrated, ensemble_contributions = (
-                        await self._ensemble_dispatch(session_id, message)
+                        await self._ensemble_dispatch(
+                            session_id, message, user_session=session,
+                        )
                     )
                     if arbitrated:
                         from towel.agent.conversation import Message as _Message
