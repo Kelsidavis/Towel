@@ -465,6 +465,36 @@ class TestClusterHandoffs:
         assert len(recent) == 3
         assert all(r["reason"] == "worker_disconnected" for r in recent)
 
+    def test_from_worker_and_to_worker_filters(self, gateway, client):
+        """`?from_worker=X` answers "what did worker X shed?" and
+        `?to_worker=X` answers "what did X inherit?". The seeded
+        records all originate on worker "a"; success cases land on
+        "b", failures on "c". Parity with dispatch_recent's
+        worker/previous_worker filter pair so operators don't have
+        to learn a different filter vocabulary per endpoint."""
+        self._seed_handoffs(gateway, n_success=2, n_failed=3)
+        # All 5 came from "a".
+        resp = client.get("/cluster/handoffs?from_worker=a")
+        recent = resp.json()["recent"]
+        assert len(recent) == 5
+        assert all(r["from_worker_id"] == "a" for r in recent)
+        # 2 success landed on "b".
+        resp = client.get("/cluster/handoffs?to_worker=b")
+        recent = resp.json()["recent"]
+        assert len(recent) == 2
+        assert all(r["to_worker_id"] == "b" for r in recent)
+        # Unknown worker → empty (no false positives).
+        resp = client.get("/cluster/handoffs?from_worker=ghost")
+        assert resp.json()["recent"] == []
+
+    def test_from_to_worker_length_cap(self, client):
+        """Same 256-char cap as /dispatch/recent's worker filters —
+        bogus large values shouldn't bloat the request line."""
+        resp = client.get(
+            "/cluster/handoffs?from_worker=" + "x" * 257
+        )
+        assert resp.status_code == 400
+
     def test_pending_handoffs_carry_elapsed_ms(self, gateway, client):
         """In-progress handoff records expose `elapsed_ms` (now -
         started_at) so operators triaging "what's been stuck the

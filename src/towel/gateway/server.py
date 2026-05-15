@@ -5170,6 +5170,12 @@ class GatewayServer:
               ``reason`` — narrow to one HandoffReason (e.g.
                           worker_draining, worker_disconnected,
                           manual_rebalance). Bogus values reject 400.
+              ``from_worker`` — only handoffs that originated from
+                          this worker (i.e., its sessions migrated
+                          away). Answers "what did worker X shed?"
+              ``to_worker`` — only handoffs that landed on this
+                          worker. Answers "what did worker X
+                          inherit?"
             """
             try:
                 limit = int(request.query_params.get("limit", "20"))
@@ -5196,11 +5202,32 @@ class GatewayServer:
                         },
                         status_code=400,
                     )
+            from_worker = request.query_params.get("from_worker")
+            to_worker = request.query_params.get("to_worker")
+            # Same 256-char cap as /dispatch/recent's worker filter —
+            # bogus large values shouldn't bloat the request line in
+            # any access log.
+            for fname, fval in (
+                ("from_worker", from_worker), ("to_worker", to_worker),
+            ):
+                if fval is not None and len(fval) > 256:
+                    return JSONResponse(
+                        {"error": f"{fname} must be 256 chars or fewer"},
+                        status_code=400,
+                    )
             recent = self._handoff_manager.recent_handoffs(limit=limit)
             if only_failed:
                 recent = [r for r in recent if not r.get("success")]
             if reason_filter is not None:
                 recent = [r for r in recent if r.get("reason") == reason_filter]
+            if from_worker is not None:
+                recent = [
+                    r for r in recent if r.get("from_worker_id") == from_worker
+                ]
+            if to_worker is not None:
+                recent = [
+                    r for r in recent if r.get("to_worker_id") == to_worker
+                ]
             # Pending handoffs: in-progress migrations. The stats
             # output exposes a bare count under `pending`; expose the
             # records themselves too so an operator triaging "what's
@@ -5209,6 +5236,14 @@ class GatewayServer:
             pending = self._handoff_manager.pending_handoffs()
             if reason_filter is not None:
                 pending = [p for p in pending if p.get("reason") == reason_filter]
+            if from_worker is not None:
+                pending = [
+                    p for p in pending if p.get("from_worker_id") == from_worker
+                ]
+            if to_worker is not None:
+                pending = [
+                    p for p in pending if p.get("to_worker_id") == to_worker
+                ]
             return JSONResponse(
                 {
                     "stats": self._handoff_manager.stats(),
