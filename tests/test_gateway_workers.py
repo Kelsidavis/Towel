@@ -562,6 +562,39 @@ class TestRemoteExecution:
         assert cancel_msgs[0]["job_id"] == job_id
 
     @pytest.mark.asyncio
+    async def test_quick_remote_infer_stamps_timing_on_timeout(self, gateway):
+        """Operators looking at /dispatch/recent for a failing primary
+        need to see how long the failing attempt took. Without this
+        stamp, the primary's decision shows total_ms=None when
+        _quick_remote_infer raises — operators can't tell "timed out
+        at 60s" apart from "errored instantly"."""
+        session = gateway.sessions.get_or_create("timing-stamp")
+        session.conversation.add(Role.USER, "hi")
+        worker_ws = DummyWS()
+        worker = gateway._workers.register("worker-ts", worker_ws, {"tools": False})
+
+        # Force fast timeout so the test doesn't actually wait.
+        gateway.config.chat_fast_timeout = 0.05
+
+        # Trigger a real dispatch so the decision exists in history.
+        await gateway._route_by_role("hi", "timing-stamp")
+        assert gateway._dispatcher is not None
+        before_decision = gateway._dispatcher.last_decision_for_session("timing-stamp")
+        assert before_decision is not None
+        assert before_decision.total_ms is None
+
+        with pytest.raises(RuntimeError):
+            await gateway._quick_remote_infer("timing-stamp", session, worker)
+
+        # The decision now has a total_ms reflecting the timeout.
+        decision = gateway._dispatcher.last_decision_for_session("timing-stamp")
+        assert decision is not None
+        assert decision.total_ms is not None
+        # Should be roughly the timeout duration (50ms) — allow generous range.
+        assert decision.total_ms > 10
+        assert decision.total_ms < 5000
+
+    @pytest.mark.asyncio
     async def test_quick_remote_infer_sends_cancel_on_timeout(self, gateway):
         """`_quick_remote_infer` is the chat-fast path. A worker
         timeout used to leave the worker still generating in the

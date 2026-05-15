@@ -1078,6 +1078,20 @@ class GatewayServer:
             # and we cancel the job.
         finally:
             if not completed_normally:
+                # Stamp the dispatch decision with how long the
+                # failing attempt actually took, so operators looking
+                # at /dispatch/recent can tell "primary timed out at
+                # 60s" apart from "primary errored instantly". Without
+                # this the primary decision shows no total_ms when
+                # _quick_remote_infer raises.
+                if self._dispatcher is not None:
+                    decision = self._dispatcher.last_decision_for_session(session_id)
+                    if decision is not None and decision.total_ms is None:
+                        coord_total_ms = (time.monotonic() - coord_start) * 1000.0
+                        decision.record_completion(
+                            ttft_ms=None,
+                            total_ms=round(coord_total_ms, 1),
+                        )
                 try:
                     await worker.ws.send(
                         json.dumps(
@@ -1575,6 +1589,40 @@ class GatewayServer:
         # Coordinator-measured start, used as a fallback when the
         # worker reports no total_ms (same rationale as _quick_remote_infer).
         coord_start = time.monotonic()
+
+        try:
+            return await self._step_remote_inference_inner(
+                session_id, session, worker, coord_start,
+            )
+        except Exception:
+            # On exception from _remote_generate, stamp the dispatch
+            # decision so operators can see "agent loop failed after Xs"
+            # in /dispatch/recent. Without this the original dispatch
+            # decision shows no total_ms.
+            if self._dispatcher is not None:
+                decision = self._dispatcher.last_decision_for_session(session_id)
+                if decision is not None and decision.total_ms is None:
+                    coord_total_ms = (time.monotonic() - coord_start) * 1000.0
+                    decision.record_completion(
+                        ttft_ms=None,
+                        total_ms=round(coord_total_ms, 1),
+                    )
+            raise
+
+    async def _step_remote_inference_inner(
+        self,
+        session_id: str,
+        session: Any,
+        worker: WorkerInfo,
+        coord_start: float,
+    ) -> Any:
+        """Inner body of `_step_remote_inference` — see wrapper for
+        rationale. Split so the outer can stamp dispatch timing on
+        exception without rewriting the loop body.
+        """
+        total_tokens = 0
+        last_metadata: dict[str, Any] = {"remote_worker": worker.id}
+        remaining_text = ""
 
         for _ in range(MAX_TOOL_ITERATIONS):
             result = await self._remote_generate(
