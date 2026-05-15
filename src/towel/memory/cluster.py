@@ -182,10 +182,26 @@ class ClusterMemorySync:
         return False
 
     def apply_mutations(self, mutations: list[dict[str, Any]]) -> int:
-        """Apply a batch of mutations. Returns count of successful applications."""
+        """Apply a batch of mutations. Returns count of successful applications.
+
+        Skips items that aren't dicts or can't be parsed by
+        MemoryMutation.from_dict — one malformed mutation must not
+        abort the whole batch, and on the WebSocket path it must
+        not bubble out and kill the worker's connection.
+        """
         applied = 0
         for data in mutations:
-            mutation = MemoryMutation.from_dict(data)
+            if not isinstance(data, dict):
+                log.warning(
+                    "Skipping non-dict mutation (%s)", type(data).__name__,
+                )
+                continue
+            try:
+                mutation = MemoryMutation.from_dict(data)
+            except (KeyError, ValueError, TypeError) as exc:
+                # Missing action/key, bad timestamp string, etc.
+                log.warning("Skipping malformed mutation: %s", exc)
+                continue
             if self.apply_mutation(mutation):
                 applied += 1
         return applied

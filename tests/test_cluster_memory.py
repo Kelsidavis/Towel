@@ -99,6 +99,31 @@ class TestClusterMemorySync:
         assert applied == 3
         assert store.count == 3
 
+    def test_apply_mutations_survives_bad_items(self, tmp_path):
+        """A worker that ships a malformed memory_sync (non-dict item,
+        missing action/key) must not kill the whole batch — and
+        crucially must not raise out to the WS handler that called us,
+        which would disconnect the worker. Skip the bad items, apply
+        the good ones."""
+        store = MemoryStore(store_dir=tmp_path / "mem")
+        sync = ClusterMemorySync(store, is_controller=False)
+
+        mutations = [
+            42,  # not a dict at all
+            "string-mutation",  # also not a dict
+            None,  # null slipped through
+            {"action": "remember"},  # missing key
+            {},  # empty dict — missing both action and key
+            MemoryMutation(action="remember", key="ok-key", content="x").to_dict(),
+            MemoryMutation(action="remember", key="ok-key2", content="y").to_dict(),
+        ]
+
+        applied = sync.apply_mutations(mutations)
+        # Only the two well-formed mutations applied.
+        assert applied == 2
+        assert store.recall("ok-key") is not None
+        assert store.recall("ok-key2") is not None
+
     def test_build_sync_message(self, tmp_path):
         store = MemoryStore(store_dir=tmp_path / "mem")
         sync = ClusterMemorySync(store, is_controller=True)
