@@ -29,6 +29,7 @@ from towel.agent.conversation import Role
 from towel.agent.events import AgentEvent
 from towel.agent.runtime import (
     MAX_TOOL_ITERATIONS,
+    TOOL_LOOP_REPEAT_LIMIT,
     AgentRuntime,
     format_tool_feedback,
     tool_result_is_error,
@@ -2564,11 +2565,11 @@ class GatewayServer:
         # if the same (name, args) repeats too many times consecutively
         # the worker is stuck — break out before we hit the
         # MAX_TOOL_ITERATIONS cap, which on a 20s-per-call worker would
-        # take ~5 hours to reach. 3 identical calls in a row is a
-        # generous threshold (real tool loops occasionally repeat a
-        # lookup) without being so loose it lets the loop run wild.
+        # take ~5 hours to reach. The threshold lives at module scope
+        # in agent/runtime (TOOL_LOOP_REPEAT_LIMIT=3) so the local
+        # agent's loop detector and this remote-inference one stay in
+        # lockstep — bumping one place changes both.
         last_call_fingerprints: list[str] = []
-        LOOP_REPEAT_LIMIT = 3
         loop_detected = False
 
         for _ in range(MAX_TOOL_ITERATIONS):
@@ -2620,7 +2621,7 @@ class GatewayServer:
                 session.conversation.add(Role.ASSISTANT, remaining_text)
 
             # Loop-detection: compute a fingerprint for this iteration's
-            # tool calls. When the same fingerprint appears LOOP_REPEAT_LIMIT
+            # tool calls. When the same fingerprint appears TOOL_LOOP_REPEAT_LIMIT
             # times consecutively, the worker is stuck — break the loop
             # so we don't burn hours of inference on a request a real
             # model would have given up on in 2 iterations.
@@ -2629,16 +2630,16 @@ class GatewayServer:
                 sort_keys=True, default=str,
             )
             last_call_fingerprints.append(iter_fingerprint)
-            if len(last_call_fingerprints) > LOOP_REPEAT_LIMIT:
+            if len(last_call_fingerprints) > TOOL_LOOP_REPEAT_LIMIT:
                 last_call_fingerprints.pop(0)
             if (
-                len(last_call_fingerprints) == LOOP_REPEAT_LIMIT
+                len(last_call_fingerprints) == TOOL_LOOP_REPEAT_LIMIT
                 and len(set(last_call_fingerprints)) == 1
             ):
                 log.warning(
                     "Tool-call loop detected on session %s (same call %r "
                     "repeated %d times); breaking out",
-                    session_id, tool_calls[0].name, LOOP_REPEAT_LIMIT,
+                    session_id, tool_calls[0].name, TOOL_LOOP_REPEAT_LIMIT,
                 )
                 loop_detected = True
                 break
@@ -2696,8 +2697,9 @@ class GatewayServer:
         # Loop-detection state (mirrors _step_remote_inference_inner).
         # See 4f5a63e for rationale — without this a stuck worker
         # loops 999 times, ~5h of compute on a 20s/call worker.
+        # Threshold imported from agent/runtime so the two detectors
+        # stay synchronised.
         last_call_fingerprints: list[str] = []
-        LOOP_REPEAT_LIMIT = 3
         loop_detected_call_name: str | None = None
 
         for _ in range(MAX_TOOL_ITERATIONS):
@@ -2753,16 +2755,16 @@ class GatewayServer:
                 sort_keys=True, default=str,
             )
             last_call_fingerprints.append(iter_fingerprint)
-            if len(last_call_fingerprints) > LOOP_REPEAT_LIMIT:
+            if len(last_call_fingerprints) > TOOL_LOOP_REPEAT_LIMIT:
                 last_call_fingerprints.pop(0)
             if (
-                len(last_call_fingerprints) == LOOP_REPEAT_LIMIT
+                len(last_call_fingerprints) == TOOL_LOOP_REPEAT_LIMIT
                 and len(set(last_call_fingerprints)) == 1
             ):
                 log.warning(
                     "Tool-call loop detected on streaming session %s "
                     "(same call %r repeated %d times); breaking out",
-                    session_id, tool_calls[0].name, LOOP_REPEAT_LIMIT,
+                    session_id, tool_calls[0].name, TOOL_LOOP_REPEAT_LIMIT,
                 )
                 loop_detected_call_name = tool_calls[0].name
                 break
