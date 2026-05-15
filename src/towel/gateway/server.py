@@ -2721,6 +2721,24 @@ class GatewayServer:
                         {"error": "q must not contain control characters"},
                         status_code=400,
                     )
+            # Same length + control-char guard on `tag`. The tag flows
+            # into a LIKE pattern (memory/store.py: `tags LIKE
+            # f'%"{tag}"%'`) which trips SQLITE_MAX_LIKE_PATTERN_LENGTH
+            # on a 1MB tag — the same crash class as the long-query bug
+            # fixed in eb86631.
+            if tag is not None:
+                tag = tag.strip() or None
+            if tag is not None:
+                if len(tag) > 256:
+                    return JSONResponse(
+                        {"error": "tag must be 256 chars or fewer"},
+                        status_code=400,
+                    )
+                if any(ord(c) < 0x20 or ord(c) == 0x7F for c in tag):
+                    return JSONResponse(
+                        {"error": "tag must not contain control characters"},
+                        status_code=400,
+                    )
             # scope semantics on this endpoint:
             #   absent           — honor the store's default (project + global)
             #   "__all__"        — no filter (audit across every project)

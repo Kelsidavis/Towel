@@ -178,6 +178,27 @@ class TestMemoryEndpoint:
         assert resp.status_code == 400
         assert "0" in resp.json()["error"] or "≥" in resp.json()["error"] or "non-negative" in resp.json()["error"].lower()
 
+    def test_rejects_overlong_tag(self, store, memory):
+        """Same SQLITE_MAX_LIKE_PATTERN_LENGTH guard the /memory `q`
+        rule applies: tag flows into a `tags LIKE %"{tag}"%` pattern
+        in MemoryStore.recall_all that would trip the 50000-char
+        SQLite limit on a megabyte tag and crash with 500."""
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+
+        resp = client.get("/memory?tag=" + "a" * 1000)
+        assert resp.status_code == 400
+        assert "256" in resp.json()["error"]
+
+    def test_rejects_control_chars_in_tag(self, store, memory):
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+
+        for encoded in ("%00", "with%0anewline"):
+            resp = client.get(f"/memory?tag={encoded}")
+            assert resp.status_code == 400, f"accepted tag={encoded!r}"
+            assert "control" in resp.json()["error"].lower()
+
     def test_returns_empty_when_agent_has_no_memory(self, store):
         class _BareAgent:
             pass
