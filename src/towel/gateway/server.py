@@ -1102,6 +1102,21 @@ class GatewayServer:
         # gets a focused, single-turn ask.
         from towel.agent.conversation import Conversation, Role as _Role
 
+        # Cap the embedded question + primary answer so a user who
+        # pasted a 100KB document doesn't push the verifier's prompt
+        # past the smallest worker's context window. The verifier
+        # judges accuracy from a representative sample — the first
+        # ~8KB of each field is plenty to spot factual errors;
+        # past that we'd be embedding the workers' irrelevant
+        # context overlap anyway.
+        _Q_CAP = 8000
+        _A_CAP = 8000
+        capped_q = question if len(question) <= _Q_CAP else question[:_Q_CAP] + "…"
+        capped_a = (
+            primary_answer if len(primary_answer) <= _A_CAP
+            else primary_answer[:_A_CAP] + "…"
+        )
+
         verify_conv = Conversation(id=verify_sess_id)
         verify_conv.add(
             _Role.USER,
@@ -1111,7 +1126,7 @@ class GatewayServer:
                 "VERIFIED (uppercase, no other text). If incorrect or "
                 "incomplete, respond with the corrected answer only "
                 "(no explanation, no preamble).\n\n"
-                f"Question: {question}\n\nProposed answer: {primary_answer}"
+                f"Question: {capped_q}\n\nProposed answer: {capped_a}"
             ),
         )
         # Reuse the gateway's Session class so _quick_remote_infer
