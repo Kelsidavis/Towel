@@ -42,6 +42,24 @@ def export_markdown(conv: Conversation, include_metadata: bool = False) -> str:
                         meta_parts.append(f"{msg.metadata['tps']:.1f} tok/s")
                     if msg.metadata.get("tokens"):
                         meta_parts.append(f"{msg.metadata['tokens']} tokens")
+                    # Surface collaboration info so an exported
+                    # transcript shows when multi-worker arbitration
+                    # ran. Without this, a reader of the markdown
+                    # had no way to tell an ensemble answer apart
+                    # from a single-worker one.
+                    if msg.metadata.get("ensemble"):
+                        arb = msg.metadata.get("ensemble_arbitration", "?")
+                        contribs = msg.metadata.get("ensemble_contributions") or []
+                        meta_parts.append(
+                            f"ensemble:{arb} ({len(contribs)} workers)"
+                        )
+                    if msg.metadata.get("verified_by"):
+                        verified_by = msg.metadata["verified_by"]
+                        corrected = msg.metadata.get("verifier_corrected", False)
+                        meta_parts.append(
+                            f"verified-by:{verified_by}"
+                            + (" (corrected)" if corrected else "")
+                        )
                     lines.append(f"*{' | '.join(meta_parts)}*")
                 lines.append("")
                 lines.append(msg.content)

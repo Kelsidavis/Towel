@@ -77,6 +77,39 @@ class TestMarkdownExport:
         md = export_markdown(c)
         assert "(empty)" in md
 
+    def test_ensemble_metadata_surfaces(self):
+        """An exported transcript should make it obvious when
+        multi-worker collaboration ran on a turn. Without this, the
+        markdown looked identical for a single-worker answer and an
+        ensemble-arbitrated answer."""
+        c = Conversation(id="ens-export", channel="api")
+        c.add(Role.USER, "What's 2+2?")
+        c.add(
+            Role.ASSISTANT,
+            "4",
+            ensemble=True,
+            ensemble_arbitration="consensus",
+            ensemble_contributions=[
+                {"worker_id": "a"}, {"worker_id": "b"}, {"worker_id": "c"},
+            ],
+        )
+        md = export_markdown(c, include_metadata=True)
+        assert "ensemble:consensus" in md
+        assert "3 workers" in md
+
+    def test_verify_metadata_surfaces(self):
+        c = Conversation(id="ver-export", channel="api")
+        c.add(Role.USER, "Capital of Germany?")
+        c.add(
+            Role.ASSISTANT,
+            "Berlin",
+            verified_by="big-worker",
+            verifier_corrected=True,
+        )
+        md = export_markdown(c, include_metadata=True)
+        assert "verified-by:big-worker" in md
+        assert "(corrected)" in md
+
 
 class TestTextExport:
     def test_header(self, conv):
