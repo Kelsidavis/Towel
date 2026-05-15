@@ -413,6 +413,45 @@ class TestNoneMetadataHandling:
 
 class TestSSEFormat:
     @pytest.mark.asyncio
+    async def test_local_stream_error_event_emits_error_chunk(self):
+        """When the agent emits AgentEvent.error(msg) — its graceful
+        in-stream-failure signal — the SSE generator must surface
+        it as a `finish_reason="error"` chunk instead of silently
+        dropping the event. Previously the if/elif chain had no
+        ERROR branch so the stream ended with a bare [DONE] and
+        the client saw "successfully empty"."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Conversation, Role
+        from towel.agent.events import AgentEvent
+        from towel.gateway.openai_compat import _stream_sse
+
+        agent = MagicMock()
+        conv = Conversation()
+        conv.add(Role.USER, "hi")
+
+        async def erroring_stream(c):
+            yield AgentEvent.token("partial-")
+            yield AgentEvent.error("model wedged on prompt")
+        agent.step_streaming = erroring_stream
+
+        chunks = []
+        async for chunk in _stream_sse(agent, conv, "rid", 0, "m"):
+            chunks.append(chunk)
+
+        joined = "".join(chunks)
+        assert "partial-" in joined
+        assert "finish_reason\": \"error\"" in joined
+        # The agent's message text reaches the client via the error
+        # frame's message field.
+        err_frame = next(c for c in chunks if "finish_reason\": \"error\"" in c)
+        payload = json.loads(err_frame.replace("data: ", ""))
+        assert "model wedged on prompt" in payload["error"]["message"]
+        assert payload["error"]["type"] == "server_error"
+        # Stream still terminates with [DONE].
+        assert chunks[-1] == "data: [DONE]\n\n"
+
+    @pytest.mark.asyncio
     async def test_local_stream_exception_emits_error_chunk(self):
         """When agent.step_streaming raises mid-iteration, the SSE
         generator must still emit a final `finish_reason="error"`

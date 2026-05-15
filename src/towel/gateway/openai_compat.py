@@ -954,6 +954,33 @@ async def _stream_sse(
                 yield f"data: {json.dumps(chunk)}\n\n"
                 yield "data: [DONE]\n\n"
                 return
+
+            elif event.type == EventType.ERROR:
+                # The agent's runtime emits AgentEvent.error(msg)
+                # for graceful in-stream failures. Without this
+                # branch the SSE generator dropped the event,
+                # finished its loop, and emitted a bare [DONE] —
+                # the client got a stream that ended cleanly with
+                # no content and no error indication. Surface the
+                # event message as a structured error chunk
+                # matching the exception-path shape below.
+                err_chunk = {
+                    "id": request_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "system_fingerprint": _SYSTEM_FINGERPRINT,
+                    "choices": [
+                        {"index": 0, "delta": {}, "finish_reason": "error"},
+                    ],
+                    "error": {
+                        "message": event.data.get("message", "agent error"),
+                        "type": "server_error",
+                    },
+                }
+                yield f"data: {json.dumps(err_chunk)}\n\n"
+                yield "data: [DONE]\n\n"
+                return
     except Exception as exc:
         err_chunk = {
             "id": request_id,
