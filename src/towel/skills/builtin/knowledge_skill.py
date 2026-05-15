@@ -16,9 +16,15 @@ def _load_kb() -> list[dict]:
     if not KB_FILE.exists():
         return []
     try:
-        return json.loads(KB_FILE.read_text(encoding="utf-8"))
+        data = json.loads(KB_FILE.read_text(encoding="utf-8"))
     except Exception:
         return []
+    # Same defensive shape-check as bookmark_skill / todo_skill —
+    # a hand-edited kb.json with non-list top-level shape would
+    # otherwise slip through and crash callers on .append() / iter.
+    if not isinstance(data, list):
+        return []
+    return [e for e in data if isinstance(e, dict)]
 
 
 def _save_kb(entries: list[dict]) -> None:

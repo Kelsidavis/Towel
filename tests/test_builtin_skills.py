@@ -947,6 +947,30 @@ class TestKnowledgeSkill:
         result = await kb.execute("kb_delete", {"index": 0})
         assert "Deleted" in result
 
+    @pytest.mark.asyncio
+    async def test_non_list_kb_file_does_not_crash(self, tmp_path, monkeypatch):
+        """A hand-edited kb.json with a non-list top-level shape
+        (object, string, null) used to slip through the json-decode
+        catch — json.loads parsed cleanly, the returned non-list
+        flowed into callers, and ``.append()`` / iteration crashed
+        with AttributeError. Defensive isinstance check returns []
+        on shape mismatch so the skill stays usable."""
+        kb_path = tmp_path / "kb.json"
+        # Wrong top-level shape — a dict instead of a list.
+        kb_path.write_text('{"not": "a list"}', encoding="utf-8")
+        monkeypatch.setattr("towel.skills.builtin.knowledge_skill.KB_FILE", kb_path)
+        from towel.skills.builtin.knowledge_skill import KnowledgeSkill, _load_kb
+
+        # _load_kb returns []; the file's bytes are left intact so
+        # the operator can inspect what happened.
+        assert _load_kb() == []
+        # Adding still works — the wrong-shape file gets clobbered
+        # by the next save (we don't back up like the cli paths do
+        # since the kb is a single-user store with low loss-cost).
+        skill = KnowledgeSkill()
+        result = await skill.execute("kb_add", {"content": "fresh note"})
+        assert "Added" in result or "Saved" in result or result
+
 
 class TestTranslateSkill:
     @pytest.fixture

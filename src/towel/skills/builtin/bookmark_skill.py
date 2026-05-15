@@ -16,9 +16,20 @@ def _load() -> list[dict]:
     if not BM_FILE.exists():
         return []
     try:
-        return json.loads(BM_FILE.read_text(encoding="utf-8"))
+        data = json.loads(BM_FILE.read_text(encoding="utf-8"))
     except Exception:
         return []
+    # A hand-edited bookmarks.json with a non-list top-level shape
+    # (object, string, null) used to slip through — json.loads
+    # parsed cleanly but callers crashed on .append() / iteration
+    # later. Reject the wrong shape here so the skill stays usable
+    # (operator sees "0 bookmarks" and can re-add) instead of every
+    # bookmark op failing with AttributeError.
+    if not isinstance(data, list):
+        return []
+    # Filter entries that aren't dicts so a stray non-dict in the
+    # list can't crash callers on b.get(...).
+    return [b for b in data if isinstance(b, dict)]
 
 
 def _save(bms: list[dict]) -> None:

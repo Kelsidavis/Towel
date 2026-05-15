@@ -16,9 +16,15 @@ def _load() -> list[dict]:
     if not TODO_FILE.exists():
         return []
     try:
-        return json.loads(TODO_FILE.read_text(encoding="utf-8"))
+        data = json.loads(TODO_FILE.read_text(encoding="utf-8"))
     except Exception:
         return []
+    # Same defensive shape-check as bookmark_skill — a hand-edited
+    # todos.json with non-list top-level shape would slip through
+    # the json-decode catch and crash callers on .append() / .get().
+    if not isinstance(data, list):
+        return []
+    return [t for t in data if isinstance(t, dict)]
 
 
 def _save(todos: list[dict]) -> None:
