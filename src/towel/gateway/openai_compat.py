@@ -820,6 +820,17 @@ def build_openai_routes(
                         # warning so the operator AND the API client
                         # see the same signal.
                         towel_meta["tools_ignored"] = True
+                    # Surface quality_degraded when the dispatcher
+                    # had to route to an under-spec worker — same
+                    # shape /api/ask carries.
+                    if gateway is not None and openai_session_id is not None:
+                        dispatcher = getattr(gateway, "_dispatcher", None)
+                        if dispatcher is not None:
+                            last_dec = dispatcher.last_decision_for_session(
+                                openai_session_id,
+                            )
+                            if last_dec is not None and last_dec.quality_degraded:
+                                towel_meta["quality_degraded"] = True
                     if towel_meta:
                         completion["towel"] = towel_meta
                     return JSONResponse(completion)

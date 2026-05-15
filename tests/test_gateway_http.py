@@ -3824,6 +3824,100 @@ class TestSimpleAskAPI:
         # Sanity: the original and the final are distinct.
         assert body["primary_original_answer"] != body["response"]
 
+    def test_ask_surfaces_quality_degraded_flag(self, gateway, client):
+        """When the dispatcher routes to an under-spec worker (the
+        only available one didn't meet the task's declared
+        min_vram_mb / min_context), the dispatch decision is flagged
+        quality_degraded=True. Surface that to clients so they can
+        retry later or render a "answered on a lower-tier worker"
+        badge — without it, the user has no signal that their
+        GENERATE landed on the 4GB worker because the 24GB worker
+        was busy."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+        from towel.gateway.dispatcher import DispatchDecision
+
+        gateway._workers.register(
+            "small", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            msg = Message(
+                role=Role.ASSISTANT, content="answer",
+                metadata={"remote_worker": worker.id, "tokens": 1, "tps": 5.0},
+            )
+            session.conversation.messages.append(msg)
+            return msg
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        async def fake_route(_msg, _sid):
+            # Inject a quality-degraded decision into the history so
+            # the response-construction step finds it via
+            # last_decision_for_session.
+            dec = DispatchDecision(
+                worker=gateway._workers.get("small"),
+                intent="chat",
+                reason="task_type_match",
+                notes="worker assigned task chat (under-spec — quality degraded)",
+                session_id=_sid,
+                quality_degraded=True,
+            )
+            gateway._dispatcher._record(dec)
+            return gateway._workers.get("small"), "chat"
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "hi", "session_id": "qd-sess"},
+        )
+        assert resp.status_code == 200
+        assert resp.json().get("quality_degraded") is True
+
+    def test_ask_omits_quality_degraded_when_not_degraded(self, gateway, client):
+        """No quality_degraded key in the response body when the
+        dispatcher's decision wasn't degraded — the field is
+        opt-in so clients don't have to special-case its absence."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "primary", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            msg = Message(
+                role=Role.ASSISTANT, content="answer",
+                metadata={"remote_worker": worker.id, "tokens": 1, "tps": 5.0},
+            )
+            session.conversation.messages.append(msg)
+            return msg
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        async def fake_route(_msg, _sid):
+            from towel.gateway.dispatcher import DispatchDecision
+            dec = DispatchDecision(
+                worker=gateway._workers.get("primary"),
+                intent="chat",
+                reason="task_type_match",
+                notes="worker assigned task chat",
+                session_id=_sid,
+                quality_degraded=False,
+            )
+            gateway._dispatcher._record(dec)
+            return gateway._workers.get("primary"), "chat"
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "hi", "session_id": "qd-clean"},
+        )
+        assert resp.status_code == 200
+        assert "quality_degraded" not in resp.json()
+
     def test_ask_verify_accepts_lenient_verified_forms(self, gateway, client):
         """Models routinely add casing / punctuation / brief
         commentary around the literal VERIFIED token we ask for.

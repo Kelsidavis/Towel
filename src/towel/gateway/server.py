@@ -6693,6 +6693,21 @@ class GatewayServer:
                     # without cracking open /dispatch/recent. Mirrors
                     # the success-path body which always carries this.
                     body["ensemble_contributions"] = ensemble_contributions
+                # Surface quality_degraded when the dispatcher had
+                # to route to an under-spec worker — the answer
+                # came back but the worker didn't meet the task's
+                # declared min_vram_mb / min_context. Clients can
+                # then choose to retry later when a more capable
+                # worker frees up, or display a "answered on a
+                # lower-tier worker" badge. The dispatch log
+                # already records this; mirror it into the body
+                # so clients don't have to cross-reference.
+                if self._dispatcher is not None:
+                    last_dec = self._dispatcher.last_decision_for_session(
+                        session_id,
+                    )
+                    if last_dec is not None and last_dec.quality_degraded:
+                        body["quality_degraded"] = True
                 return JSONResponse(body)
             except Exception as e:
                 # Persist the partial session even on inference failure
