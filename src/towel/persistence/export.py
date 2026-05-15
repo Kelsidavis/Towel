@@ -105,7 +105,12 @@ def export_markdown(conv: Conversation, include_metadata: bool = False) -> str:
 def export_text(conv: Conversation) -> str:
     """Export a conversation to plain text format."""
     lines: list[str] = []
-    lines.append(f"Conversation: {conv.id}")
+    # Title rides above the session id so a reader skimming the
+    # plain-text file sees the operator-set name first. The id
+    # stays in the header so the file is still self-identifying
+    # for a UI that needs to look up the source conversation.
+    lines.append(f"Conversation: {conv.display_title}")
+    lines.append(f"Session: {conv.id}")
     lines.append(f"Created: {conv.created_at.strftime('%Y-%m-%d %H:%M UTC')}")
     lines.append(f"Channel: {conv.channel}")
     lines.append("=" * 60)

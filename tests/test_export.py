@@ -169,6 +169,34 @@ class TestMarkdownExport:
         assert "(corrected)" not in html
 
 
+class TestTextExportTitle:
+    def test_text_header_includes_title_and_session_id(self):
+        """The plain-text export header now leads with the operator-
+        set title (or auto-summary when no title is set) so a
+        reader skimming saved txt files sees the name first. The
+        session id still appears for cross-referencing."""
+        from towel.persistence.export import export_text
+
+        c = Conversation(id="text-titled", channel="cli")
+        c.title = "My Deploy Notes"
+        c.add(Role.USER, "first message")
+        out = export_text(c)
+        assert "Conversation: My Deploy Notes" in out
+        assert "Session: text-titled" in out
+
+    def test_text_header_falls_back_to_summary_without_title(self):
+        """No explicit title → use auto-derived summary, matching
+        the markdown/html exports."""
+        from towel.persistence.export import export_text
+
+        c = Conversation(id="text-untitled", channel="cli")
+        c.add(Role.USER, "what is towel")
+        out = export_text(c)
+        # display_title falls back to summary (first user message),
+        # so the heading reflects the actual content.
+        assert "Conversation: what is towel" in out
+
+
 class TestTextExport:
     def test_header(self, conv):
         txt = export_text(conv)
