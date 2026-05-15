@@ -71,6 +71,36 @@ class TestApplyFormToConfig:
         _apply_form_to_config(cfg, {"backend": "mlx", "identity": ""})
         assert cfg.identity == "existing identity"
 
+    def test_non_string_fields_treated_as_empty_not_crash(self):
+        """A buggy wizard client shipping ``backend: 42`` (int) or
+        ``identity: ["a", "b"]`` (list) used to crash ``.strip()``
+        with AttributeError, which the save handler returned as HTTP
+        500. Operators saw "the wizard is broken" with no usable
+        error — and a misrouted form field is a 400-class problem,
+        not a 500. Defensive isinstance(value, str) check at every
+        string-field read keeps the handler resilient."""
+        cfg = TowelConfig()
+        # Non-string backend → treated as empty (== "auto-detect"),
+        # which is a valid backend value per _VALID_BACKENDS.
+        ok, err = _apply_form_to_config(cfg, {"backend": 42})
+        assert ok and err is None
+        # Non-string identity / urls / model_name don't crash —
+        # they fall back to "" (which then leaves config.identity
+        # unchanged via the `identity or config.identity` chain).
+        cfg2 = TowelConfig(identity="kept")
+        ok, err = _apply_form_to_config(cfg2, {
+            "backend": "mlx",
+            "identity": ["not", "a", "string"],
+            "ollama_url": 42,
+            "model_name": {"dict": "value"},
+        })
+        assert ok and err is None
+        # Identity untouched — non-string falls back to "" then
+        # uses existing.
+        assert cfg2.identity == "kept"
+        # URLs zeroed (not exploded into garbage).
+        assert cfg2.ollama_url == ""
+
 
 class TestListMlxCachedModels:
     def test_returns_a_list_without_crashing(self):

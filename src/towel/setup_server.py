@@ -178,17 +178,31 @@ _VALID_BACKENDS = {"", "mlx", "ollama", "llama", "claude"}
 
 
 def _apply_form_to_config(config: TowelConfig, form: dict[str, Any]) -> tuple[bool, str | None]:
-    """Mutate ``config`` from the wizard form. Returns ``(ok, error)``."""
-    backend = (form.get("backend") or "").strip()
+    """Mutate ``config`` from the wizard form. Returns ``(ok, error)``.
+
+    Every string field is read via ``_form_str`` so a non-string
+    value (the wizard JSON shipping ``backend: 42`` because a buggy
+    client serialised the form wrong) falls back to "" instead of
+    crashing ``.strip()`` with AttributeError. Without this, the
+    save handler returned HTTP 500 on any form with a non-string
+    field — which the operator saw as "the wizard is broken" with
+    no usable error message.
+    """
+    def _form_str(key: str, fallback: str = "") -> str:
+        v = form.get(key)
+        return v.strip() if isinstance(v, str) else fallback
+
+    backend = _form_str("backend")
     if backend not in _VALID_BACKENDS:
         return False, f"Unknown backend: {backend!r}"
     config.backend = backend
-    config.identity = (form.get("identity") or config.identity).strip() or config.identity
-    config.ollama_url = (form.get("ollama_url") or "").strip()
-    config.llama_url = (form.get("llama_url") or "").strip()
-    config.claude_model = (form.get("claude_model") or "").strip()
+    identity = _form_str("identity")
+    config.identity = identity or config.identity
+    config.ollama_url = _form_str("ollama_url")
+    config.llama_url = _form_str("llama_url")
+    config.claude_model = _form_str("claude_model")
 
-    model_name = (form.get("model_name") or "").strip()
+    model_name = _form_str("model_name")
     # For backends that drive their own model selection (llama-server picks at
     # startup; Claude is selected via claude_model), leave the existing
     # config.model.name alone. For mlx/ollama, persist the user's choice.
