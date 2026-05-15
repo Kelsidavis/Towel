@@ -240,8 +240,11 @@ class TestProbeFleetEndpoints:
             "/dispatch/recent?limit=1": {
                 "decisions": [],
                 "log_status": {
+                    # Two flaky workers + one one-off retry. The one-off
+                    # gets filtered out by the ≥3 threshold; the two
+                    # genuine offenders show up sorted most-flaky first.
                     "empty_text_retries_by_worker": {
-                        "small-worker": 3, "other-worker": 1,
+                        "small-worker": 5, "other-worker": 3, "noise-worker": 1,
                     },
                 },
             },
@@ -261,16 +264,57 @@ class TestProbeFleetEndpoints:
             _probe_fleet_endpoints(c, "localhost", 18743)
 
         joined_warnings = " | ".join(c.warnings)
-        # Both flaky workers surface in the warning, ordered most-flaky first.
-        assert "small-worker=3" in joined_warnings
-        assert "other-worker=1" in joined_warnings
-        small_idx = joined_warnings.index("small-worker=3")
-        other_idx = joined_warnings.index("other-worker=1")
+        # Both ≥3-retry workers surface, ordered most-flaky first.
+        assert "small-worker=5" in joined_warnings
+        assert "other-worker=3" in joined_warnings
+        small_idx = joined_warnings.index("small-worker=5")
+        other_idx = joined_warnings.index("other-worker=3")
         assert small_idx < other_idx, "most-flaky should come first"
+        # The one-off retry filtered by the ≥3 threshold doesn't pollute
+        # the warning — operators triaging this don't need to look at a
+        # transient single failure.
+        assert "noise-worker" not in joined_warnings
         # Operator guidance accompanies the warn so the surfaced
         # signal is actionable, not just noise.
         joined_suggestions = " | ".join(c.suggestions)
         assert "pinning chat sessions away" in joined_suggestions
+
+    def test_empty_text_single_retry_is_silent(self):
+        """A buffer with only one or two retries is below the noise
+        threshold — a one-off failure shouldn't fire a WARN that
+        otherwise loses meaning when every dispatch has minor hiccups."""
+        responses = {
+            "/workers": {"workers": []},
+            "/skills": {"skills": [], "total_tools": 0},
+            "/fleet/inventory": {
+                "models": [], "total_unique": 0, "total_workers": 0,
+                "fleet_max_param_b": 0.0,
+            },
+            "/dispatch/recent?limit=1": {
+                "decisions": [],
+                "log_status": {
+                    "empty_text_retries_by_worker": {
+                        "transient-worker": 1, "another-blip": 2,
+                    },
+                },
+            },
+            "/cluster/handoffs": {
+                "stats": {"total": 0, "failed": 0, "pending": 0}, "recent": [],
+            },
+        }
+
+        def fake_get(url, timeout=None):
+            for suffix, payload in responses.items():
+                if url.endswith(suffix):
+                    return _mock_response(payload)
+            raise AssertionError(f"unexpected url: {url}")
+
+        c = Check("test")
+        with patch("httpx.get", side_effect=fake_get):
+            _probe_fleet_endpoints(c, "localhost", 18743)
+
+        joined_warnings = " | ".join(c.warnings)
+        assert "Empty-text retries" not in joined_warnings
 
     def test_empty_text_retries_silent_when_buffer_clean(self):
         """No flaky workers in the buffer → no warning surfaced. The

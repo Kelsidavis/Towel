@@ -452,11 +452,18 @@ def _probe_fleet_endpoints(c: Check, host: str, http_port: int) -> None:
         # the user the primary's full latency; surfacing the tally
         # from the dispatch buffer means operators see the offender
         # without curl-ing the dispatch log themselves.
+        #
+        # Threshold: only warn when at least one worker has produced
+        # ≥3 empty-text retries in the buffer. A single one-off retry
+        # from a transient failure is noise; a recurring pattern (the
+        # live observation that drove this code: 12 retries from one
+        # worker in a 500-entry buffer) is real signal worth surfacing.
         retries = (data.get("log_status") or {}).get(
             "empty_text_retries_by_worker"
         ) or {}
-        if retries:
-            top = sorted(retries.items(), key=lambda kv: -kv[1])
+        flaky = {wid: n for wid, n in retries.items() if n >= 3}
+        if flaky:
+            top = sorted(flaky.items(), key=lambda kv: -kv[1])
             summary = ", ".join(f"{wid}={n}" for wid, n in top)
             c.warn(
                 f"Empty-text retries by worker (in current buffer): {summary}"
