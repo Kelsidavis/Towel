@@ -98,9 +98,13 @@ class OrchestratorResult:
     def summary(self) -> str:
         lines = [f"Orchestration: {len(self.tasks)} tasks, {self.total_elapsed:.1f}s total"]
         for i, t in enumerate(self.tasks):
-            icon = {"completed": "+", "failed": "!", "running": "~", "pending": " "}.get(
-                t.status, "?"
-            )
+            icon = {
+                "completed": "+",
+                "failed": "!",
+                "skipped": "/",
+                "running": "~",
+                "pending": " ",
+            }.get(t.status, "?")
             lines.append(
                 f"  [{icon}] {i}. {t.role}: {t.status} ({t.elapsed:.1f}s, {len(t.result)} chars)"
             )
@@ -246,10 +250,30 @@ class Orchestrator:
         workspace_preamble = self._workspace_preamble(workspace_dir)
 
         for i, task in enumerate(tasks):
-            # Wait for dependencies
-            for dep_idx in task.depends_on:
-                if dep_idx < len(tasks) and tasks[dep_idx].status != "completed":
-                    log.warning(f"Task {i} depends on incomplete task {dep_idx}")
+            # Short-circuit when a direct dependency didn't succeed.
+            # Without this, the dependent runs with the failed dep's
+            # error string injected as `Result from <role>` context —
+            # the worker either reasons against a misleading "result"
+            # or wastes time refusing the prompt. Marking the task
+            # `skipped` makes the failure cascade visible in the
+            # response and saves the worker turn.
+            failed_deps = [
+                d for d in task.depends_on
+                if 0 <= d < len(tasks) and tasks[d].status in ("failed", "skipped")
+            ]
+            if failed_deps:
+                task.status = "skipped"
+                task.result = (
+                    f"Skipped: depends on task(s) {failed_deps} which did "
+                    "not complete successfully."
+                )
+                task.elapsed = 0.0
+                task.attempts = 0
+                log.info(
+                    "Task %d (%s): skipped (failed deps %s)",
+                    i, task.role, failed_deps,
+                )
+                continue
 
             # Inject dependency results as context
             dep_context = ""

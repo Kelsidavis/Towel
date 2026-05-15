@@ -2261,6 +2261,7 @@ def orchestrate(
         icon = {
             "completed": "[green]✓[/green]",
             "failed": "[red]✗[/red]",
+            "skipped": "[yellow]–[/yellow]",
             "running": "~",
             "pending": " ",
         }.get(t.get("status"), "?")

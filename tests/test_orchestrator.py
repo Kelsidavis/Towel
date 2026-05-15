@@ -309,6 +309,72 @@ class TestOrchestratorWithDispatcher:
         for call in dispatcher.calls:
             assert "/tmp/orch-par" in call["prompt"]
 
+    def test_failed_dep_skips_dependents(self):
+        """When a subtask fails after all retries, dependent subtasks
+        should be `skipped` rather than run with the dep's error
+        string injected as context — that wastes worker time and
+        produces nonsensical output."""
+        from towel.config import TowelConfig
+
+        class _FailFirst:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            async def dispatch_role_task(  # noqa: PLR0913
+                self, role, role_system, prompt, *,
+                session_id, max_tokens, temperature, with_tools,
+            ):
+                self.calls.append(role)
+                if role == "architect":
+                    raise RuntimeError("architect timed out")
+                return f"{role}-result"
+
+        dispatcher = _FailFirst()
+        orch = Orchestrator(
+            TowelConfig(), dispatcher=dispatcher, max_attempts=1,
+        )
+        tasks = [
+            AgentTask(role="architect", prompt="plan"),
+            AgentTask(role="coder", prompt="impl", depends_on=[0]),
+            AgentTask(role="reviewer", prompt="review", depends_on=[1]),
+        ]
+        result = asyncio.run(orch.run("g", tasks))
+        # Architect ran and failed.
+        assert tasks[0].status == "failed"
+        # Coder and reviewer were skipped — never dispatched.
+        assert tasks[1].status == "skipped"
+        assert tasks[2].status == "skipped"
+        assert "depends on task(s) [0]" in tasks[1].result
+        assert "depends on task(s) [1]" in tasks[2].result
+        assert dispatcher.calls == ["architect"]  # no waste on dependents
+        assert not result.success
+
+    def test_skipped_task_no_synthesis(self):
+        """When any task is skipped, the run is not 'success' and the
+        markdown synthesis block stays empty — operators reading the
+        response don't get a misleadingly-complete summary."""
+        from towel.config import TowelConfig
+
+        class _FailDep:
+            async def dispatch_role_task(  # noqa: PLR0913
+                self, role, role_system, prompt, *,
+                session_id, max_tokens, temperature, with_tools,
+            ):
+                if role == "architect":
+                    raise RuntimeError("nope")
+                return f"{role}-result"
+
+        orch = Orchestrator(
+            TowelConfig(), dispatcher=_FailDep(), max_attempts=1,
+        )
+        tasks = [
+            AgentTask(role="architect", prompt="plan"),
+            AgentTask(role="coder", prompt="impl", depends_on=[0]),
+        ]
+        result = asyncio.run(orch.run("g", tasks))
+        assert not result.success
+        assert result.synthesis == ""
+
     def test_retry_max_attempts_floor_is_one(self):
         """max_attempts<=0 should clamp to 1 — orchestrator must always
         try at least once per subtask, never zero-attempts."""
