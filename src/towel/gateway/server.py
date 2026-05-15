@@ -680,9 +680,11 @@ class GatewayServer:
             )
         )
 
+        completed_normally = False
         try:
             msg = await asyncio.wait_for(queue.get(), timeout=5.0)
             if msg.get("type") == "job_done":
+                completed_normally = True
                 text = msg.get("result", {}).get("text", "").strip().lower()
                 for label in ("chat", "tool", "task"):
                     if label in text:
@@ -693,6 +695,23 @@ class GatewayServer:
             log.debug("Worker classification failed (%s), defaulting to task", exc)
             return "task"
         finally:
+            if not completed_normally:
+                # Same cancel-on-early-exit pattern as the inference
+                # paths — a 5s timeout that doesn't cancel the worker
+                # leaves it generating a classification nobody reads.
+                # The classify prompt asks for one word so the waste
+                # is small, but the principle is consistent.
+                try:
+                    await worker.ws.send(
+                        json.dumps(
+                            {"type": "cancel_job", "job_id": job_id, "session": "classify"}
+                        )
+                    )
+                except Exception as cancel_exc:
+                    log.debug(
+                        "Failed to send cancel_job (classify) to %s: %s",
+                        worker.id, cancel_exc,
+                    )
             self._job_queues.pop(job_id, None)
             self._workers.release(worker.id)
 
@@ -739,9 +758,11 @@ class GatewayServer:
             )
         )
 
+        completed_normally = False
         try:
             msg = await asyncio.wait_for(queue.get(), timeout=5.0)
             if msg.get("type") == "job_done":
+                completed_normally = True
                 text = msg.get("result", {}).get("text", "").strip().lower()
                 # Match against known task types
                 for task_type in TaskType:
@@ -752,6 +773,19 @@ class GatewayServer:
             log.debug("Task classification failed (%s)", exc)
             return None
         finally:
+            if not completed_normally:
+                # Same cancel-on-early-exit pattern (see _classify_on_worker).
+                try:
+                    await worker.ws.send(
+                        json.dumps(
+                            {"type": "cancel_job", "job_id": job_id, "session": "classify_task"}
+                        )
+                    )
+                except Exception as cancel_exc:
+                    log.debug(
+                        "Failed to send cancel_job (classify_task) to %s: %s",
+                        worker.id, cancel_exc,
+                    )
             self._job_queues.pop(job_id, None)
             self._workers.release(worker.id)
 
