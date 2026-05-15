@@ -96,13 +96,14 @@ def _make_dispatcher(
     session_pins: dict[str, str] | None = None,
     idle_task_workers: set[str] | None = None,
     preempt_hook=None,
+    node_tracker: Any = None,
 ) -> Dispatcher:
     return Dispatcher(
         workers=workers,
         node_dicts_builder=lambda: _node_dicts(workers, roles=roles, tasks=tasks),
         session_workers=session_workers if session_workers is not None else {},
         session_pins=session_pins if session_pins is not None else {},
-        node_tracker=None,
+        node_tracker=node_tracker,
         idle_task_predicate=lambda wid: wid in (idle_task_workers or set()),
         preempt_hook=preempt_hook,
     )
@@ -816,6 +817,42 @@ class TestAffinityMiss:
         decision = d.select_for_session("brand_new_session", intent="chat")
         assert decision.affinity_missed is False
         assert decision.previous_worker_id is None
+
+    def test_successful_affinity_does_not_set_previous_worker_id(self):
+        """Successful session_affinity (worker reachable AND holds the
+        context) means nothing was displaced — the session lands on
+        the same worker it was on before. Setting previous_worker_id
+        to the chosen worker_id (the prior bug) confused operators
+        reading /dispatch/recent into thinking a migration happened
+        when nothing moved. None correctly signals "no displacement";
+        affinity_missed=False already conveys the success state."""
+        from unittest.mock import MagicMock
+        workers = WorkerRegistry()
+        affinity = _make_worker(workers, "affinity-worker")
+        # Stub the NodeTracker so _has_context_loaded returns True
+        # (otherwise the dispatcher falls through to affinity_missed,
+        # which isn't the path we care about here).
+        node_tracker = MagicMock()
+        node = MagicMock()
+        # _has_context_loaded calls node.get_context_slot(session_id);
+        # returning a truthy value lands in the REASON_AFFINITY branch.
+        node.get_context_slot.return_value = MagicMock()
+        node_tracker.get.return_value = node
+        d = _make_dispatcher(
+            workers,
+            roles={"affinity-worker": [NodeRole.INFERENCE]},
+            session_workers={"s1": "affinity-worker"},
+            node_tracker=node_tracker,
+        )
+        decision = d.select_for_session("s1", intent="task")
+        assert decision.worker is affinity
+        assert decision.reason == "session_affinity"
+        assert decision.affinity_missed is False
+        # The key assertion: no displacement → no previous_worker_id.
+        assert decision.previous_worker_id is None, (
+            f"successful affinity set previous_worker_id="
+            f"{decision.previous_worker_id!r}; expected None"
+        )
 
     def test_affinity_miss_serializes_to_dict(self):
         workers = WorkerRegistry()

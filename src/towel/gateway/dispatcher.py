@@ -502,6 +502,15 @@ class Dispatcher:
             affinity_worker = self._workers.get(affinity_id)
             if affinity_worker and self._is_routable(affinity_worker):
                 if self._has_context_loaded(affinity_worker, session_id):
+                    # Successful affinity: the session lands on the SAME
+                    # worker it was on before. `previous_worker_id` is
+                    # meant to indicate displacement (a worker that was
+                    # bypassed or replaced) — leaving it equal to the
+                    # chosen worker_id confused operators reading
+                    # /dispatch/recent into thinking a migration had
+                    # happened when nothing actually moved. None is the
+                    # honest "no displacement" signal; affinity_missed=
+                    # False already conveys the success state.
                     return DispatchDecision(
                         worker=affinity_worker,
                         intent="task",
@@ -510,7 +519,7 @@ class Dispatcher:
                         notes=f"context loaded on worker {affinity_id}",
                         candidates_considered=1,
                         session_id=session_id,
-                        previous_worker_id=affinity_id,
+                        previous_worker_id=None,
                         pin_missed=pin_missed,
                         pinned_worker_id=pinned_id if pin_missed else None,
                     )
