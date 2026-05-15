@@ -1267,6 +1267,44 @@ class TestConversationsAPI:
                 f"unsafe char {forbidden!r} in filename payload {payload!r}"
             )
 
+    def test_export_filename_uses_conversation_title_when_set(
+        self, store, client,
+    ):
+        """If the conversation has a title, the export filename
+        should use it instead of the session_id. "towel-How-to-
+        deploy.md" is far more useful than "towel-openai-chatcmp.md"
+        for a saved file the operator wants to find later."""
+        conv = Conversation(id="openai-chatcmpl-abc123def", channel="api")
+        conv.title = "How to deploy"
+        conv.add(Role.USER, "hi")
+        store.save(conv)
+
+        resp = client.get(
+            "/conversations/openai-chatcmpl-abc123def/export?format=markdown"
+        )
+        assert resp.status_code == 200
+        cd = resp.headers["content-disposition"]
+        # Filename uses the title (spaces → hyphens, alphanumerics +
+        # -_ preserved). The session_id doesn't appear because the
+        # title takes precedence.
+        assert "How-to-deploy" in cd
+        assert "openai-chatcmpl" not in cd
+
+    def test_export_filename_falls_back_to_conv_id_when_no_title(
+        self, store, client,
+    ):
+        """Without a title, the filename stem is the sanitized
+        session_id — keeps the previous behaviour for untitled
+        conversations."""
+        conv = Conversation(id="raw-id-here", channel="api")
+        # No title set.
+        conv.add(Role.USER, "hi")
+        store.save(conv)
+
+        resp = client.get("/conversations/raw-id-here/export?format=markdown")
+        cd = resp.headers["content-disposition"]
+        assert "raw-id-here" in cd
+
 
 class TestSearch:
     """`/search` walks the conversation archive matching `?q=` against

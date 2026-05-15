@@ -5509,18 +5509,26 @@ class GatewayServer:
                 media_type = "text/markdown"
                 ext = "md"
 
-            # Sanitize conv_id for the Content-Disposition filename.
-            # Session IDs may include `"` (the simple_ask validator
-            # only rejects control chars + ≥257 chars), and an
-            # unescaped quote breaks the filename="..." quoting —
-            # browsers truncate at the inner quote and lose the
-            # extension. Same alnum-only rule as the store path
-            # sanitizer (persistence/store.py _path_for); safe by
-            # construction.
-            safe_conv = "".join(
-                c for c in conv_id if c.isalnum() or c in "-_"
-            ) or "conversation"
-            filename = f"towel-{safe_conv[:16]}.{ext}"
+            # Sanitize for the Content-Disposition filename. Session
+            # IDs may include `"` (the simple_ask validator only
+            # rejects control chars + ≥257 chars), and an unescaped
+            # quote breaks the filename="..." quoting — browsers
+            # truncate at the inner quote and lose the extension.
+            # Same alnum-only rule as the store path sanitizer
+            # (persistence/store.py _path_for); safe by construction.
+            #
+            # Prefer the conversation's title when set — "towel-How-
+            # to-deploy.md" is more meaningful than the typical
+            # session_id ("towel-openai-chatcmp.md"). Falls back to
+            # the sanitized session_id when no title exists, then
+            # to "conversation" if both sanitize to empty.
+            def _safe(s: str) -> str:
+                return "".join(c for c in s if c.isalnum() or c in "-_")
+
+            title_safe = _safe((conv.title or "").replace(" ", "-"))
+            conv_safe = _safe(conv_id)
+            stem = title_safe or conv_safe or "conversation"
+            filename = f"towel-{stem[:32]}.{ext}"
             return Response(
                 content,
                 media_type=media_type,
