@@ -303,3 +303,87 @@ class TestGatewayRename:
             )
             assert resp.status_code == 400, f"accepted bad title {bad!r}"
             assert "control" in resp.json()["error"].lower()
+
+
+class TestAutoTitleHelper:
+    """Auto-title helper must fire for both WS and HTTP entry points so
+    api-channel conversations don't render as blank rows in the
+    conversations list. Previously only the WS path titled — every
+    /api/ask session shipped with title="" on disk."""
+
+    def _make_gateway(self, tmp_path):
+        from towel.agent.runtime import AgentRuntime
+        from towel.config import TowelConfig
+        from towel.gateway.server import GatewayServer
+        from towel.gateway.sessions import SessionManager
+
+        store = ConversationStore(store_dir=tmp_path)
+        config = TowelConfig()
+        agent = AgentRuntime(config)
+        return GatewayServer(
+            config=config, agent=agent, sessions=SessionManager(store=store),
+        )
+
+    def test_helper_sets_title_after_first_exchange(self, tmp_path):
+        gw = self._make_gateway(tmp_path)
+        session = gw.sessions.get_or_create("auto-title-sess")
+        session.conversation.add(Role.USER, "Explain monad transformers please")
+        session.conversation.add(Role.ASSISTANT, "Sure...")
+
+        gw._maybe_set_auto_title(session)
+
+        assert session.conversation.title  # non-empty
+        # Generated from the user message, not the assistant reply.
+        # `generate_title` strips stop-words so the result will pick
+        # nouns like "monad" / "transformers".
+        lower = session.conversation.title.lower()
+        assert "monad" in lower or "transformers" in lower
+
+    def test_helper_no_op_when_title_already_set(self, tmp_path):
+        gw = self._make_gateway(tmp_path)
+        session = gw.sessions.get_or_create("preserved-title-sess")
+        session.conversation.title = "Hand-picked title"
+        session.conversation.add(Role.USER, "Something boring")
+        session.conversation.add(Role.ASSISTANT, "...")
+
+        gw._maybe_set_auto_title(session)
+
+        assert session.conversation.title == "Hand-picked title"
+
+    def test_helper_no_op_before_full_exchange(self, tmp_path):
+        """Before the assistant has replied (only one message), there's
+        nothing to title from — must stay empty so the next save
+        doesn't lock in a half-baked title."""
+        gw = self._make_gateway(tmp_path)
+        session = gw.sessions.get_or_create("partial-sess")
+        session.conversation.add(Role.USER, "Just one user message")
+
+        gw._maybe_set_auto_title(session)
+
+        assert session.conversation.title == ""
+
+    def test_helper_used_in_simple_ask_flow(self, tmp_path):
+        """Integration: /api/ask path constructs a session with a user
+        message + an assistant response (even an error one from a
+        broken model) and saves. The helper runs just before save
+        so the persisted shape carries a title."""
+        from starlette.testclient import TestClient
+
+        gw = self._make_gateway(tmp_path)
+        client = TestClient(gw._build_http_app())
+        # Drive a /api/ask request — the agent has no model loaded, so
+        # the call will fail mid-step, but the session gets created
+        # with the user message + (depending on path) an error reply.
+        # Even if the helper sees only 1 message it must safely no-op
+        # and not crash.
+        client.post(
+            "/api/ask",
+            json={"message": "How does deque rotate work in python?",
+                  "session_id": "auto-title-integration"},
+        )
+        session = gw.sessions.get_or_create("auto-title-integration")
+        # The user message must be there; assistant response may or
+        # may not have been appended depending on which exception path
+        # fired. Verify the helper at least didn't crash.
+        roles = [m.role for m in session.conversation.messages]
+        assert Role.USER in roles

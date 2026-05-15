@@ -480,21 +480,8 @@ class GatewayServer:
                             )
                         )
 
-                    # Auto-title after first exchange
-                    if not session.conversation.title and len(session.conversation) >= 2:
-                        from towel.agent.titler import generate_title
-
-                        first_user = next(
-                            (
-                                m.content
-                                for m in session.conversation.messages
-                                if m.role == Role.USER
-                            ),
-                            "",
-                        )
-                        title = generate_title(first_user)
-                        if title:
-                            session.conversation.title = title
+                    # Auto-title after first exchange.
+                    self._maybe_set_auto_title(session)
 
                     # Persist conversation after each exchange
                     self.sessions.save(session_id)
@@ -870,6 +857,36 @@ class GatewayServer:
                 *conv_dict["messages"],
             ],
         }
+
+    def _maybe_set_auto_title(self, session: Any) -> None:
+        """Generate and stamp a title on a session that doesn't have one.
+
+        Shared between the WebSocket path and HTTP entry points
+        (/api/ask) so api-channel conversations get the same
+        auto-titling as chat-channel ones. Previously only the WS
+        path titled — every /api/ask session ended up with title=""
+        on disk and the conversations list rendered them blank.
+
+        Safe to call repeatedly: only generates when title is empty
+        AND there's at least one full exchange to title from.
+        """
+        if session.conversation.title:
+            return
+        if len(session.conversation) < 2:
+            return
+        from towel.agent.titler import generate_title
+
+        first_user = next(
+            (
+                m.content
+                for m in session.conversation.messages
+                if m.role == Role.USER
+            ),
+            "",
+        )
+        title = generate_title(first_user)
+        if title:
+            session.conversation.title = title
 
     def _pick_alternate_chat_worker(
         self, exclude: set[str]
@@ -4284,6 +4301,11 @@ class GatewayServer:
                 else:
                     response = await self.agent.step(session.conversation)
                     session.conversation.messages.append(response)
+                # Auto-title parity with the WS path so api-channel
+                # conversations don't end up with title="" on disk —
+                # which was making every /api/ask session render as a
+                # blank row in the conversations list.
+                self._maybe_set_auto_title(session)
                 self.sessions.save(session_id)
 
                 # Surface timing data when the worker reported it.
