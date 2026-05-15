@@ -65,6 +65,20 @@ REASON_NO_WORKERS = "no_workers_available"
 # the request (or didn't).
 REASON_RETRY_EMPTY = "retry_empty_text"
 
+# Recorded when /api/ask (or another endpoint) opted into the
+# ensemble collaboration mode. The individual per-worker fan-out
+# decisions are tracked under ephemeral _ens_<...> session_ids;
+# this aggregate captures the operator-visible session that
+# triggered the run so /dispatch/recent has one entry per user
+# request rather than only the ephemeral fan-outs (which are
+# hidden by default — see the dispatch_recent endpoint).
+REASON_ENSEMBLE = "ensemble"
+
+# Recorded when verify=true ran a second-worker review after the
+# primary returned. Symmetric to REASON_ENSEMBLE for the sequential
+# collaboration mode.
+REASON_VERIFY = "verify"
+
 
 @dataclass
 class DispatchDecision:
@@ -616,6 +630,65 @@ class Dispatcher:
             if d.session_id == session_id:
                 return d
         return None
+
+    def record_ensemble(
+        self,
+        session_id: str,
+        contributions: list[dict[str, Any]],
+        arbitration_mode: str,
+    ) -> DispatchDecision:
+        """Log an ensemble run as an aggregate dispatch decision.
+
+        The fan-out workers each get their own decisions under
+        ephemeral session_ids (hidden from /dispatch/recent by
+        default). This top-level entry surfaces under the user's
+        actual session_id so the operator can see "session X ran
+        ensemble" alongside other dispatch events.
+        """
+        contributing = [c.get("worker_id", "?") for c in contributions if c.get("answer")]
+        decision = DispatchDecision(
+            worker=None,
+            intent="task",
+            reason=REASON_ENSEMBLE,
+            notes=(
+                f"ensemble: {arbitration_mode} "
+                f"({len(contributing)}/{len(contributions)} answered: "
+                f"{', '.join(contributing)})"
+            ),
+            session_id=session_id,
+            candidates_considered=len(contributions),
+        )
+        self._record(decision)
+        return decision
+
+    def record_verify(
+        self,
+        session_id: str,
+        verifier_id: str,
+        primary_id: str,
+        was_corrected: bool,
+    ) -> DispatchDecision:
+        """Log a verify pass as an aggregate dispatch decision.
+
+        Symmetric to record_ensemble for the sequential mode. The
+        primary's own dispatch decision was recorded normally; this
+        adds an entry showing the verifier ran and whether it
+        corrected the primary.
+        """
+        decision = DispatchDecision(
+            worker=None,
+            intent="task",
+            reason=REASON_VERIFY,
+            notes=(
+                f"verify: primary={primary_id} verifier={verifier_id} "
+                f"{'corrected' if was_corrected else 'confirmed'}"
+            ),
+            session_id=session_id,
+            previous_worker_id=primary_id,
+            candidates_considered=2,
+        )
+        self._record(decision)
+        return decision
 
     def record_retry(
         self,

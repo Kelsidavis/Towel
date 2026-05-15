@@ -5161,6 +5161,26 @@ class GatewayServer:
                             identity_override=identity_override,
                         )
                     )
+                    # Aggregate dispatch entry so the operator sees
+                    # "session X ran ensemble (mode, N workers)" in
+                    # /dispatch/recent next to other dispatch events
+                    # — the per-worker fan-out decisions live under
+                    # the ephemeral _ens_* ids that the recent view
+                    # hides by default.
+                    if (
+                        ensemble_contributions
+                        and self._dispatcher is not None
+                    ):
+                        try:
+                            self._dispatcher.record_ensemble(
+                                session_id=session_id,
+                                contributions=ensemble_contributions,
+                                arbitration_mode=ensemble_arb_mode,
+                            )
+                        except Exception as exc:
+                            log.debug(
+                                "Failed to record ensemble dispatch: %s", exc,
+                            )
                     if arbitrated:
                         from towel.agent.conversation import Message as _Message
                         response = _Message(
@@ -5392,6 +5412,23 @@ class GatewayServer:
                             )
                         )
                         verified_by = verifier_id
+                        # Aggregate dispatch entry — see record_ensemble
+                        # comment for the same pattern.
+                        if (
+                            verifier_id is not None
+                            and self._dispatcher is not None
+                        ):
+                            try:
+                                self._dispatcher.record_verify(
+                                    session_id=session_id,
+                                    verifier_id=verifier_id,
+                                    primary_id=worker.id,
+                                    was_corrected=was_corrected,
+                                )
+                            except Exception as exc:
+                                log.debug(
+                                    "Failed to record verify dispatch: %s", exc,
+                                )
                         if was_corrected and final_answer != response.content:
                             log.info(
                                 "Verifier %s corrected primary %s answer for session %s",

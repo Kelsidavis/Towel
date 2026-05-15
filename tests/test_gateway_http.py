@@ -839,6 +839,96 @@ class TestDispatchRecentEphemeralFilter:
         )
         gateway._dispatcher._history.append(d)
 
+    def test_ensemble_records_aggregate_dispatch_entry(self, gateway, client):
+        """When ensemble runs, an aggregate dispatch entry is
+        recorded under the USER session_id (not the ephemeral
+        per-worker ids) so operators see a single 'ensemble ran for
+        session X' entry alongside other dispatch events."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "a", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "b", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            return Message(
+                role=Role.ASSISTANT, content=f"answer from {worker.id}",
+                metadata={"remote_worker": worker.id, "tokens": 5, "tps": 5.0},
+            )
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "q", "session_id": "ens-dispatch", "ensemble": True},
+        )
+        assert resp.status_code == 200
+
+        # Find the ensemble entry under the user's session_id.
+        agg = client.get("/dispatch/recent?session=ens-dispatch").json()
+        decisions = agg["decisions"]
+        ensemble_entries = [d for d in decisions if d.get("reason") == "ensemble"]
+        assert len(ensemble_entries) == 1, decisions
+        entry = ensemble_entries[0]
+        assert "2/2 answered" in entry["notes"]
+
+    def test_verify_records_aggregate_dispatch_entry(self, gateway, client):
+        """Symmetric to the ensemble case — verify pass records an
+        aggregate 'verify' entry under the user's session_id."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "primary", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"], "tools": False},
+        )
+        gateway._workers.register(
+            "verifier", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"], "tools": False},
+        )
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            if session_id.startswith("_verify_"):
+                return Message(
+                    role=Role.ASSISTANT,
+                    content="VERIFIED",
+                    metadata={"remote_worker": worker.id, "tokens": 1, "tps": 5.0},
+                )
+            msg = Message(
+                role=Role.ASSISTANT, content="primary",
+                metadata={"remote_worker": worker.id, "tokens": 1, "tps": 5.0},
+            )
+            session.conversation.messages.append(msg)
+            return msg
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        async def fake_route(_msg, _sid):
+            return gateway._workers.get("primary"), "chat"
+
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "q", "session_id": "ver-dispatch", "verify": True},
+        )
+        assert resp.status_code == 200
+
+        agg = client.get("/dispatch/recent?session=ver-dispatch").json()
+        verify_entries = [d for d in agg["decisions"] if d.get("reason") == "verify"]
+        assert len(verify_entries) == 1
+        entry = verify_entries[0]
+        assert entry["previous_worker_id"] == "primary"
+        assert "confirmed" in entry["notes"]
+
     def test_ephemeral_sessions_hidden_by_default(self, gateway, client):
         # Mix user-facing and ephemeral session ids.
         self._record_decision(gateway, "user-session-1")
