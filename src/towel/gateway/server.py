@@ -579,6 +579,11 @@ class GatewayServer:
                     # save() at the bottom got skipped when the
                     # inference call raised.
                     try:
+                        # Track the ensemble-fell-through case so the
+                        # eventual single-worker response can surface
+                        # `ensemble_skipped` in metadata — parity with
+                        # /api/ask's response shape.
+                        ensemble_skip_reason: str | None = None
                         # Ensemble short-circuit (non-streaming only):
                         # fan out, synthesize, send one response event.
                         # Streaming clients fall through to the normal
@@ -645,6 +650,15 @@ class GatewayServer:
                             # Ensemble produced nothing useful — fall
                             # through to the normal single-worker
                             # path so the user isn't left empty-handed.
+                            # Capture the reason so the eventual
+                            # single-worker response metadata can
+                            # carry `ensemble_skipped`. Matches the
+                            # /api/ask body's reason text exactly.
+                            ensemble_skip_reason = (
+                                "no idle workers available"
+                                if not _contribs
+                                else "all workers tool-looped"
+                            )
                         worker, intent = await self._route_by_role(content, session_id)
                         if stream:
                             if worker:
@@ -773,6 +787,15 @@ class GatewayServer:
                                         "primary returned no usable text; "
                                         "nothing to verify"
                                     ),
+                                }
+                            # Surface ensemble fall-through (set when
+                            # ensemble_flag was on but _ensemble_dispatch
+                            # returned no arbitrated answer). Parity
+                            # with /api/ask's ensemble_skipped field.
+                            if ensemble_skip_reason is not None:
+                                response.metadata = (response.metadata or {}) | {
+                                    "ensemble_skipped": True,
+                                    "ensemble_skip_reason": ensemble_skip_reason,
                                 }
                             await ws.send(
                                 json.dumps(

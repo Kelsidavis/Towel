@@ -1634,6 +1634,23 @@ class TestDispatchRecentEphemeralFilter:
         # The log message points operators at the fix (stream=false).
         assert "stream=false" in src
 
+    def test_ws_ensemble_skipped_surfaced_in_metadata(self):
+        """Parity with /api/ask's ensemble_skipped field: when
+        ensemble=true was set on a WS message but _ensemble_dispatch
+        returned no arbitrated answer (no candidates / all empty),
+        the WS response metadata now carries `ensemble_skipped` +
+        `ensemble_skip_reason` so client UIs render the same "ensemble
+        attempted but couldn't run" badge."""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._handle_ws)
+        assert "ensemble_skipped" in src
+        # Both reason variants are present.
+        assert "no idle workers available" in src
+        assert "all workers tool-looped" in src
+
     def test_ws_verify_skipped_surfaced_in_metadata(self):
         """Parity with /api/ask's verify_skipped response field: when
         verify=true was set on a WS message but the verify pass
