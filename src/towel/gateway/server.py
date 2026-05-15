@@ -1340,7 +1340,18 @@ class GatewayServer:
             best = max(real_answers, key=lambda c: len(c["answer"]))
             return best["answer"], contributions, "consensus"
 
-        synthesized = await self._synthesize_ensemble(question, real_answers)
+        # Track synthesis timing so the response can surface how long
+        # the local-agent arbitration took. Stuffed into each
+        # contribution so it travels with the other timing info.
+        synth_timing: dict[str, Any] = {}
+        synthesized = await self._synthesize_ensemble(
+            question, real_answers, timing_sink=synth_timing,
+        )
+        # Tag every contribution with the synthesis time so the
+        # caller has it next to the per-worker `ms` values.
+        if "synthesis_ms" in synth_timing:
+            for c in contributions:
+                c["synthesis_ms"] = synth_timing["synthesis_ms"]
         if synthesized:
             return synthesized, contributions, "synthesis"
         # Synthesis fell through (local agent unavailable, error, or
@@ -1353,6 +1364,7 @@ class GatewayServer:
         self,
         question: str,
         contributions: list[dict[str, Any]],
+        timing_sink: dict[str, Any] | None = None,
     ) -> str:
         """Reconcile N worker answers into one via the local agent.
 
@@ -1400,7 +1412,13 @@ class GatewayServer:
             # keep only the prose.
             from towel.agent.tool_parser import parse_tool_calls
 
+            import time as _time
+            t0 = _time.monotonic()
             result = await self.agent.generate(synth_conv)
+            if timing_sink is not None:
+                timing_sink["synthesis_ms"] = round(
+                    (_time.monotonic() - t0) * 1000.0, 1,
+                )
             _tool_calls, remaining_text = parse_tool_calls(result.text)
             return (remaining_text or "").strip()
         except Exception as exc:

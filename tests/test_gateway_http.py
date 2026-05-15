@@ -1199,6 +1199,63 @@ class TestSimpleAskAPI:
                 f"worker {wid} missing latest turn: {hist}"
             )
 
+    def test_ask_ensemble_synthesis_timing_in_contributions(
+        self, gateway, client,
+    ):
+        """When synthesis runs, every contribution gets a
+        `synthesis_ms` field so the caller can see how long the
+        local-agent arbitration took alongside the per-worker
+        timings. Operators investigating slow ensemble runs need
+        this to attribute latency."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+        from towel.agent.runtime import GenerationResult
+
+        gateway._workers.register(
+            "a", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "b", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        # Divergent answers → synthesis path fires.
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            answers = {
+                "a": "Trees photosynthesize using sunlight.",
+                "b": "Cars use gasoline as fuel.",
+            }
+            return Message(
+                role=Role.ASSISTANT, content=answers[worker.id],
+                metadata={"remote_worker": worker.id, "tokens": 5, "tps": 5.0},
+            )
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        # Stub generate so synthesis returns a known answer quickly.
+        async def fake_generate(conv):
+            return GenerationResult(
+                text="Synthesized answer.",
+                tokens_per_second=10.0, total_tokens=4,
+            )
+
+        gateway.agent.generate = fake_generate  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "q", "session_id": "ens-time", "ensemble": True},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body.get("ensemble_arbitration") == "synthesis"
+        # Every contribution carries the synthesis_ms timing.
+        for c in body["ensemble_contributions"]:
+            assert "synthesis_ms" in c
+            assert isinstance(c["synthesis_ms"], (int, float))
+            assert c["synthesis_ms"] >= 0
+
     def test_ask_ensemble_arbitration_mode_surfaces_in_response(
         self, gateway, client,
     ):
