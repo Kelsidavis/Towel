@@ -100,6 +100,23 @@ def build_sse_routes(agent: Any, config: Any) -> list[Route]:
                     }
                     yield f"data: {json.dumps(payload)}\n\n"
 
+                elif event.type == EventType.CANCELLED:
+                    # Parity with the POST stream handler — surface
+                    # cancellation explicitly so the client sees the
+                    # reason instead of an unexplained early-end on
+                    # an SSE stream that otherwise just terminates
+                    # at [DONE]. EventSource clients keying on
+                    # `type === 'cancelled'` to clear loading
+                    # indicators were getting no signal at all
+                    # before, only the closing [DONE].
+                    payload = {
+                        'type': 'cancelled',
+                        'reason': event.data.get(
+                            'metadata', {}
+                        ).get('reason', 'user_cancelled'),
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
+
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(

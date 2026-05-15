@@ -75,7 +75,9 @@ class TestStreamPostEventCoverage:
 
 class TestStreamGetEventCoverage:
     """The GET /v1/stream handler also needs the same coverage —
-    it already had it but lock that in so it doesn't regress."""
+    EventSource clients reading from /v1/stream?prompt=... need the
+    same failure/cancel signals POST clients get, otherwise a
+    cancelled run looks like a normal finish to the GET caller."""
 
     def test_handles_token_events(self):
         src = _stream_get_source()
@@ -84,3 +86,22 @@ class TestStreamGetEventCoverage:
     def test_handles_error_events(self):
         src = _stream_get_source()
         assert "EventType.ERROR" in src
+
+    def test_handles_cancelled_events(self):
+        """The GET handler used to drop CANCELLED silently — the
+        SSE stream just ended at [DONE] when a user cancelled mid-
+        generation. EventSource clients keying on
+        `type === 'cancelled'` to clear loading indicators were
+        getting no signal. Confirm the branch and payload exist
+        for parity with POST."""
+        src = _stream_get_source()
+        assert "EventType.CANCELLED" in src
+        assert "'type': 'cancelled'" in src or "\"type\": \"cancelled\"" in src
+
+    def test_handles_response_complete_events(self):
+        """RESPONSE_COMPLETE is the normal success terminator —
+        without the branch the GET handler would never emit the
+        `done` payload that EventSource clients use to flush the
+        accumulated content."""
+        src = _stream_get_source()
+        assert "EventType.RESPONSE_COMPLETE" in src
