@@ -404,6 +404,36 @@ class TestRemoteExecution:
         assert not worker.busy
 
     @pytest.mark.asyncio
+    async def test_quick_remote_infer_timeout_surfaces_useful_error(self, gateway):
+        """`asyncio.TimeoutError` stringifies to "" — without an explicit
+        catch the caller (simple_ask) returns `{"error": ""}` HTTP 500
+        with no indication the worker timed out. Convert it to a
+        RuntimeError carrying the worker id and the timeout."""
+        session = gateway.sessions.get_or_create("timeout-sess")
+        session.conversation.add(Role.USER, "hi")
+        worker_ws = DummyWS()
+        worker = gateway._workers.register("slow-worker", worker_ws, {"tools": False})
+
+        # Patch the wait_for timeout down so the test doesn't actually
+        # block for 60s.
+        import asyncio as _asyncio
+        from unittest.mock import patch
+
+        orig_wait_for = _asyncio.wait_for
+
+        async def fast_timeout(awaitable, timeout):
+            return await orig_wait_for(awaitable, 0.05)
+
+        with patch("asyncio.wait_for", fast_timeout):
+            with pytest.raises(RuntimeError) as exc:
+                await gateway._quick_remote_infer("timeout-sess", session, worker)
+        msg = str(exc.value)
+        assert "slow-worker" in msg
+        assert "60s" in msg or "did not respond" in msg
+        # Worker assignment must be released even after the timeout.
+        assert worker.busy is False
+
+    @pytest.mark.asyncio
     async def test_remote_generate_injects_coordinator_memory(self, gateway):
         """The "run" payload must include a synthetic system message
         carrying coordinator-side memory. Workers have empty memory

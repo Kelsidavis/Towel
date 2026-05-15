@@ -920,7 +920,17 @@ class GatewayServer:
         )
 
         try:
-            msg = await asyncio.wait_for(queue.get(), timeout=60.0)
+            try:
+                msg = await asyncio.wait_for(queue.get(), timeout=60.0)
+            except (asyncio.TimeoutError, TimeoutError) as exc:
+                # asyncio.TimeoutError stringifies to "" — bubble up a
+                # message the API caller can actually act on. Otherwise
+                # simple_ask's generic except returns
+                # `{"error": ""}` HTTP 500 with no indication that
+                # the worker timed out.
+                raise RuntimeError(
+                    f"worker {worker.id} did not respond within 60s"
+                ) from exc
             if msg.get("type") == "job_done":
                 result = msg.get("result", {}) or {}
                 text = result.get("text", "")
