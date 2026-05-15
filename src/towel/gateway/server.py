@@ -1004,6 +1004,14 @@ class GatewayServer:
         )
 
         if decision.worker is not None:
+            # If this session was previously affinitied to a different
+            # worker, close the slot on the old worker — otherwise the
+            # old slot persists indefinitely on a worker that no longer
+            # owns this session. Same leak class as the delete path
+            # (see commit 6ca89a0).
+            prior = self._session_workers.get(session_id)
+            if prior is not None and prior != decision.worker.id:
+                self._node_tracker.close_context_slot(prior, session_id)
             self._session_workers[session_id] = decision.worker.id
             return decision.worker, decision.intent
 
@@ -1224,6 +1232,13 @@ class GatewayServer:
         if not self._workers.get(worker_id):
             return False
         self._session_pins[session_id] = worker_id
+        # If the session was previously affinitied to a different
+        # worker, close the slot on the old worker — otherwise the
+        # slot persists indefinitely on a worker that no longer owns
+        # this session. Same fix as _route_by_role's migration path.
+        prior = self._session_workers.get(session_id)
+        if prior is not None and prior != worker_id:
+            self._node_tracker.close_context_slot(prior, session_id)
         self._session_workers[session_id] = worker_id
         self.sessions.get_or_create(session_id)
         self._save_pins()

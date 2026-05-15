@@ -771,3 +771,84 @@ class TestRemoteExecution:
         assert client_ws.sent[1]["type"] == "response_complete"
         assert session.conversation.last is not None
         assert session.conversation.last.content == "hello there"
+
+
+class TestSessionWorkerMigration:
+    """When a session's affinity moves to a new worker, the old
+    worker's NodeTracker context slot must be closed too. Without
+    this, ghost slots accumulate every time the dispatcher migrates
+    a session — same leak class as the delete path (6ca89a0)."""
+
+    @pytest.mark.asyncio
+    async def test_route_by_role_closes_old_slot_on_migration(self, gateway):
+        # Register two real workers in both the registry and the
+        # tracker.
+        caps_a = {
+            "backend": "llama", "modes": ["llama_chat"],
+            "context_window": 8192, "max_tokens": 4096,
+            "total_vram_mb": 16000,
+            "resources": {"hostname": "node-a", "ram_total_mb": 32000},
+        }
+        caps_b = {
+            "backend": "llama", "modes": ["llama_chat"],
+            "context_window": 8192, "max_tokens": 4096,
+            "total_vram_mb": 16000,
+            "resources": {"hostname": "node-b", "ram_total_mb": 32000},
+        }
+        gateway._workers.register("node-a", DummyWS(), caps_a)
+        gateway._workers.register("node-b", DummyWS(), caps_b)
+        gateway._node_tracker.register("node-a", caps_a)
+        gateway._node_tracker.register("node-b", caps_b)
+
+        # Pre-existing affinity: session is on node-a with an open
+        # context slot.
+        gateway._session_workers["migrating"] = "node-a"
+        gateway._node_tracker.open_context_slot("node-a", "migrating", 100)
+
+        # Pin to node-b so the dispatcher chooses it (forces migration).
+        gateway.pin_session_worker("migrating", "node-b")
+
+        # Trigger a route — the dispatcher now picks node-b.
+        worker, _intent = await gateway._route_by_role("hi", "migrating")
+        assert worker is not None
+        assert worker.id == "node-b"
+        assert gateway._session_workers["migrating"] == "node-b"
+
+        # Critical: the slot on node-a is gone (no ghost).
+        node_a = gateway._node_tracker.get("node-a")
+        assert node_a is not None
+        assert node_a.get_context_slot("migrating") is None
+
+    @pytest.mark.asyncio
+    async def test_route_by_role_keeps_slot_if_same_worker(self, gateway):
+        """When the dispatcher picks the SAME worker the session was
+        on, the slot must NOT be touched — closing-then-reopening
+        churns the slot's `created_at` timestamp and loses the real
+        history of when the context first loaded."""
+        caps_a = {
+            "backend": "llama", "modes": ["llama_chat"],
+            "context_window": 8192, "max_tokens": 4096,
+            "total_vram_mb": 16000,
+            "resources": {"hostname": "node-a", "ram_total_mb": 32000},
+        }
+        gateway._workers.register("node-a", DummyWS(), caps_a)
+        gateway._node_tracker.register("node-a", caps_a)
+
+        gateway._session_workers["sticky"] = "node-a"
+        gateway._node_tracker.open_context_slot("node-a", "sticky", 100)
+        original_slot = gateway._node_tracker.get("node-a").get_context_slot(
+            "sticky",
+        )
+        original_created = original_slot.created_at
+
+        # Pin to the same worker so the route returns node-a again.
+        gateway.pin_session_worker("sticky", "node-a")
+        worker, _intent = await gateway._route_by_role("hi", "sticky")
+        assert worker is not None
+        assert worker.id == "node-a"
+
+        # Slot still exists with the original created_at.
+        node = gateway._node_tracker.get("node-a")
+        slot = node.get_context_slot("sticky")
+        assert slot is not None
+        assert slot.created_at == original_created
