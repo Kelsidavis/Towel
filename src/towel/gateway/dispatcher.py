@@ -402,9 +402,16 @@ class Dispatcher:
         same task type as ``task``, AND has smaller total_vram_mb
         than ``picked``. Returns None when no such worker exists —
         the original picked worker is fine to use.
+
+        Uses ``_safe_int`` for the same crash-class reason the
+        capability fields in roles.py get coerced — a worker
+        reporting ``total_vram_mb`` as a non-numeric value would
+        otherwise crash ``int(...)`` deep in this preempt path
+        and 500 the user request that triggered the dispatch.
         """
-        picked_vram = int(
-            (picked.capabilities or {}).get("total_vram_mb") or 0
+        from towel.nodes.capability import _safe_int
+        picked_vram = _safe_int(
+            (picked.capabilities or {}).get("total_vram_mb")
         )
         for w in self._workers.list():
             if w.id in excluded or w.id == picked.id:
@@ -418,7 +425,7 @@ class Dispatcher:
                 # Worker isn't allowed this task type even if it
                 # weren't busy — don't preempt for nothing.
                 continue
-            w_vram = int(caps.get("total_vram_mb") or 0)
+            w_vram = _safe_int(caps.get("total_vram_mb"))
             # Strictly smaller, with a hard floor so a 0-vram
             # worker (no GPU advertised) doesn't beat anything.
             if 0 < w_vram < picked_vram:

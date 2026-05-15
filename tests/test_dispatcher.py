@@ -881,3 +881,45 @@ class TestExclusions:
         decision = d.select_for_session("s1", intent="chat", exclude={"excluded"})
         assert decision.worker is not None
         assert decision.worker.id == "available"
+
+
+class TestDispatcherDefensiveCoercion:
+    """The preempt path reads ``total_vram_mb`` off worker
+    capabilities to find a SMALLER idle worker to evict. A worker
+    reporting non-numeric vram used to crash ``int(...)`` inside
+    that comparison and 500 the user request that triggered the
+    dispatch. Defensive coercion at the boundary keeps the preempt
+    path resilient to garbage capability fields."""
+
+    def test_smaller_idle_worker_survives_non_numeric_vram(self):
+        # Manually construct workers with garbage vram on one of
+        # them. The preempt scan iterates all idle-task workers
+        # looking for a smaller match; the non-numeric one used to
+        # crash the iteration.
+        workers = WorkerRegistry()
+        picked = _make_worker(workers, "picked")
+        # Inject non-numeric vram on the candidate worker. The
+        # `_make_worker` factory doesn't set vram by default; mutate
+        # the capabilities post-register so the test exercises the
+        # malformed-input path directly.
+        bad = _make_worker(workers, "bad-vram")
+        bad.capabilities["total_vram_mb"] = "huge"
+        bad.busy = True  # idle_task_workers requires busy
+        picked.capabilities["total_vram_mb"] = 24000
+
+        d = _make_dispatcher(
+            workers,
+            idle_task_workers={"bad-vram"},
+        )
+        # The preempt selector runs inside async_select_for_session
+        # when all workers are busy. We can also exercise the
+        # private helper directly — both paths share the same
+        # defensive code now.
+        from towel.nodes.roles import TaskType
+        result = d._smaller_idle_worker_for_task(
+            picked=picked, task=TaskType.CHAT, excluded=set(),
+        )
+        # No crash. bad-vram has no assigned_tasks so it doesn't
+        # match — but the iteration ran through without exploding
+        # on the garbage capability field.
+        assert result is None

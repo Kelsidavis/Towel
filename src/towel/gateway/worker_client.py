@@ -637,8 +637,17 @@ def default_worker_capabilities(
     # needs ≈ 0.6 GB per billion params; we leave 50% headroom for the
     # KV cache and activations. RAM-only nodes can still run small CPU
     # models, just slower.
-    vram_mb = int(caps.get("total_vram_mb") or 0)
-    ram_mb = int((caps.get("resources") or {}).get("ram_total_mb") or 0)
+    #
+    # Defensive coercion: capabilities here are built from local
+    # probes (psutil, mlx, llama.cpp etc.), and a probe failing in
+    # an unexpected way could return a non-numeric value. Crashing
+    # ``int("garbage")`` here would prevent the worker from
+    # registering at all — and a worker with no max_param_b_est
+    # is preferable to a worker that never connects.
+    _vram_raw = caps.get("total_vram_mb") or 0
+    vram_mb = int(_vram_raw) if isinstance(_vram_raw, (int, float)) else 0
+    _ram_raw = (caps.get("resources") or {}).get("ram_total_mb") or 0
+    ram_mb = int(_ram_raw) if isinstance(_ram_raw, (int, float)) else 0
     # Prefer VRAM where it exists; fall back to half of system RAM.
     usable_mb = vram_mb if vram_mb else (ram_mb // 2)
     if usable_mb:
