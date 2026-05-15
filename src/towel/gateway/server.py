@@ -2521,10 +2521,20 @@ class GatewayServer:
 
         # Collect result in background — don't block
         async def _collect() -> None:
+            # Use the same ``worker_inference_timeout`` config knob the
+            # other long-wait queue paths read (iter_remote_tokens,
+            # _step_remote_inference). Lets operators raise the bound
+            # for slow models / large prompts without forking
+            # _dispatch_idle_task. Hardcoded 300s previously, which
+            # was the right default but couldn't be tuned alongside
+            # the rest of the inference timeout settings.
+            collect_timeout = float(
+                getattr(self.config, "worker_inference_timeout", 300.0) or 300.0
+            )
             completed_normally = False
             try:
                 while True:
-                    msg = await asyncio.wait_for(queue.get(), timeout=300.0)
+                    msg = await asyncio.wait_for(queue.get(), timeout=collect_timeout)
                     msg_type = msg.get("type")
                     if msg_type == "job_done":
                         result = msg.get("result", {})
