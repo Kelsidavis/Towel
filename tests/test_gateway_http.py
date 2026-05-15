@@ -2976,6 +2976,45 @@ class TestApiSessions:
         assert resp.status_code == 200
         assert len(resp.json()["sessions"]) == 3
 
+    def test_api_sessions_includes_worker_routing_state(
+        self, gateway, store, client,
+    ):
+        """/api/sessions previously omitted worker_id and
+        pinned_worker_id — operators triaging "where is this session
+        pinned?" had to cross-reference with /sessions which only
+        carries live in-memory entries. Now both fields ride
+        alongside title/summary/tags on every entry. Sessions with
+        no routing state get None for both, keeping the response
+        shape uniform."""
+        from unittest.mock import MagicMock
+
+        # Two persisted sessions; one is pinned, one routed via
+        # affinity, one has neither.
+        for sid in ("pinned-conv", "routed-conv", "plain-conv"):
+            conv = Conversation(id=sid, channel="api")
+            conv.add(Role.USER, "hi")
+            store.save(conv)
+
+        gateway._workers.register(
+            "alpha", MagicMock(), {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "beta", MagicMock(), {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._session_pins["pinned-conv"] = "alpha"
+        gateway._session_workers["routed-conv"] = "beta"
+
+        resp = client.get("/api/sessions")
+        assert resp.status_code == 200
+        by_id = {s["id"]: s for s in resp.json()["sessions"]}
+
+        assert by_id["pinned-conv"]["pinned_worker_id"] == "alpha"
+        assert by_id["pinned-conv"]["worker_id"] is None
+        assert by_id["routed-conv"]["worker_id"] == "beta"
+        assert by_id["routed-conv"]["pinned_worker_id"] is None
+        assert by_id["plain-conv"]["worker_id"] is None
+        assert by_id["plain-conv"]["pinned_worker_id"] is None
+
 
 class TestAlternateChatWorker:
     """When the routed worker returns empty text on /api/ask, the

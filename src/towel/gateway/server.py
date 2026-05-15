@@ -5744,6 +5744,16 @@ class GatewayServer:
                 # Tags now ride on the summary itself — no second
                 # file-read per session needed (was 50 extra disk
                 # reads per /api/sessions call before).
+                # Also surface the worker_id (current affinity) and
+                # pinned_worker_id so /api/sessions is a one-stop
+                # answer for "what's this session's routing state?".
+                # The sister /sessions endpoint exposes these for live
+                # in-memory sessions; /api/sessions covers the full
+                # persisted set, and operators using it to triage
+                # currently had to cross-reference with /sessions
+                # just to see where their sessions were pinned. Both
+                # values are None when the session isn't actively
+                # routed / pinned to anywhere.
                 items.append(
                     {
                         "id": s.id,
@@ -5753,6 +5763,8 @@ class GatewayServer:
                         "message_count": s.message_count,
                         "summary": s.summary,
                         "tags": list(s.tags),
+                        "worker_id": self._session_workers.get(s.id),
+                        "pinned_worker_id": self._session_pins.get(s.id),
                     }
                 )
             return JSONResponse({"sessions": items})
