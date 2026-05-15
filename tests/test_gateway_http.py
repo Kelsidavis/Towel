@@ -560,6 +560,29 @@ class TestSimpleAskAPI:
             assert resp.status_code == 400, f"accepted bad session_id {bad!r}"
             assert "control" in resp.json()["error"].lower()
 
+    def test_ask_strips_session_id_whitespace(self, gateway, client):
+        """`"  sid  "` and `"sid"` previously created two different
+        in-memory sessions even though the on-disk filename sanitizer
+        merged them to the same .json file. Loads from one key,
+        saves to another — confusing for operators watching
+        /api/sessions."""
+        _resp = client.post(
+            "/api/ask",
+            json={"message": "hello", "session_id": "  spaced  "},
+        )
+        # In-memory session must be keyed by the stripped form.
+        assert "spaced" in gateway.sessions._sessions
+        assert "  spaced  " not in gateway.sessions._sessions
+
+    def test_ask_all_whitespace_session_id_falls_back_to_default(self, gateway, client):
+        _resp = client.post(
+            "/api/ask",
+            json={"message": "hi", "session_id": "   "},
+        )
+        # Whitespace-only session_id is ambiguous; we treat it as
+        # "no session_id given" and route to api-default.
+        assert "api-default" in gateway.sessions._sessions
+
     def test_ask_rejects_non_string_session_id(self, client):
         resp = client.post(
             "/api/ask",

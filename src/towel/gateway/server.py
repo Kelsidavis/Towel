@@ -3620,6 +3620,19 @@ class GatewayServer:
                 return JSONResponse(
                     {"error": "session_id must be a string"}, status_code=400,
                 )
+            # Strip leading/trailing whitespace so `"  sid  "` and
+            # `"sid"` map to the same session. The on-disk filename
+            # sanitizer drops whitespace anyway, so the two forms were
+            # already pointing at the same .json file — but the
+            # in-memory session dict keyed by the raw string, splitting
+            # them in confusing ways (saves to one key, loads under
+            # another). Strip at the boundary so they're unified.
+            session_id = session_id.strip()
+            if not session_id:
+                # All-whitespace input falls through to the default;
+                # a literal empty session_id is ambiguous, default is
+                # the documented behavior.
+                session_id = "api-default"
             # Same length + control-char rules as memory keys
             # (commit 1865e7d). Session IDs flow into dispatch logs,
             # filesystem paths, and URL params; absurd lengths or
