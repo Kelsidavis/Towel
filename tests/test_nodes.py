@@ -375,6 +375,37 @@ class TestAssignRolesDefensiveCoercion:
         assert worker_quality_tier({"total_vram_mb": 10000}) == "high"
         assert worker_quality_tier({"total_vram_mb": 10000.5}) == "high"
 
+    def test_resources_from_worker_caps_handles_non_numeric_vram(self):
+        """``resources_from_worker_caps`` is called from
+        ``NodeCapability.from_worker_capabilities`` (register path)
+        AND from the NodeTracker heartbeat update. A worker reporting
+        ``total_vram_mb: "huge"`` would crash ``int(top_vram)`` and
+        500 every /cluster/nodes render. Defensive coercion at the
+        boundary keeps the cluster view alive even when one worker's
+        capability blob is garbage."""
+        from towel.nodes.capability import resources_from_worker_caps
+        # Top-level garbage vram falls through to the per-GPU sum.
+        r = resources_from_worker_caps({"total_vram_mb": "huge", "gpus": []})
+        assert r.vram_total_mb == 0
+        # Per-GPU garbage vram coerces to 0 inside the comprehension.
+        r = resources_from_worker_caps({
+            "gpus": [{"vram_mb": "huge"}, {"vram_mb": 8000}],
+        })
+        assert r.vram_total_mb == 8000
+
+    def test_resources_from_worker_caps_handles_non_numeric_ram(self):
+        """Same defensive shape on the RAM computation — a worker
+        reporting ``ram_total_mb`` or ``ram_available_mb`` as a
+        garbage value used to crash inside the ``int(...) - int(...)``
+        subtraction."""
+        from towel.nodes.capability import resources_from_worker_caps
+        r = resources_from_worker_caps({
+            "resources": {"ram_total_mb": "huge", "ram_available_mb": 5000},
+        })
+        # garbage total → 0 - 5000 = -5000, then max(0, ...) = 0.
+        # No crash.
+        assert r.ram_used_mb == 0
+
     def test_node_meets_task_requirements_handles_non_numeric(self):
         """Same defensive shape on the dispatcher's gate check —
         a non-numeric ``total_vram_mb`` used to crash inside

@@ -7,6 +7,25 @@ from datetime import UTC, datetime
 from typing import Any
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    """``int(x)`` that doesn't crash on garbage worker-reported input.
+
+    Capability and resource fields flow in from worker self-reports
+    over the WS register / heartbeat path. A worker sending
+    ``total_vram_mb: "huge"`` (typo, JSON-serialised wrong) would
+    otherwise crash ``int("huge")`` with ValueError deep inside the
+    dispatcher's gate check or this module's resource-normalisation
+    code, and 500 the user's request. Coerce defensively at every
+    capability-derived numeric read site.
+    """
+    if isinstance(value, bool):
+        # bool is a subtype of int; preserve `or 0` historical behaviour.
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    return default
+
+
 def resources_from_worker_caps(caps: dict[str, Any]) -> "NodeResources":
     """Build a NodeResources from a worker's full capabilities dict.
 
@@ -32,17 +51,22 @@ def resources_from_worker_caps(caps: dict[str, Any]) -> "NodeResources":
         resources_data = {"hostname": caps["hostname"]}
     if "vram_total_mb" not in resources_data:
         top_vram = caps.get("total_vram_mb")
+        if not isinstance(top_vram, (int, float)):
+            # Includes None (the .get default) and any garbage value
+            # a worker happens to report. Fall through to the per-GPU
+            # sum below.
+            top_vram = None
         if top_vram is None:
             # Older workers report only per-GPU vram_mb in `gpus`.
             gpus = caps.get("gpus") or []
             if isinstance(gpus, list):
                 top_vram = sum(
-                    int(g.get("vram_mb", 0))
+                    _safe_int(g.get("vram_mb"))
                     for g in gpus
                     if isinstance(g, dict)
                 )
         if top_vram:
-            resources_data["vram_total_mb"] = int(top_vram)
+            resources_data["vram_total_mb"] = _safe_int(top_vram)
     # Prefer the fresh `live_resources.ram_available_mb` (refreshed on
     # every 15s heartbeat) over the stale value in `resources` (set
     # once at register). The `resources` sub-dict in caps never
@@ -59,9 +83,14 @@ def resources_from_worker_caps(caps: dict[str, Any]) -> "NodeResources":
         and "ram_total_mb" in resources_data
         and fresh_avail is not None
     ):
+        # Same defensive coercion as the vram path above — a worker
+        # reporting ram_total_mb or ram_available_mb as garbage
+        # would otherwise crash inside `int("huge")` and 500 the
+        # /cluster/nodes render.
         resources_data["ram_used_mb"] = max(
             0,
-            int(resources_data["ram_total_mb"]) - int(fresh_avail),
+            _safe_int(resources_data["ram_total_mb"])
+            - _safe_int(fresh_avail),
         )
     return NodeResources.from_dict(resources_data)
 

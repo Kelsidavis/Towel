@@ -20,6 +20,8 @@ import logging
 from enum import Enum
 from typing import Any
 
+from towel.nodes.capability import _safe_int
+
 log = logging.getLogger("towel.nodes.roles")
 
 
@@ -260,27 +262,6 @@ def assign_tasks(
     return tasks
 
 
-def _safe_int(value: Any, default: int = 0) -> int:
-    """``int(x)`` that doesn't crash on garbage input.
-
-    Capabilities fields flow in from worker self-reports. A worker
-    sending ``total_vram_mb: "huge"`` (typo, JSON-serialised wrong)
-    would otherwise crash ``int("huge")`` with ValueError deep
-    inside the dispatcher and 500 the user's request. Same
-    defensive shape as the assign_roles fix for non-numeric
-    capability fields — just wrapped so every caller stays
-    concise.
-    """
-    if isinstance(value, bool):
-        # bool is a subtype of int; preserve the historical
-        # behaviour where True/False got coerced via `or 0` (False
-        # → default, True → 1).
-        return int(value)
-    if isinstance(value, (int, float)):
-        return int(value)
-    return default
-
-
 def worker_quality_tier(capabilities: dict[str, Any]) -> str:
     """Bucket a worker into ``high`` / ``medium`` / ``low`` for at-a-glance UX.
 
@@ -403,8 +384,14 @@ def best_node_for_task(
             # Smaller VRAM ≈ smaller model ≈ faster for chat-sized
             # generations. Workers without a vram estimate sort to
             # the end via a large default so we don't accidentally
-            # prefer "unknown size" over "known 2B".
-            vram = int(caps.get("total_vram_mb") or caps.get("vram_mb") or 1_000_000)
+            # prefer "unknown size" over "known 2B". `_safe_int`
+            # keeps a worker that reports vram as a non-numeric
+            # string from crashing the sort and 500-ing the route.
+            vram = (
+                _safe_int(caps.get("total_vram_mb"))
+                or _safe_int(caps.get("vram_mb"))
+                or 1_000_000
+            )
             return (is_api, pressure, locality, vram)
 
         candidates.sort(key=fast_score)
@@ -412,8 +399,11 @@ def best_node_for_task(
         # Prefer most capable: biggest model, most VRAM
         def quality_score(n: dict[str, Any]) -> tuple[int, int, float]:
             caps = n.get("capabilities", {})
-            vram = caps.get("total_vram_mb", 0)
-            ctx = caps.get("context_window", 0)
+            # Same defensive coercion as fast_score — `-vram` would
+            # raise TypeError on a string vram and tear down the
+            # dispatch sort.
+            vram = _safe_int(caps.get("total_vram_mb"))
+            ctx = _safe_int(caps.get("context_window"))
             pressure = n.get("context_pressure", 0.0)
             return (-vram, -ctx, pressure)
 
