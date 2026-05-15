@@ -201,6 +201,11 @@ def build_openai_routes(
                 # routing returns None (empty fleet), or when picking
                 # a worker fails for any reason.
                 generator = _stream_sse(agent, conv, request_id, created, model_name)
+                # Track the one-shot session id so we can clean up
+                # affinity + the worker-side context slot after the
+                # SSE stream completes. Same leak class fixed for the
+                # non-streaming path below.
+                openai_session_id: str | None = None
                 if gateway is not None and messages:
                     last_user = next(
                         (m.get("content", "") for m in reversed(messages)
@@ -208,6 +213,7 @@ def build_openai_routes(
                         "",
                     )
                     session_id = f"openai-{request_id}"
+                    openai_session_id = session_id
                     sess = gateway.sessions.get_or_create(session_id)
                     sess.conversation = conv
                     try:
@@ -226,8 +232,21 @@ def build_openai_routes(
                         logging.getLogger("towel.openai_compat").debug(
                             "stream route failed, falling back: %s", exc,
                         )
+
+                # Wrap the generator to clean up the one-shot session
+                # state when the SSE stream finishes (success, client
+                # disconnect, or mid-stream error). Without this, every
+                # streaming call to /v1/chat/completions leaves a ghost
+                # affinity entry + context slot behind.
+                async def _cleanup_after_stream():
+                    try:
+                        async for chunk in generator:
+                            yield chunk
+                    finally:
+                        if openai_session_id is not None and gateway is not None:
+                            gateway.cleanup_ephemeral_session(openai_session_id)
                 return StreamingResponse(
-                    generator,
+                    _cleanup_after_stream(),
                     media_type="text/event-stream",
                     headers={
                         "Cache-Control": "no-cache",
@@ -241,6 +260,13 @@ def build_openai_routes(
                 # to the local agent for empty-fleet setups or when the
                 # router declines (returns None).
                 response = None
+                # OpenAI-compat creates a one-shot session_id per
+                # request. Tracked here so the outer finally can clean
+                # it up — without that, every /v1/chat/completions call
+                # left a permanent ghost entry in _session_workers AND
+                # a permanent context slot on the routed worker,
+                # inflating context_pressure forever.
+                openai_session_id: str | None = None
                 if gateway is not None and messages:
                     last_user = next(
                         (m.get("content", "") for m in reversed(messages)
@@ -248,6 +274,7 @@ def build_openai_routes(
                         "",
                     )
                     session_id = f"openai-{request_id}"
+                    openai_session_id = session_id
                     sess = gateway.sessions.get_or_create(session_id)
                     sess.conversation = conv
                     try:
@@ -396,16 +423,24 @@ def build_openai_routes(
                         count_tokens_fallback(msg.get("content", ""))
                         for msg in messages
                     )
-                return JSONResponse(
-                    _format_completion(
-                        request_id,
-                        created,
-                        model_name,
-                        response.content,
-                        completion_tokens,
-                        prompt_tokens=prompt_tokens,
+                try:
+                    return JSONResponse(
+                        _format_completion(
+                            request_id,
+                            created,
+                            model_name,
+                            response.content,
+                            completion_tokens,
+                            prompt_tokens=prompt_tokens,
+                        )
                     )
-                )
+                finally:
+                    # Drop the one-shot session's affinity + context
+                    # slot now that the request is done; otherwise
+                    # every /v1/chat/completions call accumulates
+                    # permanent ghost state.
+                    if openai_session_id is not None and gateway is not None:
+                        gateway.cleanup_ephemeral_session(openai_session_id)
         except Exception as e:
             return JSONResponse(
                 {"error": {"message": str(e), "type": "server_error"}},

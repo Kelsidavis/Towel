@@ -413,4 +413,66 @@ class TestRemoteStreamFallback:
         assert "first-" in joined
         assert "second-" in joined
         assert '"error"' in joined or "finish_reason\": \"error\"" in joined
-        assert "[DONE]" in joined
+
+
+class TestEphemeralSessionCleanup:
+    """OpenAI-compat creates a one-shot session_id per request
+    (`openai-<random>`). Without cleanup every call leaked both an
+    affinity entry in _session_workers AND a context slot on the
+    routed worker — inflating context_pressure forever for any
+    coordinator that fronted /v1/chat/completions traffic."""
+
+    def test_cleanup_ephemeral_session_helper(self, tmp_path):
+        """The helper closes affinity + slot AND drops the in-memory
+        Session. Safe to call on a session that doesn't exist."""
+        store = ConversationStore(store_dir=tmp_path)
+        config = TowelConfig()
+        agent = AgentRuntime(config)
+        sessions = SessionManager(store=store)
+        gw = GatewayServer(config=config, agent=agent, sessions=sessions)
+
+        # Set up: register a worker + node, then create the kind of
+        # ephemeral state OpenAI-compat would leave behind.
+        gw._workers.register(
+            "node-a", object(),
+            {
+                "backend": "llama", "modes": ["llama_chat"],
+                "context_window": 8192, "max_tokens": 4096,
+                "total_vram_mb": 16000,
+                "resources": {"hostname": "node-a", "ram_total_mb": 32000},
+            },
+        )
+        gw._node_tracker.register(
+            "node-a", gw._workers.get("node-a").capabilities,
+        )
+        gw._session_workers["openai-abc123"] = "node-a"
+        gw._node_tracker.open_context_slot("node-a", "openai-abc123", 100)
+        gw.sessions.get_or_create("openai-abc123")
+
+        # Sanity pre-cleanup.
+        assert "openai-abc123" in gw._session_workers
+        assert gw._node_tracker.get("node-a").get_context_slot(
+            "openai-abc123"
+        ) is not None
+
+        gw.cleanup_ephemeral_session("openai-abc123")
+
+        # Everything's gone.
+        assert "openai-abc123" not in gw._session_workers
+        assert gw._node_tracker.get("node-a").get_context_slot(
+            "openai-abc123"
+        ) is None
+        assert gw.sessions.get("openai-abc123") is None
+
+    def test_cleanup_idempotent_on_unknown_session(self, tmp_path):
+        """Cleaning a session that was never created (early-fail
+        path before the gateway routed anywhere) must be a no-op,
+        not a crash."""
+        store = ConversationStore(store_dir=tmp_path)
+        config = TowelConfig()
+        agent = AgentRuntime(config)
+        sessions = SessionManager(store=store)
+        gw = GatewayServer(config=config, agent=agent, sessions=sessions)
+
+        # No exception.
+        gw.cleanup_ephemeral_session("never-existed")

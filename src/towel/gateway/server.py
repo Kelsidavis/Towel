@@ -887,6 +887,31 @@ class GatewayServer:
             ],
         }
 
+    def cleanup_ephemeral_session(self, session_id: str) -> None:
+        """Drop in-memory state for a one-shot session.
+
+        OpenAI-compat creates a fresh session_id per /v1/chat/completions
+        request (``openai-<random>``) — it's never reused, but every
+        call left behind:
+
+        - an entry in ``_session_workers`` (affinity tied to a
+          throwaway id)
+        - an open context slot on the routed worker
+
+        Both accumulated forever, inflating ``context_pressure`` on
+        the workers serving OpenAI traffic. Public so the OpenAI
+        compat module (a separate file) can call it after each
+        request — both streaming and non-streaming paths.
+        """
+        worker_id = self._session_workers.pop(session_id, None)
+        if worker_id is not None:
+            self._node_tracker.close_context_slot(worker_id, session_id)
+        # Drop the in-memory Session too — it was never going to be
+        # used again, and the SessionManager doesn't persist
+        # openai-prefixed sessions (no on-disk store call from
+        # openai_compat) so this is purely a memory clean-up.
+        self.sessions.remove(session_id)
+
     def _maybe_set_auto_title(self, session: Any) -> None:
         """Generate and stamp a title on a session that doesn't have one.
 
