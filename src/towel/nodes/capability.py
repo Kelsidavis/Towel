@@ -169,8 +169,27 @@ class NodeCapability:
 
     @property
     def total_context_tokens_used(self) -> int:
-        """Sum of tokens used across all active context slots."""
-        return sum(slot.tokens_used for slot in self.context_slots)
+        """Sum of tokens used across all active context slots.
+
+        Each slot's contribution is capped at this node's
+        ``context_window`` on read, even though ``add_context_slot``
+        and ``update_context_slot`` also cap on write. Defense in
+        depth: a slot can outlive the cap-on-write fix when the
+        coordinator was running pre-fix code at slot-creation time
+        (the slot persists across worker reconnects via
+        NodeTracker.register's `node.context_slots = existing.context_slots`)
+        and the bogus token count then permanently pins
+        context_pressure to 1.0 — observed live as a stale 250k-token
+        slot keeping a 24GB worker looking permanently maxed out
+        on an 8k context window. Read-side cap fixes the in-memory
+        state without forcing a restart.
+        """
+        if self.context_window <= 0:
+            return sum(slot.tokens_used for slot in self.context_slots)
+        return sum(
+            min(slot.tokens_used, self.context_window)
+            for slot in self.context_slots
+        )
 
     @property
     def active_sessions(self) -> int:

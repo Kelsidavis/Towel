@@ -102,6 +102,65 @@ class TestNodeCapability:
         node.update_context_slot("s1", 250_000)
         assert node.context_slots[0].tokens_used == 8192
 
+    def test_total_tokens_caps_per_slot_on_read(self):
+        """Defense in depth: a slot can outlive the cap-on-write fix
+        when it was created before the cap was added (the slot
+        persists across worker reconnects via
+        NodeTracker.register's `node.context_slots = existing.context_slots`).
+        Observed live as a stale 250k-token slot on an 8k worker
+        permanently pinning context_pressure to 1.0. The read-side
+        cap fixes the in-memory state without forcing a restart."""
+        node = NodeCapability(worker_id="w1", context_window=8192)
+        # Bypass the cap-on-write path entirely — simulate the
+        # historical bug where a slot landed with raw bogus tokens.
+        from towel.nodes.capability import ContextSlot
+        node.context_slots.append(
+            ContextSlot(
+                session_id="legacy-bad",
+                tokens_used=250_000,
+                context_window=8192,
+            )
+        )
+        # The raw slot still carries the bogus number — we don't
+        # mutate persisted state, only the aggregate read.
+        assert node.context_slots[0].tokens_used == 250_000
+        # But the aggregate caps the contribution per slot.
+        assert node.total_context_tokens_used == 8192
+        # And pressure correctly reads as full, not 32x full.
+        assert node.context_pressure == 1.0
+
+    def test_total_tokens_caps_handles_multiple_bad_slots(self):
+        """Multiple legacy bad slots still cap correctly — each
+        contributes at most context_window, so N bad slots → N×window
+        (which then clamps to pressure=1.0 via the existing min(1.0)
+        in context_pressure)."""
+        from towel.nodes.capability import ContextSlot
+        node = NodeCapability(worker_id="w1", context_window=8192)
+        for i in range(3):
+            node.context_slots.append(
+                ContextSlot(
+                    session_id=f"bad-{i}", tokens_used=250_000,
+                    context_window=8192,
+                )
+            )
+        # 3 slots × 8192 cap each = 24576 — well over a single
+        # window, but each individual slot couldn't single-handedly
+        # poison the aggregate.
+        assert node.total_context_tokens_used == 24576
+        assert node.context_pressure == 1.0
+
+    def test_total_tokens_unknown_window_skips_per_slot_cap(self):
+        """When context_window is 0/unknown, the per-slot cap can't
+        be computed — return the raw sum so callers aren't surprised
+        by silent data drops on workers that didn't advertise a
+        window."""
+        from towel.nodes.capability import ContextSlot
+        node = NodeCapability(worker_id="w1", context_window=0)
+        node.context_slots.append(
+            ContextSlot(session_id="s", tokens_used=99_999, context_window=0)
+        )
+        assert node.total_context_tokens_used == 99_999
+
     def test_can_fit_conversation(self):
         node = NodeCapability(worker_id="w1", context_window=8192)
         assert node.can_fit_conversation(4000) is True
