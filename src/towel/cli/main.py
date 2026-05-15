@@ -2116,6 +2116,175 @@ def ask(
     asyncio.run(_run())
 
 
+@cli.command()
+@click.argument("plan_file", type=click.Path(exists=True, dir_okay=False), required=False)
+@click.option(
+    "--goal", "goal", default=None,
+    help="Orchestration goal. Required if PLAN_FILE not given.",
+)
+@click.option(
+    "--task", "tasks", multiple=True,
+    help=(
+        "Task spec as role:prompt. May be repeated. "
+        "Append @N to set dependency. Append +tools to enable tool-loop."
+    ),
+)
+@click.option(
+    "--workspace", "workspace_dir", default=None,
+    help="Shared workspace directory for the subtasks.",
+)
+@click.option(
+    "--parallel", is_flag=True,
+    help="Run independent subtasks in parallel.",
+)
+@click.option(
+    "--max-attempts", "max_attempts", default=2, type=click.IntRange(1, 5),
+    help="Retry count per subtask (1=no retry, default 2).",
+)
+@click.option(
+    "--json", "as_json", is_flag=True,
+    help="Print raw JSON response instead of formatted output.",
+)
+def orchestrate(
+    plan_file: str | None,
+    goal: str | None,
+    tasks: tuple[str, ...],
+    workspace_dir: str | None,
+    parallel: bool,
+    max_attempts: int,
+    as_json: bool,
+) -> None:
+    """Dispatch a multi-worker piecemeal orchestration.
+
+    \b
+    Two modes:
+      towel orchestrate plan.json
+      towel orchestrate --goal "build x" --task "coder:write x.py+tools" --workspace /tmp/ws
+
+    \b
+    Task spec format (for --task):
+      role:prompt              minimal
+      role:prompt@1            depends on task index 1
+      role:prompt@1,2+tools    depends on 1 and 2, enable tool-loop
+    """
+    import json as json_mod
+
+    import httpx
+
+    config = TowelConfig.load()
+    url = f"http://{config.gateway.host}:{config.gateway.port + 1}/api/orchestrate"
+
+    if plan_file is not None:
+        with open(plan_file) as f:
+            body = json_mod.load(f)
+        # Allow CLI options to override plan-file fields, so a saved
+        # plan can be re-run with --parallel or a different workspace
+        # without editing the file.
+        if goal is not None:
+            body["goal"] = goal
+        if workspace_dir is not None:
+            body["workspace_dir"] = workspace_dir
+        if parallel:
+            body["parallel"] = True
+        if max_attempts != 2:
+            body["max_attempts"] = max_attempts
+    else:
+        if goal is None:
+            console.print("[red]Either PLAN_FILE or --goal is required.[/red]")
+            sys.exit(1)
+        if not tasks:
+            console.print("[red]At least one --task is required when not using a plan file.[/red]")
+            sys.exit(1)
+        parsed_tasks: list[dict[str, Any]] = []
+        for spec in tasks:
+            # Parse role:prompt[@deps][+tools]
+            with_tools = False
+            if spec.endswith("+tools"):
+                with_tools = True
+                spec = spec[: -len("+tools")]
+            deps: list[int] = []
+            if "@" in spec:
+                spec_main, deps_str = spec.rsplit("@", 1)
+                try:
+                    deps = [int(x.strip()) for x in deps_str.split(",") if x.strip()]
+                except ValueError:
+                    console.print(f"[red]Bad deps in task spec:[/red] {spec}")
+                    sys.exit(1)
+                spec = spec_main
+            if ":" not in spec:
+                console.print(f"[red]Task spec must be role:prompt — got:[/red] {spec}")
+                sys.exit(1)
+            role, _, prompt = spec.partition(":")
+            parsed_tasks.append({
+                "role": role.strip(),
+                "prompt": prompt.strip(),
+                "depends_on": deps,
+                "with_tools": with_tools,
+            })
+        body = {
+            "goal": goal,
+            "tasks": parsed_tasks,
+            "parallel": parallel,
+            "max_attempts": max_attempts,
+        }
+        if workspace_dir:
+            body["workspace_dir"] = workspace_dir
+
+    try:
+        resp = httpx.post(url, json=body, timeout=None)
+    except httpx.RequestError as exc:
+        console.print(f"[red]Gateway request failed:[/red] {exc}")
+        console.print("Is the gateway running? Try: towel serve")
+        sys.exit(1)
+
+    if resp.status_code != 200:
+        console.print(f"[red]Gateway returned {resp.status_code}:[/red] {resp.text}")
+        sys.exit(1)
+
+    data = resp.json()
+    if as_json:
+        console.print(json_mod.dumps(data, indent=2))
+        return
+
+    total_ms = data.get("total_elapsed_ms", 0.0)
+    status_color = "green" if data.get("success") else "yellow"
+    header = (
+        f"[{status_color}]{'OK' if data.get('success') else 'PARTIAL'}[/{status_color}] "
+        f"orchestration: {data.get('goal', '')}\n"
+        f"total: {total_ms / 1000.0:.1f}s"
+    )
+    if data.get("workspace_dir"):
+        header += f"\nworkspace: {data['workspace_dir']}"
+    console.print(Panel(header, title="Towel Orchestrate", border_style=status_color))
+
+    for i, t in enumerate(data.get("tasks", [])):
+        icon = {
+            "completed": "[green]✓[/green]",
+            "failed": "[red]✗[/red]",
+            "running": "~",
+            "pending": " ",
+        }.get(t.get("status"), "?")
+        attempts = t.get("attempts", 1)
+        attempts_note = f" (attempts={attempts})" if attempts > 1 else ""
+        tools_note = " [tools]" if t.get("with_tools") else ""
+        elapsed_s = t.get("elapsed_ms", 0) / 1000.0
+        console.print(
+            f"{icon} {i}. [bold]{t.get('role','?')}[/bold]{tools_note} "
+            f"({elapsed_s:.1f}s{attempts_note})"
+        )
+        result_preview = (t.get("result") or "")[:200]
+        if result_preview:
+            console.print(f"    {result_preview}")
+
+    if data.get("synthesis"):
+        console.print()
+        console.print(Panel(
+            data["synthesis"][:2000],
+            title="Synthesis",
+            border_style="blue",
+        ))
+
+
 @cli.group(invoke_without_command=True)
 @click.pass_context
 def agents(ctx: click.Context) -> None:
