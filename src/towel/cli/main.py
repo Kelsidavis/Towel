@@ -307,7 +307,6 @@ def serve(
     console.print()
 
     from towel.gateway.server import GatewayServer
-    from towel.memory.store import MemoryStore
 
     # Derive a project scope from the cwd the coordinator was started
     # in. New captures land in that scope, retrieval ORs current-scope
@@ -493,7 +492,6 @@ def worker(
     console.print()
 
     from towel.gateway.worker_client import RemoteWorkerClient, default_worker_capabilities
-    from towel.memory.store import MemoryStore
     from towel.memory.store import open_for_config as _mk_memory_store
     from towel.skills.registry import SkillRegistry
     memory = _mk_memory_store(config)
@@ -628,7 +626,6 @@ def chat(
     from towel.agent.conversation import Conversation, Role
     from towel.agent.events import EventType
     from towel.cli.slash import SlashContext, handle_slash
-    from towel.memory.store import MemoryStore
     from towel.memory.store import open_for_config as _mk_memory_store
     from towel.persistence.store import ConversationStore
     memory = _mk_memory_store(config)
@@ -1990,7 +1987,6 @@ def ask(
     if system:
         config.identity = system
 
-    from towel.memory.store import MemoryStore
     from towel.memory.store import open_for_config as _mk_memory_store
     memory = _mk_memory_store(config)
     skills = _build_skill_registry(config, memory_store=memory)

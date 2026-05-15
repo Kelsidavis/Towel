@@ -3472,7 +3472,6 @@ class TestSimpleAskAPI:
         back on failure — so a crashed retry left the session with
         the user message and NO assistant reply, while the API caller
         got a 500."""
-        import asyncio
         from unittest.mock import AsyncMock
 
         from towel.agent.conversation import Message, Role

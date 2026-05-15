@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 
 from towel.memory.llm_extract import (
     LLMCapture,

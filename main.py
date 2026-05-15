@@ -2,7 +2,6 @@
 """Python function for nth Fibonacci number using memoization"""
 
 import argparse
-import sys
 
 
 def main():

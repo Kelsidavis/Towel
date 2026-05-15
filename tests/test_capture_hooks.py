@@ -14,7 +14,6 @@ import asyncio
 import pytest
 
 from towel.agent.capture import run_capture_hooks
-from towel.agent.conversation import Conversation, Role
 from towel.config import TowelConfig
 from towel.memory.llm_extract import _inflight
 from towel.memory.store import MemoryStore

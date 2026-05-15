@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from towel.memory.scope import derive_scope, find_project_root
 from towel.memory.store import MemoryStore

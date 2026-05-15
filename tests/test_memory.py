@@ -1,7 +1,6 @@
 """Tests for the persistent memory system."""
 
 import json
-import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest

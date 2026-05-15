@@ -12,7 +12,7 @@ captures look like.
 from __future__ import annotations
 
 import logging
-from typing import Any, Awaitable, Callable, Protocol
+from typing import Any, Protocol
 
 log = logging.getLogger("towel.agent.capture")
 
