@@ -2787,7 +2787,40 @@ class GatewayServer:
                     since_hours = float(hours_raw)
                 except ValueError:
                     return JSONResponse({"error": "hours must be numeric"}, status_code=400)
+                # Reject NaN, inf, -inf — float() parses these as valid
+                # floats but downstream SQL bound comparisons yield
+                # silent zero-row results that look identical to
+                # "no recent activity." Better to fail loud.
+                import math
+                if not math.isfinite(since_hours):
+                    return JSONResponse(
+                        {"error": "hours must be a finite number"},
+                        status_code=400,
+                    )
+                # Negative hours never make semantic sense — would scan
+                # the future, which is empty. Fail loud rather than
+                # returning a misleading empty result.
+                if since_hours < 0:
+                    return JSONResponse(
+                        {"error": "hours must be ≥ 0"}, status_code=400,
+                    )
             key_filter = request.query_params.get("key") or None
+            # Strip + length + control-char guard on key_filter so a
+            # 1000-char value or embedded null byte can't slip into the
+            # substring scan. Matches /search and /memory rules.
+            if key_filter is not None:
+                key_filter = key_filter.strip() or None
+            if key_filter is not None:
+                if len(key_filter) > 256:
+                    return JSONResponse(
+                        {"error": "key must be 256 chars or fewer"},
+                        status_code=400,
+                    )
+                if any(ord(c) < 0x20 or ord(c) == 0x7F for c in key_filter):
+                    return JSONResponse(
+                        {"error": "key must not contain control characters"},
+                        status_code=400,
+                    )
             try:
                 rows = memory.recent_recalls(
                     limit=limit, since_hours=since_hours, key_filter=key_filter,

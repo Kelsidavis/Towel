@@ -135,6 +135,49 @@ class TestMemoryEndpoint:
             assert resp.status_code == 400, f"accepted q={encoded!r}"
             assert "control" in resp.json()["error"].lower()
 
+    def test_recalls_rejects_overlong_key(self, store, memory):
+        """key_filter on /memory/recalls had no length / control-char
+        guard — a 1000-char value or null byte slipped into the
+        substring scan."""
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+
+        resp = client.get("/memory/recalls?key=" + "a" * 1000)
+        assert resp.status_code == 400
+        assert "256" in resp.json()["error"]
+
+    def test_recalls_rejects_control_chars_in_key(self, store, memory):
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+
+        for encoded in ("%00", "with%0anewline"):
+            resp = client.get(f"/memory/recalls?key={encoded}")
+            assert resp.status_code == 400, f"accepted key={encoded!r}"
+            assert "control" in resp.json()["error"].lower()
+
+    def test_recalls_rejects_non_finite_hours(self, store, memory):
+        """float('inf') / float('nan') / float('-inf') silently passed
+        through to the SQL bound comparison and produced empty
+        results indistinguishable from "no recent activity." Surface
+        the bad input as 400."""
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+
+        for bad in ("inf", "-inf", "nan", "Infinity"):
+            resp = client.get(f"/memory/recalls?hours={bad}")
+            assert resp.status_code == 400, f"accepted hours={bad!r}"
+            assert "finite" in resp.json()["error"].lower()
+
+    def test_recalls_rejects_negative_hours(self, store, memory):
+        """hours=-1 would scan a future window (empty) — empty result
+        looks identical to "no activity," misleading the operator."""
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+
+        resp = client.get("/memory/recalls?hours=-1")
+        assert resp.status_code == 400
+        assert "0" in resp.json()["error"] or "≥" in resp.json()["error"] or "non-negative" in resp.json()["error"].lower()
+
     def test_returns_empty_when_agent_has_no_memory(self, store):
         class _BareAgent:
             pass
