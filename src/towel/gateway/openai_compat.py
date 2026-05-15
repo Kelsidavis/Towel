@@ -71,6 +71,15 @@ def build_openai_routes(
 
         messages = body.get("messages", [])
         stream = body.get("stream", False)
+        # Strict bool check — `{"stream": "yes"}` would otherwise pass
+        # as truthy and silently take the streaming path even though
+        # the client likely intended the literal string. OpenAI's
+        # contract uses a boolean; reject non-bool inputs.
+        if not isinstance(stream, bool):
+            return JSONResponse(
+                {"error": {"message": "stream must be true or false", "type": "invalid_request_error"}},
+                status_code=400,
+            )
         model_name = body.get("model", config.model.name)
         # Honor OpenAI-standard sampling params. max_tokens is clamped
         # to [1, 4096] so a hostile or accidental request can't burn

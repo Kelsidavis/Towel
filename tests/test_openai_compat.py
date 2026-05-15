@@ -108,6 +108,22 @@ class TestChatCompletionsEndpoint:
             assert resp.status_code == 400, f"accepted max_tokens={bad!r}"
             assert "max_tokens" in resp.json()["error"]["message"]
 
+    def test_rejects_non_bool_stream(self, client):
+        """`{"stream": "yes"}` would otherwise pass as truthy and
+        silently take the streaming path. OpenAI's contract uses a
+        boolean; non-bool should fail at the boundary."""
+        for bad in ("yes", "false", 1, 0, [], {"x": 1}):
+            resp = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "x",
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "stream": bad,
+                },
+            )
+            assert resp.status_code == 400, f"accepted stream={bad!r}"
+            assert "true or false" in resp.json()["error"]["message"]
+
     def test_rejects_system_only_conversation(self, client):
         """A system-only conversation has no user prompt — most models
         hang or return empty rather than producing meaningful output,
