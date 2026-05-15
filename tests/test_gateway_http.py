@@ -1731,6 +1731,40 @@ class TestDispatchRecentEphemeralFilter:
             "dispatch's assign"
         )
 
+    def test_preempt_idle_task_wakes_collect_via_queue(self):
+        """The idle task's ``_collect`` coroutine waits on its
+        queue with a 300s timeout. Without an explicit wake on
+        preempt, ``_collect`` slept the full 300s before its
+        ``finally`` block fired — at which point it called
+        ``_workers.release(worker.id)`` and would have clobbered
+        the busy state of whatever real chat had been dispatched
+        onto the preempted worker in the meantime.
+
+        Putting a synthetic ``job_error`` onto the preempted
+        queue wakes ``_collect`` immediately, so it sees a
+        terminal state and exits without the 300s safety-net
+        timeout."""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._preempt_idle_task)
+        # Queue is popped, then notified with a job_error before
+        # the worker release runs. _collect's existing job_error
+        # branch handles this as a clean terminal.
+        assert "queue.put_nowait" in src
+        assert '"type": "job_error"' in src
+        assert "preempted by real request" in src
+        # Notify must come BEFORE the release — otherwise a
+        # _collect that happens to wake up between the release
+        # and notify could see worker idle without a terminal
+        # message and re-arm the idle task.
+        put_pos = src.index("queue.put_nowait")
+        release_pos = src.index("self._workers.release(worker.id)")
+        assert put_pos < release_pos, (
+            "queue.put_nowait must come before _workers.release"
+        )
+
     def test_ws_unknown_register_role_warns(self):
         """A typo'd `role` in a WS register message (e.g. "workre")
         previously got channel treatment silently — the worker

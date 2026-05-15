@@ -2619,7 +2619,31 @@ class GatewayServer:
                     }
                 )
             )
-            self._job_queues.pop(job_id, None)
+            # Wake the idle task's _collect coroutine so it exits
+            # immediately instead of waiting on its 300s queue
+            # timeout. Without this, _collect's `finally` block
+            # (which calls _workers.release) would fire 300s later
+            # — possibly clobbering the busy state of whatever
+            # real chat job the new dispatch put on this worker.
+            # The synthetic job_error matches the shape worker-side
+            # cancellations use, and the _collect loop already
+            # handles job_error as a terminal state.
+            queue = self._job_queues.pop(job_id, None)
+            if queue is not None:
+                try:
+                    queue.put_nowait(
+                        {
+                            "type": "job_error",
+                            "job_id": job_id,
+                            "message": "preempted by real request",
+                        }
+                    )
+                except asyncio.QueueFull:
+                    # _collect's queue is unbounded; defensive guard
+                    # for a future bounded-queue refactor.
+                    log.debug(
+                        "Preempt notify to %s queue dropped (full)", worker.id,
+                    )
             self._workers.release(worker.id)
             # Yield so the cancel_job WS frame lands ahead of the
             # next dispatch's infer message. Without this, both
