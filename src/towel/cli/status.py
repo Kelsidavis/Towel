@@ -233,10 +233,25 @@ def status(as_json: bool, verbose: bool, history: bool) -> None:
     # Save to history if requested
     if history:
         history_path = Path("~/.towel/status_history.json").expanduser()
-        history_data = []
+        history_data: list = []
         if history_path.exists():
-            with open(history_path) as f:
-                history_data = json.load(f)
+            # Same defensive shape-check pattern the
+            # snippets/aliases/bookmark loads adopted: corrupted or
+            # hand-edited history files used to crash ``.append()``
+            # with AttributeError on a non-list shape (and silently
+            # destroy the bytes via the unconditional write below).
+            # Reset to [] on any load failure so the operator can
+            # still run ``towel status --history`` without first
+            # having to clean up the file by hand. The original
+            # bytes survive untouched (we don't back up here — the
+            # status history is a low-loss-cost append log).
+            try:
+                with open(history_path) as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, list):
+                    history_data = loaded
+            except (json.JSONDecodeError, OSError):
+                pass
 
         # Append current status
         history_data.append(stats)
