@@ -1325,9 +1325,16 @@ class GatewayServer:
             id=verify_sess_id, conversation=verify_conv,
         )
         try:
+            # Low temperature for the verifier too: same rationale
+            # as the ensemble synthesis temperature override. The
+            # verifier should be confident and decisive (return
+            # VERIFIED or a clean corrected answer) not creative —
+            # we don't want it to invent alternative phrasings on
+            # near-identical reruns.
             verify_response = await self._quick_remote_infer(
                 verify_sess_id, verify_session, alt,
                 max_tokens=512,
+                temperature=0.2,
             )
         except Exception as exc:
             log.warning(

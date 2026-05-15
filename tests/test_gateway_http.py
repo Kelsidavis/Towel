@@ -2721,6 +2721,53 @@ class TestSimpleAskAPI:
             assert isinstance(c["synthesis_ms"], (int, float))
             assert c["synthesis_ms"] >= 0
 
+    def test_verify_pass_uses_low_temperature(self, gateway, client):
+        """Symmetric to the ensemble-synthesis temperature override:
+        the verifier should be decisive (return VERIFIED or a
+        corrected answer), not creative. Low temperature reduces
+        rerun-to-rerun drift."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "primary", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"], "tools": False},
+        )
+        gateway._workers.register(
+            "verifier", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"], "tools": False},
+        )
+
+        captured: dict = {}
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            # Stash the verifier-call's temperature for assertion.
+            if session_id.startswith("_verify_"):
+                captured["verifier_temp"] = kwargs.get("temperature")
+                return Message(
+                    role=Role.ASSISTANT, content="VERIFIED",
+                    metadata={"remote_worker": worker.id, "tokens": 1, "tps": 5.0},
+                )
+            msg = Message(
+                role=Role.ASSISTANT, content="primary answer",
+                metadata={"remote_worker": worker.id, "tokens": 2, "tps": 5.0},
+            )
+            session.conversation.messages.append(msg)
+            return msg
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        async def fake_route(_msg, _sid):
+            return gateway._workers.get("primary"), "chat"
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "q", "session_id": "ver-temp", "verify": True},
+        )
+        assert resp.status_code == 200
+        # Verifier ran with the deterministic-ish temperature.
+        assert captured["verifier_temp"] == 0.2
+
     def test_ensemble_synthesis_uses_low_temperature(self, gateway, client):
         """Arbitration should be deterministic-ish, not creative —
         the goal is "pick the best answer and copy it", not
