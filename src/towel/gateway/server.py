@@ -544,7 +544,11 @@ class GatewayServer:
                             )
                             # Aggregate dispatch entry — parity with
                             # /api/ask's record_ensemble call (e00fb6d).
-                            if _contribs and self._dispatcher is not None:
+                            # Record unconditionally when the user opted
+                            # in: even a no-candidates skip needs to be
+                            # visible so operators don't miss the silent
+                            # fall-through to single-worker dispatch.
+                            if self._dispatcher is not None:
                                 try:
                                     self._dispatcher.record_ensemble(
                                         session_id=session_id,
@@ -5199,11 +5203,14 @@ class GatewayServer:
                     # /dispatch/recent next to other dispatch events
                     # — the per-worker fan-out decisions live under
                     # the ephemeral _ens_* ids that the recent view
-                    # hides by default.
-                    if (
-                        ensemble_contributions
-                        and self._dispatcher is not None
-                    ):
+                    # hides by default. Always record when the user
+                    # opted in, even with zero contributions, so the
+                    # "all workers were busy → silently fell through to
+                    # single-dispatch" case is visible. Without this,
+                    # operators had no way to see that ensemble was
+                    # requested and skipped — the response looked
+                    # identical to a normal single-worker dispatch.
+                    if self._dispatcher is not None:
                         try:
                             self._dispatcher.record_ensemble(
                                 session_id=session_id,

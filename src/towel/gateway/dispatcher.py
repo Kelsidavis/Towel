@@ -669,15 +669,26 @@ class Dispatcher:
         total_ms = (
             round(worker_ms + (synth_ms or 0.0), 1) if any_answered else None
         )
+        # Empty-contributions case = "ensemble was requested but had no
+        # candidate workers" — every worker was busy/draining/disabled at
+        # the moment of fan-out. The user opted in to ensemble; without
+        # an aggregate log entry they had no way to see why their
+        # request got handled as a single-worker dispatch instead. Show
+        # the skip distinctly from "ensemble ran but every worker
+        # failed" (which is `0/N answered`).
+        if not contributions:
+            notes = "ensemble: skipped (no idle workers available)"
+        else:
+            notes = (
+                f"ensemble: {arbitration_mode} "
+                f"({len(contributing)}/{len(contributions)} answered: "
+                f"{', '.join(contributing)})"
+            )
         decision = DispatchDecision(
             worker=None,
             intent="task",
             reason=REASON_ENSEMBLE,
-            notes=(
-                f"ensemble: {arbitration_mode} "
-                f"({len(contributing)}/{len(contributions)} answered: "
-                f"{', '.join(contributing)})"
-            ),
+            notes=notes,
             session_id=session_id,
             candidates_considered=len(contributions),
         )

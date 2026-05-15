@@ -922,6 +922,71 @@ class TestDispatchRecentEphemeralFilter:
         entry = ensemble_entries[0]
         assert "2/2 answered" in entry["notes"]
 
+    def test_ensemble_skip_with_no_idle_workers_records_dispatch(
+        self, gateway, client,
+    ):
+        """When ensemble is requested but no workers are idle, the
+        request silently fell through to single-worker dispatch — an
+        operator looking at /dispatch/recent had no way to see that
+        ensemble was attempted and skipped. Now the skip is logged
+        as a distinct dispatch entry with notes='ensemble: skipped'
+        so the operator can see why the response looks single-worker
+        despite the ensemble flag.
+
+        Reproducer for the live-coordinator behavior observed in
+        2026-05: two requests with `ensemble=true` returned single-
+        worker responses with no trace of ensemble anywhere in the
+        log."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        # No workers registered → ensemble has 0 candidates.
+        # We still need a worker for the fallthrough single-worker
+        # path so the request completes, but it must be filtered out
+        # of ensemble candidates. The easiest way to get that is to
+        # mark it busy via the workers' busy() lifecycle.
+        gateway._workers.register(
+            "a", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        # Mark the only worker busy via the public lifecycle setter.
+        # _ensemble_dispatch skips busy workers (fan-out wants real
+        # concurrency, not queue thrash), so this leaves zero
+        # candidates and exercises the skip path.
+        gateway._workers.assign("a", "job-1", "other-session")
+
+        # Single-worker fallback uses _route_by_role; mock it to
+        # return None so the request completes via the local agent
+        # path rather than waiting for the busy worker.
+        async def fake_route(_msg, _sid):
+            return None, "chat"
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        async def fake_step(_conv, **_kwargs):
+            return Message(role=Role.ASSISTANT, content="local fallback")
+        gateway.agent.step = fake_step  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "q", "session_id": "ens-skip", "ensemble": True},
+        )
+        assert resp.status_code == 200
+
+        # Aggregate ensemble entry must exist with notes='skipped'
+        # so the operator sees the no-candidates case in the log.
+        agg = client.get("/dispatch/recent?session=ens-skip").json()
+        ensemble_entries = [
+            d for d in agg["decisions"] if d.get("reason") == "ensemble"
+        ]
+        assert len(ensemble_entries) == 1, agg["decisions"]
+        entry = ensemble_entries[0]
+        assert "skipped" in entry["notes"], entry["notes"]
+        assert "no idle workers" in entry["notes"], entry["notes"]
+        # candidates_considered=0 distinguishes "no candidates" from
+        # "candidates ran but failed" in the operator UI.
+        assert entry["candidates_considered"] == 0
+
     def test_verify_records_aggregate_dispatch_entry(self, gateway, client):
         """Symmetric to the ensemble case — verify pass records an
         aggregate 'verify' entry under the user's session_id."""

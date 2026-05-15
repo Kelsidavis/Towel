@@ -321,10 +321,12 @@ def build_openai_routes(
                         )
                         # Aggregate dispatch entry — parity with
                         # /api/ask's record_ensemble call (e00fb6d).
-                        if (
-                            _contribs
-                            and getattr(gateway, "_dispatcher", None) is not None
-                        ):
+                        # Always record when the user opted in (drop the
+                        # _contribs guard) so the "all workers busy →
+                        # silent fall-through" case shows up in the
+                        # dispatch log instead of looking like a normal
+                        # single-worker dispatch.
+                        if getattr(gateway, "_dispatcher", None) is not None:
                             try:
                                 gateway._dispatcher.record_ensemble(
                                     session_id=session_id,
