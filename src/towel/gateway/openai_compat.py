@@ -457,6 +457,33 @@ def build_openai_routes(
                                                     ),
                                                 }
                                                 response = retry
+                                            else:
+                                                # Dual-empty: primary AND alt
+                                                # both returned the empty-
+                                                # text fallback. Same
+                                                # diagnostic /api/ask
+                                                # surfaces — flag on the
+                                                # metadata + warn at log
+                                                # level so operators see
+                                                # the fleet-wide tool-loop
+                                                # rather than blaming a
+                                                # single slow worker.
+                                                import logging as _v1_log_warn
+                                                _v1_log_warn.getLogger(
+                                                    "towel.openai_compat"
+                                                ).warning(
+                                                    "Dual empty-text on session %s: "
+                                                    "primary=%s alt=%s — both "
+                                                    "workers tool-looped; review "
+                                                    "system prompt or worker quality.",
+                                                    session_id, worker.id, alt.id,
+                                                )
+                                                response.metadata = (
+                                                    response.metadata or {}
+                                                ) | {
+                                                    "dual_empty_text": True,
+                                                    "alt_worker": alt.id,
+                                                }
                                     elif v1_primary_failed:
                                         # No alt; let the outer except
                                         # catch this and fall through to
