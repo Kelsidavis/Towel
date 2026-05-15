@@ -3315,6 +3315,19 @@ class GatewayServer:
                     node_entry["current_session_id"] = None
                     node_entry["busy_since"] = None
                     node_entry["busy_for_seconds"] = None
+                # `roles` + `assigned_tasks` were on /workers but not
+                # /cluster/nodes — operators debugging "why didn't
+                # this task land on this worker" had to cross
+                # reference two endpoints to compare hardware
+                # capabilities (in cluster/nodes) against routing
+                # eligibility (in /workers). Surface both here too so
+                # the cluster panel is self-contained.
+                node_entry["roles"] = [
+                    str(r) for r in self._node_roles.get(worker_id, [])
+                ]
+                node_entry["assigned_tasks"] = [
+                    str(t) for t in self._node_tasks.get(worker_id, [])
+                ]
             return JSONResponse(data)
 
         async def dispatch_explain(request: Request) -> JSONResponse:

@@ -243,6 +243,55 @@ class TestClusterNodes:
         assert entry["busy_since"] is None
         assert entry["busy_for_seconds"] is None
 
+    def test_cluster_nodes_includes_roles_and_assigned_tasks(
+        self, gateway, client,
+    ):
+        """`/cluster/nodes` previously omitted roles + assigned_tasks
+        even though /workers carried them — operators debugging "why
+        did this task not land on this worker" had to bounce between
+        endpoints to compare hardware capabilities (cluster/nodes)
+        against routing eligibility (/workers). Surface both here so
+        the cluster panel can answer routing questions without a
+        second roundtrip."""
+        from unittest.mock import MagicMock
+
+        from towel.nodes.roles import NodeRole, TaskType
+
+        caps = {"backend": "llama", "modes": ["llama_chat"]}
+        gateway._workers.register("rolled", MagicMock(), caps)
+        # /cluster/nodes iterates the node_tracker, not the registry —
+        # register there too so the worker actually appears.
+        gateway._node_tracker.register("rolled", caps)
+        gateway._node_roles["rolled"] = [NodeRole.INFERENCE, NodeRole.GENERAL]
+        gateway._node_tasks["rolled"] = [TaskType.CHAT, TaskType.EXPLAIN]
+
+        resp = client.get("/cluster/nodes")
+        entry = resp.json()["nodes"]["rolled"]
+        # The serialized forms are strings (the same way /workers
+        # emits them) — JSON-safe and matching the UI's expectations.
+        assert "roles" in entry
+        assert "inference" in [r.lower() for r in entry["roles"]]
+        assert "general" in [r.lower() for r in entry["roles"]]
+        assert "assigned_tasks" in entry
+        assert "chat" in [t.lower() for t in entry["assigned_tasks"]]
+        assert "explain" in [t.lower() for t in entry["assigned_tasks"]]
+
+    def test_cluster_nodes_roles_default_empty_for_unknown_workers(
+        self, gateway, client,
+    ):
+        """Stale tracker entries (no live worker) should still get
+        the new fields — both as empty lists, matching the same
+        explicit-null contract the other operator-state fields use
+        but for list-typed data."""
+        gateway._node_tracker.register(
+            "ghost-roleless",
+            {"backend": "llama", "context_window": 8192, "max_tokens": 4096},
+        )
+        resp = client.get("/cluster/nodes")
+        entry = resp.json()["nodes"]["ghost-roleless"]
+        assert entry["roles"] == []
+        assert entry["assigned_tasks"] == []
+
 
 class TestWorkerStateEndpoint:
     def test_worker_state_update_sets_draining(self, gateway, client):
