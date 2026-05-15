@@ -3893,6 +3893,14 @@ class GatewayServer:
             session.conversation.channel = "api"
             session.conversation.add(Role.USER, message)
 
+            # Wall-clock start so the response can report the actual
+            # end-to-end request duration, separate from `total_ms`
+            # (which reflects only the last worker call's duration).
+            # For retry paths this lets operators see "primary took
+            # 20s, retry took 15s, total 35s wall" without correlating
+            # the worker's metadata to their own client timer.
+            request_start = time.monotonic()
+
             # Per-request identity override. Passed straight through
             # to `_quick_remote_infer` rather than mutating
             # `self.config.identity` — that approach raced badly with
@@ -4065,6 +4073,16 @@ class GatewayServer:
                     body["ttft_ms"] = round(meta["ttft_ms"], 1)
                 if isinstance(meta.get("total_ms"), (int, float)):
                     body["total_ms"] = round(meta["total_ms"], 1)
+                # End-to-end wall-clock time for the whole request,
+                # including any retry hops and the coordinator's own
+                # work (memory injection, classification, dispatch).
+                # Distinct from `total_ms`, which is only the last
+                # worker call's duration — operators on the retry
+                # path were seeing the alt's time and wondering why
+                # their client timer was much higher.
+                body["request_total_ms"] = round(
+                    (time.monotonic() - request_start) * 1000.0, 1
+                )
                 if meta.get("empty_text_tool_call_fallback"):
                     body["fallback"] = "empty_text_tool_call"
                 if meta.get("fallback_from_worker"):
