@@ -2781,7 +2781,44 @@ class GatewayServer:
         session: Any,
         worker: WorkerInfo,
     ) -> None:
-        """Run the local streaming tool loop while outsourcing generation."""
+        """Run the local streaming tool loop while outsourcing generation.
+
+        Wraps the body so a remote-worker failure (disconnect mid-
+        stream, _remote_generate timeout, etc.) becomes an
+        AgentEvent.error frame to the WS client instead of an
+        unhandled exception tearing down the connection. Same
+        contract _stream_response uses for the local-agent path.
+        """
+        try:
+            await self._stream_remote_inference_inner(
+                ws, session_id, session, worker,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning(
+                "WS remote-stream for session %s failed mid-iteration: %s",
+                session_id, exc,
+            )
+            try:
+                await ws.send(
+                    json.dumps(
+                        AgentEvent.error(_err_str(exc)).to_ws_message(session_id)
+                    )
+                )
+            except Exception:
+                pass  # client already gone; nothing to do
+
+    async def _stream_remote_inference_inner(
+        self,
+        ws: ServerConnection,
+        session_id: str,
+        session: Any,
+        worker: WorkerInfo,
+    ) -> None:
+        """Inner body — original streaming logic. Split so the
+        wrapper above can catch failures uniformly without growing
+        the indentation of the existing for-loop."""
         total_tokens = 0
         remaining_text = ""
         # Loop-detection state (mirrors _step_remote_inference_inner).

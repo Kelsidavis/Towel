@@ -384,14 +384,21 @@ class TestRemoteExecution:
     def test_stream_remote_inference_has_loop_detection(self):
         """The streaming agent loop has the same MAX_TOOL_ITERATIONS
         cap as the non-streaming path, so it needs the same protection.
-        Source-level check guards against future divergence."""
+        Source-level check guards against future divergence.
+
+        The loop-detection state moved to the `_inner` helper when
+        the wrapper grew an exception handler — inspect both so
+        either function can carry the markers."""
         import inspect
 
         from towel.gateway.server import GatewayServer
 
-        src = inspect.getsource(GatewayServer._stream_remote_inference)
+        src = (
+            inspect.getsource(GatewayServer._stream_remote_inference)
+            + inspect.getsource(GatewayServer._stream_remote_inference_inner)
+        )
         assert "last_call_fingerprints" in src
-        assert "LOOP_REPEAT_LIMIT" in src
+        assert "TOOL_LOOP_REPEAT_LIMIT" in src
         assert "loop_detected_call_name" in src
         assert "stuck" in src.lower() or "stopping" in src.lower()
 
@@ -404,12 +411,13 @@ class TestRemoteExecution:
         transcript ending at the last tool result, so an operator
         looking at the saved conversation couldn't tell why the model
         "stopped responding". Verify the streaming path now mirrors
-        the persistence step."""
+        the persistence step (still in _inner after the wrapper
+        split)."""
         import inspect
 
         from towel.gateway.server import GatewayServer
 
-        src = inspect.getsource(GatewayServer._stream_remote_inference)
+        src = inspect.getsource(GatewayServer._stream_remote_inference_inner)
         # Both terminal branches must append to the conversation.
         # Find the loop-detected branch and the max-iterations branch.
         assert "session.conversation.add(Role.ASSISTANT, stuck_msg)" in src
