@@ -714,13 +714,22 @@ class TestRecallLog:
         assert len(rows) == 1
 
     def test_key_filter_substring_safety(self, store):
+        # Drive recall_log directly so this test isolates the
+        # key_filter-substring logic from the recall-strategy
+        # implementation. Going through to_prompt_block here would
+        # depend on whatever the current fused-recall engine returns
+        # — and with vector similarity in the mix, a "y"-content
+        # entry can legitimately surface for an "x" query because
+        # both are short adjacent vocabulary, defeating the test's
+        # whole premise. record_recall lets us pin the recall row's
+        # keys list to exactly the one we want to filter.
         store.remember("vimal", "x", "fact")
-        store.remember("vim", "y", "fact")
-        store.to_prompt_block(query="x")  # returns "vimal"
+        store.record_recall("some query", ["vimal"])
         # Filtering for "vim" via key_filter should NOT match
-        # "vimal" since we re-check membership in the keys list.
-        # But the query "x" doesn't contain "vim" either, so the
-        # result is the substring miss case: nothing returned.
+        # "vimal" since we re-check membership in the keys list
+        # (in-list element equality, not substring). The query
+        # "some query" doesn't contain "vim" either, so the
+        # combined result is the substring-miss case: empty.
         rows = store.recent_recalls(key_filter="vim")
         assert rows == []
 
@@ -780,12 +789,19 @@ class TestRecallLogCap:
 
 class TestRecallsReturning:
     def test_finds_recalls_that_returned_key(self, store):
+        # Drive record_recall directly rather than going through
+        # to_prompt_block, so the test exercises recalls_returning
+        # in isolation from the fused-recall engine. With BM25 +
+        # vector + graph in the mix, two short-content entries
+        # ("x", "y") can both surface for any query because they
+        # land within each other's similarity threshold — which
+        # was making this test count more recalls than the writer
+        # intended ("y" pulled back alpha too).
         store.remember("alpha", "x", "fact")
         store.remember("beta", "y", "fact")
-        # Two prompt-block calls that return alpha; one returns beta.
-        store.to_prompt_block(query="x")
-        store.to_prompt_block(query="x again")
-        store.to_prompt_block(query="y")
+        store.record_recall("x", ["alpha"])
+        store.record_recall("x again", ["alpha"])
+        store.record_recall("y", ["beta"])
         rows = store.recalls_returning("alpha")
         assert len(rows) == 2
         assert all(r["rank"] == 0 for r in rows)  # alpha was top hit
