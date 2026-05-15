@@ -71,8 +71,20 @@ def mlx_tokenizer_config() -> dict[str, Any]:
 # which never fires — ``\b`` after ``:`` requires a following word character,
 # but the matching strings always have a space there. Use the colon as the
 # boundary instead.
+#
+# The leading ``^Error\b`` catch-all replaces the older
+# ``^Error executing\b`` / ``^Error calling\b`` pair. 41 places across
+# src/towel/skills/ return ``f"Error: {e}"`` or ``f"Error reading X: {e}"``
+# / ``f"Error creating X: {e}"`` / ``f"Error checking X: ..."`` etc. —
+# none of which matched the two narrow prefixes, so every one of those
+# tool failures was getting classified as a successful result. The
+# agent then told the model "Use this result to answer the user
+# concretely" on top of a literal "Error: file not found" string.
+# ``\b`` after Error keeps "Errors" (e.g. "Errors per page") from
+# being mislabeled while catching everything that actually starts
+# with the canonical Error word.
 _TOOL_ERROR_PATTERNS = (
-    re.compile(r"^Error executing\b", re.IGNORECASE),
+    re.compile(r"^Error\b", re.IGNORECASE),
     re.compile(r"^Unknown tool:", re.IGNORECASE),
     re.compile(r"^File not found:", re.IGNORECASE),
     re.compile(r"^Not a directory:", re.IGNORECASE),
@@ -81,7 +93,7 @@ _TOOL_ERROR_PATTERNS = (
     re.compile(r"^HTTP error:", re.IGNORECASE),
     re.compile(r"^\[4\d\d\]"),  # HTTP 4xx client errors
     re.compile(r"^\[5\d\d\]"),  # HTTP 5xx server errors
-    re.compile(r"^Error calling\b", re.IGNORECASE),
+    re.compile(r"^Permission denied\b", re.IGNORECASE),
     re.compile(r"^No module named\b", re.IGNORECASE),
 )
 

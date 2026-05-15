@@ -27,6 +27,37 @@ class TestToolFeedback:
         assert tool_result_is_error("[404] resource missing")
         assert not tool_result_is_error("Written 12 bytes to /tmp/test.txt")
 
+    def test_classifies_canonical_skill_error_format(self):
+        """41 places across src/towel/skills/ return errors as
+        f"Error: {e}", f"Error reading X: ...", f"Error creating
+        X: ...", etc. The old patterns only caught
+        "Error executing" / "Error calling" — every other skill
+        error was getting silently classified as a successful result,
+        and the agent then told the model "Use this result to answer
+        the user concretely" on top of a literal "Error: file not
+        found" string.
+
+        The broader ^Error\\b catch-all is the fix; pin a sample of
+        the real skill-return shapes here so the regression doesn't
+        sneak back in if someone tightens the pattern again."""
+        assert tool_result_is_error("Error: file not found")
+        assert tool_result_is_error("Error: git failed")
+        assert tool_result_is_error("Error reading /tmp/x.png: invalid")
+        assert tool_result_is_error("Error creating archive: disk full")
+        assert tool_result_is_error("Error checking host:443: timeout")
+        assert tool_result_is_error("Error extracting: bad zip")
+        assert tool_result_is_error("Error executing tool: boom")  # still works
+        assert tool_result_is_error("Error calling Claude: 401")     # still works
+        # Permission denied is a common os-level error not previously
+        # caught — skills returning the bare OSError string would have
+        # passed through as a success.
+        assert tool_result_is_error("Permission denied: /etc/shadow")
+        # \b after Error keeps "Errors" (a plain-English noun) from
+        # being mislabeled — important so a tool that legitimately
+        # returns analytics-style output isn't every-result-erroring.
+        assert not tool_result_is_error("Errors per page: 3")
+        assert not tool_result_is_error("Errored tasks summary follows...")
+
     def test_formats_recovery_guidance_for_errors(self):
         text = format_tool_feedback("read_file", "File not found: x.txt", is_error=True)
         assert "[read_file]" in text
