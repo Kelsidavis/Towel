@@ -1474,6 +1474,96 @@ class TestSimpleAskAPI:
             resp = client.post("/api/ask", json={"message": bad})
             assert resp.status_code == 400, f"accepted {bad!r}"
 
+    def test_ask_max_tokens_invalid_rejected(self, client):
+        """`max_tokens` must be a positive integer (≤ 4096). Garbage
+        values fail loud at the boundary rather than crashing deep
+        in the dispatch path. Same [1, 4096] clamp /v1/chat/completions
+        uses so behaviour is consistent."""
+        for bad in ("abc", [], {}, 0, -1):
+            resp = client.post(
+                "/api/ask",
+                json={"message": "hi", "max_tokens": bad},
+            )
+            assert resp.status_code == 400, f"accepted {bad!r}"
+
+    def test_ask_max_tokens_flows_to_quick_infer(self, gateway, client):
+        """A valid `max_tokens` reaches `_quick_remote_infer` so the
+        worker actually generates up to the requested length. Without
+        this plumbing, /api/ask was silently hard-capped at 256 and
+        clients had no way to raise the ceiling for longer answers."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "w", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        async def fake_route(_msg, _sid):
+            return gateway._workers.get("w"), "chat"
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        captured: dict = {}
+
+        async def fake_quick(
+            session_id, session, worker, max_tokens=256, **kwargs,
+        ):
+            captured["max_tokens"] = max_tokens
+            msg = Message(
+                role=Role.ASSISTANT, content="answer",
+                metadata={"remote_worker": worker.id, "tokens": 1, "tps": 5.0},
+            )
+            session.conversation.messages.append(msg)
+            return msg
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "hi", "session_id": "max-tok-ask", "max_tokens": 2048},
+        )
+        assert resp.status_code == 200
+        assert captured["max_tokens"] == 2048
+
+    def test_ask_max_tokens_clamped_to_4096(self, gateway, client):
+        """Requesting an absurd value should clamp to the same upper
+        bound /v1/chat/completions uses rather than rejecting with
+        400 — matches the OpenAI-compat path's lenient behaviour
+        for over-large but otherwise-valid integers."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "w", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        async def fake_route(_msg, _sid):
+            return gateway._workers.get("w"), "chat"
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        captured: dict = {}
+
+        async def fake_quick(
+            session_id, session, worker, max_tokens=256, **kwargs,
+        ):
+            captured["max_tokens"] = max_tokens
+            msg = Message(
+                role=Role.ASSISTANT, content="answer",
+                metadata={"remote_worker": worker.id, "tokens": 1, "tps": 5.0},
+            )
+            session.conversation.messages.append(msg)
+            return msg
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "hi", "session_id": "max-tok-clamp", "max_tokens": 100000},
+        )
+        assert resp.status_code == 200
+        assert captured["max_tokens"] == 4096
+
     def test_ask_creates_session(self, gateway, client):
         # The actual model call will fail (no model loaded), but we test the session creation
         _resp = client.post("/api/ask", json={"message": "hello", "session": "test-ask"})

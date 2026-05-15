@@ -5327,6 +5327,30 @@ class GatewayServer:
                     {"error": "ensemble and verify are mutually exclusive"},
                     status_code=400,
                 )
+            # Optional max_tokens override. Without this, every
+            # /api/ask call was hard-capped at 256 — a request like
+            # "explain X in detail" silently truncated at ~150 words
+            # and there was no client-side knob to raise the ceiling.
+            # /v1/chat/completions has always honored max_tokens; this
+            # brings /api/ask to parity. Same [1, 4096] clamp the
+            # OpenAI-compat path uses so a runaway 100k value can't
+            # blow up the worker's generation budget.
+            max_tokens_raw = body.get("max_tokens")
+            api_ask_max_tokens = 256
+            if max_tokens_raw is not None:
+                try:
+                    max_tokens_int = int(max_tokens_raw)
+                except (TypeError, ValueError):
+                    return JSONResponse(
+                        {"error": "max_tokens must be an integer"},
+                        status_code=400,
+                    )
+                if max_tokens_int < 1:
+                    return JSONResponse(
+                        {"error": "max_tokens must be ≥ 1"},
+                        status_code=400,
+                    )
+                api_ask_max_tokens = min(max_tokens_int, 4096)
 
             session = self.sessions.get_or_create(session_id)
             session.conversation.channel = "api"
@@ -5442,7 +5466,8 @@ class GatewayServer:
                     # answer" — and a second worker is right there.
                     try:
                         response = await self._quick_remote_infer(
-                            session_id, session, worker, max_tokens=256,
+                            session_id, session, worker,
+                            max_tokens=api_ask_max_tokens,
                             identity_override=identity_override,
                         )
                         primary_failed = False
@@ -5529,7 +5554,8 @@ class GatewayServer:
                                 popped = session.conversation.messages.pop()
                             try:
                                 retry_response = await self._quick_remote_infer(
-                                    session_id, session, alt, max_tokens=256,
+                                    session_id, session, alt,
+                                    max_tokens=api_ask_max_tokens,
                                     identity_override=identity_override,
                                 )
                             except Exception as retry_exc:
