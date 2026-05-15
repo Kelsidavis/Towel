@@ -93,6 +93,46 @@ class TestSessionsEndpoint:
         assert data["sessions"][0]["id"] == "test-session"
         assert data["sessions"][0]["worker_id"] is None
 
+    def test_sessions_channel_filter(self, gateway, client):
+        """`?channel=` narrows live sessions to one channel — same
+        semantics /api/sessions and /conversations expose, applied
+        to the live in-memory set."""
+        sess_a = gateway.sessions.get_or_create("api-sess")
+        sess_a.conversation.channel = "api"
+        sess_b = gateway.sessions.get_or_create("cli-sess")
+        sess_b.conversation.channel = "cli"
+
+        resp = client.get("/sessions?channel=cli")
+        assert resp.status_code == 200
+        ids = {s["id"] for s in resp.json()["sessions"]}
+        assert ids == {"cli-sess"}
+
+    def test_sessions_worker_filter(self, gateway, client):
+        """`?worker=` narrows to sessions currently routed to a
+        specific worker — unique to /sessions because the other
+        list endpoints don't carry live routing state."""
+        gateway.sessions.get_or_create("s1")
+        gateway.sessions.get_or_create("s2")
+        gateway.sessions.get_or_create("s3")
+        gateway._session_workers["s1"] = "alpha"
+        gateway._session_workers["s2"] = "beta"
+        gateway._session_workers["s3"] = "alpha"
+
+        resp = client.get("/sessions?worker=alpha")
+        ids = {s["id"] for s in resp.json()["sessions"]}
+        assert ids == {"s1", "s3"}
+
+    def test_sessions_pinned_to_filter(self, gateway, client):
+        """`?pinned_to=` narrows to sessions explicitly pinned to a
+        given worker — fast answer to 'who's stuck on alpha?'"""
+        gateway.sessions.get_or_create("p1")
+        gateway.sessions.get_or_create("p2")
+        gateway._session_pins["p1"] = "alpha"
+
+        resp = client.get("/sessions?pinned_to=alpha")
+        ids = {s["id"] for s in resp.json()["sessions"]}
+        assert ids == {"p1"}
+
     def test_sessions_exposes_message_count_alias(self, gateway, client):
         """/sessions originally exposed the message count under
         `messages`, but /api/sessions and /conversations use

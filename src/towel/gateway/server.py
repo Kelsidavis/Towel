@@ -3118,7 +3118,44 @@ class GatewayServer:
                 }
             )
 
-        async def sessions_list(_request: Any) -> JSONResponse:
+        async def sessions_list(request: Request) -> JSONResponse:
+            """GET /sessions — live in-memory active sessions.
+
+            Query params:
+              ``channel`` — narrow to sessions on this channel.
+              ``worker``  — narrow to sessions routed to this worker.
+              ``pinned_to`` — narrow to sessions pinned to this worker.
+
+            Same channel-filter semantics as /api/sessions and
+            /conversations. The worker/pinned_to filters are unique
+            to this endpoint because it carries live routing state.
+            """
+            channel_filter = request.query_params.get("channel")
+            worker_filter = request.query_params.get("worker")
+            pinned_filter = request.query_params.get("pinned_to")
+            for name, val in (
+                ("channel", channel_filter),
+                ("worker", worker_filter),
+                ("pinned_to", pinned_filter),
+            ):
+                if val is not None and len(val) > 256:
+                    return JSONResponse(
+                        {"error": f"{name} must be 256 chars or fewer"},
+                        status_code=400,
+                    )
+            sessions = self.sessions.all()
+            if channel_filter is not None:
+                sessions = [s for s in sessions if s.conversation.channel == channel_filter]
+            if worker_filter is not None:
+                sessions = [
+                    s for s in sessions
+                    if self._session_workers.get(s.id) == worker_filter
+                ]
+            if pinned_filter is not None:
+                sessions = [
+                    s for s in sessions
+                    if self._session_pins.get(s.id) == pinned_filter
+                ]
             return JSONResponse(
                 {
                     "sessions": [
@@ -3140,7 +3177,7 @@ class GatewayServer:
                             "worker_id": self._session_workers.get(s.id),
                             "pinned_worker_id": self._session_pins.get(s.id),
                         }
-                        for s in self.sessions.all()
+                        for s in sessions
                     ]
                 }
             )
