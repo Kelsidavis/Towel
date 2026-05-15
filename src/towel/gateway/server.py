@@ -4815,11 +4815,34 @@ class GatewayServer:
                 }
             )
 
-        async def cluster_handoffs(_request: Any) -> JSONResponse:
+        async def cluster_handoffs(request: Request) -> JSONResponse:
+            """Cluster handoff stats + recent records.
+
+            Query params:
+              ``limit`` — cap on recent records (default 20, max 200).
+                          The earlier signature ignored the URL entirely
+                          and always returned 20 — operators triaging
+                          a recent disconnect storm couldn't see past
+                          the most recent twenty handoffs.
+              ``only_failed=1`` — narrow to failed handoffs so the
+                          operator can ask "what's going wrong?"
+                          without grepping success: false client-side.
+            """
+            try:
+                limit = int(request.query_params.get("limit", "20"))
+            except ValueError:
+                return JSONResponse(
+                    {"error": "limit must be an integer"}, status_code=400,
+                )
+            limit = max(1, min(limit, 200))
+            only_failed = request.query_params.get("only_failed") in {"1", "true"}
+            recent = self._handoff_manager.recent_handoffs(limit=limit)
+            if only_failed:
+                recent = [r for r in recent if not r.get("success")]
             return JSONResponse(
                 {
                     "stats": self._handoff_manager.stats(),
-                    "recent": self._handoff_manager.recent_handoffs(),
+                    "recent": recent,
                 }
             )
 

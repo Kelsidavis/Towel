@@ -352,6 +352,64 @@ class TestClusterNodes:
         assert entry["quality_tier"] == "high"
 
 
+class TestClusterHandoffs:
+    """/cluster/handoffs returns the same stats + history shape but
+    now respects ?limit= and ?only_failed=1 — the earlier handler
+    ignored the URL entirely so an operator triaging a recent
+    disconnect storm couldn't see past the most recent 20 records."""
+
+    def _seed_handoffs(self, gateway, n_success: int, n_failed: int) -> None:
+        from datetime import UTC, datetime
+        from towel.gateway.handoff import HandoffReason, HandoffRecord
+
+        for i in range(n_success):
+            r = HandoffRecord(
+                session_id=f"ok-{i}",
+                from_worker_id="a",
+                to_worker_id="b",
+                reason=HandoffReason.WORKER_DRAINING,
+                started_at=datetime.now(UTC),
+            )
+            r.complete(success=True)
+            gateway._handoff_manager._history.append(r)
+        for i in range(n_failed):
+            r = HandoffRecord(
+                session_id=f"fail-{i}",
+                from_worker_id="a",
+                to_worker_id="c",
+                reason=HandoffReason.WORKER_DISCONNECTED,
+                started_at=datetime.now(UTC),
+            )
+            r.complete(success=False, error="simulated")
+            gateway._handoff_manager._history.append(r)
+
+    def test_limit_respected(self, gateway, client):
+        """`?limit=` caps the recent records returned — earlier
+        signature always returned 20 regardless of the URL."""
+        self._seed_handoffs(gateway, n_success=15, n_failed=0)
+        resp = client.get("/cluster/handoffs?limit=5")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body["recent"]) == 5
+        # Stats still reflect the full history, not the limited slice.
+        assert body["stats"]["total"] == 15
+
+    def test_limit_rejects_garbage(self, client):
+        resp = client.get("/cluster/handoffs?limit=junk")
+        assert resp.status_code == 400
+
+    def test_only_failed_filter(self, gateway, client):
+        """`?only_failed=1` narrows to handoffs that didn't succeed —
+        operators triaging "what's going wrong" can skip past the
+        successful migrations without grepping client-side."""
+        self._seed_handoffs(gateway, n_success=3, n_failed=2)
+        resp = client.get("/cluster/handoffs?only_failed=1")
+        assert resp.status_code == 200
+        recent = resp.json()["recent"]
+        assert len(recent) == 2
+        assert all(not r["success"] for r in recent)
+
+
 class TestWorkerStateEndpoint:
     def test_worker_state_update_sets_draining(self, gateway, client):
         gateway._workers.register(
