@@ -1353,15 +1353,26 @@ class GatewayServer:
         # Confirmation detection. Models routinely add casing /
         # punctuation / leading remarks to the literal VERIFIED token
         # we asked for ("Verified.", "verified", "yes — VERIFIED",
-        # "## VERIFIED"). Treat a SHORT response that contains
-        # VERIFIED as a confirmation; reserve "long, substantive
-        # text" for the corrected-answer branch. Threshold is
-        # forgiving but bounded — a 30-char response with VERIFIED
-        # in it isn't trying to deliver a corrected answer.
+        # "## VERIFIED"). Two layers:
+        #
+        # 1. Strict: strip non-word characters and check exact match
+        #    against "VERIFIED" (case-insensitive). Catches every
+        #    cosmetic variant of just-the-token without sweeping up
+        #    any prose.
+        # 2. Lenient fallback: a short response (≤30 chars) that
+        #    CONTAINS VERIFIED — covers "Yes, VERIFIED" and "##
+        #    VERIFIED" where the canonical word is embedded in a
+        #    minimal preamble. The length cap is what keeps
+        #    substantive corrections that happen to mention the
+        #    word from being misclassified.
+        import re as _re_verify
+        normalized = _re_verify.sub(r"[^\w]+", "", verifier_text).upper()
+        if normalized == "VERIFIED":
+            return primary_answer, False, alt.id
         if (
             verifier_text
             and len(verifier_text) <= 30
-            and "VERIFIED" in verifier_text.upper()
+            and "VERIFIED" in normalized
         ):
             return primary_answer, False, alt.id
         # If the verifier returned an empty-text fallback placeholder
