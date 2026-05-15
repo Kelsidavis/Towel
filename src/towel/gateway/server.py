@@ -746,6 +746,34 @@ class GatewayServer:
                                         "verifier_corrected": False,
                                         "primary_worker": worker.id,
                                     }
+                                else:
+                                    # Verify requested but no
+                                    # alternate worker — surface in
+                                    # the metadata so the WS client
+                                    # can render the same "verify
+                                    # was attempted" badge /api/ask
+                                    # supports. Symmetric to the
+                                    # verify_skipped field on the
+                                    # HTTP response.
+                                    response.metadata = (response.metadata or {}) | {
+                                        "verify_skipped": True,
+                                        "verify_skip_reason": (
+                                            "no alternate worker available"
+                                        ),
+                                    }
+                            elif verify_flag and worker is not None:
+                                # verify_flag was set but the outer
+                                # `if` (has-real-answer) gated it
+                                # off — primary returned empty text
+                                # or a dual-empty placeholder. Same
+                                # signal, different reason.
+                                response.metadata = (response.metadata or {}) | {
+                                    "verify_skipped": True,
+                                    "verify_skip_reason": (
+                                        "primary returned no usable text; "
+                                        "nothing to verify"
+                                    ),
+                                }
                             await ws.send(
                                 json.dumps(
                                     {

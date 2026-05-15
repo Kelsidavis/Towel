@@ -1634,6 +1634,23 @@ class TestDispatchRecentEphemeralFilter:
         # The log message points operators at the fix (stream=false).
         assert "stream=false" in src
 
+    def test_ws_verify_skipped_surfaced_in_metadata(self):
+        """Parity with /api/ask's verify_skipped response field: when
+        verify=true was set on a WS message but the verify pass
+        couldn't run (no alternate worker, or primary returned an
+        empty placeholder), the WS response metadata now carries
+        `verify_skipped` + `verify_skip_reason` so client UIs can
+        render the same "verify attempted but couldn't run" badge."""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._handle_ws)
+        # Both skip-reason variants present in the WS handler.
+        assert '"verify_skipped": True' in src
+        assert "no alternate worker available" in src
+        assert "nothing to verify" in src
+
     def test_ws_ensemble_response_includes_contributions_for_parity(self):
         """The WS ensemble response previously sent only `ensemble`,
         `ensemble_arbitration`, and `remote_worker` in the metadata —
