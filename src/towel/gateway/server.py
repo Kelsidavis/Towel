@@ -4158,8 +4158,17 @@ class GatewayServer:
             # dicts hold small entries — but the operator-visible
             # symptom was /sessions showing a stale `worker_id` for
             # a deleted-and-recreated session_id.
-            self._session_workers.pop(conv_id, None)
+            prior_worker = self._session_workers.pop(conv_id, None)
             self._session_jobs.pop(conv_id, None)
+            # Close the worker-side context slot too. Without this,
+            # NodeTracker accumulates ghost slots for every deleted
+            # session — visible as inflated `active_sessions` and
+            # `context_pressure` on /cluster/nodes, and tracked all
+            # the way to pressure=1.0 after enough probes. The
+            # dispatcher's context-aware routing then avoids these
+            # workers even though they're genuinely idle.
+            if prior_worker is not None:
+                self._node_tracker.close_context_slot(prior_worker, conv_id)
             # Also drop a worker pin if one was set — a pin on a
             # deleted conversation can't be honored and would leak
             # into the persisted SessionPinStore on the next save.
@@ -4193,6 +4202,12 @@ class GatewayServer:
                 )
             count = store.delete_all()
             self.sessions.clear()
+            # Close every node tracker context slot, since every
+            # conversation that owned one is now gone. Without this,
+            # context_pressure stays inflated until the workers
+            # disconnect or restart.
+            for sid, worker_id in list(self._session_workers.items()):
+                self._node_tracker.close_context_slot(worker_id, sid)
             self._session_workers.clear()
             return JSONResponse({"deleted": count})
 

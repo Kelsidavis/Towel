@@ -540,6 +540,85 @@ class TestConversationsAPI:
         # And the persisted pin store must have been re-saved without it.
         assert "pin-leak" not in gateway.pin_store.load()
 
+    def test_delete_closes_node_tracker_context_slot(
+        self, gateway, store, client,
+    ):
+        """Deleting a conversation must also drop its slot from the
+        NodeTracker. Without this, ghost slots accumulate as sessions
+        are deleted, inflating `active_sessions` and
+        `context_pressure` on /cluster/nodes — and the dispatcher's
+        context-aware routing then avoids workers that are
+        genuinely idle. Caught on the live coordinator where one
+        worker showed pressure=1.0 from leftover probe slots."""
+        # Set up: worker registered with a node, session pinned via
+        # affinity, with an open context slot.
+        gateway._workers.register(
+            "node-a", object(),
+            {
+                "backend": "llama", "modes": ["llama_chat"],
+                "context_window": 8192, "max_tokens": 4096,
+                "total_vram_mb": 16000,
+                "resources": {"hostname": "node-a", "ram_total_mb": 32000},
+            },
+        )
+        gateway._node_tracker.register(
+            "node-a", gateway._workers.get("node-a").capabilities,
+        )
+        conv = Conversation(id="slot-leak")
+        conv.add(Role.USER, "test")
+        store.save(conv)
+        gateway._session_workers["slot-leak"] = "node-a"
+        gateway._node_tracker.open_context_slot("node-a", "slot-leak", 100)
+
+        # Sanity: slot is present pre-delete.
+        node = gateway._node_tracker.get("node-a")
+        assert node is not None
+        assert node.get_context_slot("slot-leak") is not None
+
+        resp = client.request("DELETE", "/conversations/slot-leak")
+        assert resp.status_code == 200
+
+        # Slot must be gone — no ghost slot left on the worker.
+        node = gateway._node_tracker.get("node-a")
+        assert node is not None
+        assert node.get_context_slot("slot-leak") is None
+
+    def test_delete_all_closes_all_context_slots(
+        self, gateway, store, client,
+    ):
+        """Same fix on the bulk-delete path — clearing the conversation
+        archive must also clear ghost slots, otherwise
+        context_pressure stays inflated until workers disconnect."""
+        gateway._workers.register(
+            "node-x", object(),
+            {
+                "backend": "llama", "modes": ["llama_chat"],
+                "context_window": 8192, "max_tokens": 4096,
+                "total_vram_mb": 16000,
+                "resources": {"hostname": "node-x", "ram_total_mb": 32000},
+            },
+        )
+        gateway._node_tracker.register(
+            "node-x", gateway._workers.get("node-x").capabilities,
+        )
+        for i in range(3):
+            conv = Conversation(id=f"bulk-slot-{i}")
+            conv.add(Role.USER, "test")
+            store.save(conv)
+            gateway._session_workers[f"bulk-slot-{i}"] = "node-x"
+            gateway._node_tracker.open_context_slot(
+                "node-x", f"bulk-slot-{i}", 100,
+            )
+
+        node = gateway._node_tracker.get("node-x")
+        assert len(node.context_slots) == 3
+
+        resp = client.request("DELETE", "/conversations?confirm=yes")
+        assert resp.status_code == 200
+
+        node = gateway._node_tracker.get("node-x")
+        assert len(node.context_slots) == 0
+
     def test_delete_all_requires_confirmation(self, store, client):
         """DELETE /conversations is a "wipe everything" footgun. Without
         ?confirm=yes a stale curl in shell history or a misclicked UI
