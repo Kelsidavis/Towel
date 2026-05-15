@@ -189,6 +189,42 @@ class TestQueryRelevantPromptBlock:
         block = store.to_prompt_block(query="completely unrelated xyzzy", limit=5)
         assert "alpha" in block or "beta" in block
 
+    def test_fallback_does_not_bump_recall_counts(self, store):
+        """When the query has no fused-search hits, the prompt block
+        falls back to a "recent slice" so the agent stays oriented.
+        Those fallback entries aren't real recalls — counting them
+        would inflate recall_count uniformly on every chat turn that
+        didn't lexically match a memory (a bare "hi", greetings, etc.)
+        and pollute /memory/recalls with bogus entries that don't
+        answer the question."""
+        store.remember("identity", "I am Kelsi", "user")
+        store.remember("style", "concise", "preference")
+        assert store.recall("identity").recall_count == 0
+        assert store.recall("style").recall_count == 0
+
+        # Query has no lexical / vector overlap with stored memories.
+        store.to_prompt_block(query="completely unrelated xyzzy", limit=5)
+
+        # Recall counts must STAY at zero — the fallback dragged these
+        # into the prompt block but it wasn't a real recall event.
+        assert store.recall("identity").recall_count == 0
+        assert store.recall("style").recall_count == 0
+
+    def test_genuine_recall_still_bumps(self, store):
+        """The complementary case: a real lexical match must still
+        bump recall_count and write the recall log. This is the
+        regression guard for the test above."""
+        store.remember("magic", "the magic word is please", "fact")
+        store.remember("other", "unrelated", "fact")
+        before = store.recall("magic").recall_count
+
+        store.to_prompt_block(query="what's the magic word", limit=5)
+
+        after = store.recall("magic").recall_count
+        assert after == before + 1
+        # And the untouched entry stays at its prior count.
+        assert store.recall("other").recall_count == 0
+
     def test_fallback_prioritizes_identity_over_notes(self):
         # When no fused-search hit, the fallback should surface
         # user/preference/project entries BEFORE fact entries — a

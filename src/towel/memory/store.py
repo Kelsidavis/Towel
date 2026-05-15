@@ -1368,6 +1368,7 @@ class MemoryStore:
             # in one pass — semantically-adjacent neighbors land in
             # the result directly, no second-pass round-robin needed.
             entries = self.fused_search(query, limit=limit)
+            used_fallback = False
             if not entries:
                 # Empty fused-search means the query had no lexical /
                 # vector / graph signal. Fall back to a short slice
@@ -1389,13 +1390,20 @@ class MemoryStore:
                     key=lambda r: _PRIORITY.get(r["memory_type"], 4),
                 )
                 entries = [_row_to_entry(r) for r in ranked[:limit]]
-            keys_in_order = [e.key for e in entries]
-            self._bump_recall(keys_in_order)
-            # Log the query trail so operators can introspect "why
-            # did the agent remember X when I asked Y?" later. Stays
-            # off the hot path on a no-result query (handled by the
-            # fallback above which doesn't get here with `entries`).
-            self.record_recall(query, keys_in_order)
+                used_fallback = True
+            # Only the genuine fused-search hits are real recalls.
+            # The fallback grabs whatever was newest by type to keep
+            # the agent oriented; counting those as recalls would
+            # inflate recall_count uniformly on every chat turn that
+            # didn't lexically match a memory (e.g. "hi"), and would
+            # pollute /memory/recalls with bogus entries that don't
+            # actually answer the question. The earlier code claimed
+            # in a comment to skip the log on fallback — but the code
+            # didn't. Now it does.
+            if not used_fallback:
+                keys_in_order = [e.key for e in entries]
+                self._bump_recall(keys_in_order)
+                self.record_recall(query, keys_in_order)
 
         if not entries:
             return ""
