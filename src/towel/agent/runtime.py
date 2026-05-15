@@ -24,6 +24,38 @@ log = logging.getLogger("towel.agent")
 
 MAX_TOOL_ITERATIONS = 999
 
+# Loop-detection threshold for the agent's tool-call loop. When the
+# same (name, args) fingerprint appears in this many consecutive
+# iterations, the model is stuck — break out before burning the
+# rest of MAX_TOOL_ITERATIONS (~5h on a 20s/call worker).
+TOOL_LOOP_REPEAT_LIMIT = 3
+
+
+def _tool_call_fingerprint(tool_calls: Any) -> str:
+    """Stable fingerprint of one iteration's tool calls for loop detection."""
+    import json as _json
+
+    return _json.dumps(
+        [(tc.name, tc.arguments) for tc in tool_calls],
+        sort_keys=True, default=str,
+    )
+
+
+def _check_tool_loop(history: list[str], fingerprint: str) -> bool:
+    """Append `fingerprint`; return True iff the last
+    ``TOOL_LOOP_REPEAT_LIMIT`` entries are all identical.
+
+    Mutates ``history`` in place — keeps at most
+    ``TOOL_LOOP_REPEAT_LIMIT`` entries.
+    """
+    history.append(fingerprint)
+    if len(history) > TOOL_LOOP_REPEAT_LIMIT:
+        history.pop(0)
+    return (
+        len(history) == TOOL_LOOP_REPEAT_LIMIT
+        and len(set(history)) == 1
+    )
+
 
 def mlx_tokenizer_config() -> dict[str, Any]:
     """Return tokenizer config overrides for MLX loads.
@@ -329,6 +361,8 @@ class AgentRuntime:
         """
         total_tokens = 0
         last_tps = 0.0
+        loop_fingerprints: list[str] = []
+        stuck_call_name: str | None = None
 
         for iteration in range(MAX_TOOL_ITERATIONS):
             result = await self.generate(conversation)
@@ -348,6 +382,19 @@ class AgentRuntime:
             # Add the assistant's message (with tool calls stripped) to conversation
             if remaining_text:
                 conversation.add(Role.ASSISTANT, remaining_text)
+
+            # Loop-detection: same fingerprint TOOL_LOOP_REPEAT_LIMIT
+            # times in a row = stuck, break out before burning the rest
+            # of MAX_TOOL_ITERATIONS.
+            if _check_tool_loop(
+                loop_fingerprints, _tool_call_fingerprint(tool_calls)
+            ):
+                log.warning(
+                    "Local agent tool-loop detected (%r repeated %d times)",
+                    tool_calls[0].name, TOOL_LOOP_REPEAT_LIMIT,
+                )
+                stuck_call_name = tool_calls[0].name
+                break
 
             # Execute each tool call and add results
             for tc in tool_calls:
@@ -382,7 +429,21 @@ class AgentRuntime:
                     status="error" if is_error else "ok",
                 )
 
-        # Hit max iterations — return what we have
+        # Either hit max iterations OR loop detection broke us out.
+        if stuck_call_name is not None:
+            stuck_msg = (
+                f"I got stuck calling {stuck_call_name!r} repeatedly. "
+                "Stopping to avoid burning more time on this turn."
+            )
+            return Message(
+                role=Role.ASSISTANT,
+                content=(remaining_text + "\n\n" + stuck_msg) if remaining_text else stuck_msg,
+                metadata={
+                    "tps": last_tps,
+                    "tokens": total_tokens,
+                    "loop_detected": True,
+                },
+            )
         log.warning(f"Hit max tool iterations ({MAX_TOOL_ITERATIONS})")
         return Message(
             role=Role.ASSISTANT,
@@ -399,6 +460,8 @@ class AgentRuntime:
         # Reset cancel flag for this generation
         self._cancel.clear()
         total_tokens = 0
+        loop_fingerprints: list[str] = []
+        stuck_call_name: str | None = None
 
         for iteration in range(MAX_TOOL_ITERATIONS):
             # Stream tokens and accumulate the full response
@@ -443,6 +506,17 @@ class AgentRuntime:
             if remaining_text:
                 conversation.add(Role.ASSISTANT, remaining_text)
 
+            # Loop-detection (see step()).
+            if _check_tool_loop(
+                loop_fingerprints, _tool_call_fingerprint(tool_calls)
+            ):
+                log.warning(
+                    "Local agent (streaming) tool-loop detected (%r repeated %d times)",
+                    tool_calls[0].name, TOOL_LOOP_REPEAT_LIMIT,
+                )
+                stuck_call_name = tool_calls[0].name
+                break
+
             for tc in tool_calls:
                 if self._cancel.is_set():
                     yield AgentEvent.cancelled(
@@ -484,7 +558,21 @@ class AgentRuntime:
                     status="error" if is_error else "ok",
                 )
 
-        # Hit max iterations
+        # Either hit max iterations OR loop detection broke us out.
+        if stuck_call_name is not None:
+            stuck_msg = (
+                f"I got stuck calling {stuck_call_name!r} repeatedly. "
+                "Stopping to avoid burning more time on this turn."
+            )
+            yield AgentEvent.complete(
+                (remaining_text + "\n\n" + stuck_msg) if remaining_text else stuck_msg,
+                metadata={
+                    "tps": 0,
+                    "tokens": total_tokens,
+                    "loop_detected": True,
+                },
+            )
+            return
         log.warning(f"Hit max tool iterations ({MAX_TOOL_ITERATIONS})")
         yield AgentEvent.complete(
             remaining_text or "I've reached my tool execution limit for this turn.",
