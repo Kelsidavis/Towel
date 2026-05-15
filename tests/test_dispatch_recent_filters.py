@@ -165,6 +165,61 @@ class TestDispatchRecentFilters:
         assert entry["pinned_worker_id"] == "busy-host"
         assert entry["session_id"] == "sess-pin"
 
+    def test_min_total_ms_filters_slow_requests(self, gateway):
+        """Operators triaging slow / timed-out dispatches previously
+        had to eyeball every entry's total_ms by hand. The
+        `min_total_ms` filter lets them ask "show me everything that
+        took > 60s" in one query — pairs naturally with the
+        worker_inference_timeout (300s) and chat_fast_timeout (60s)
+        bounds so timeout-class entries surface immediately."""
+        assert gateway._dispatcher is not None
+        # Three decisions: fast, slow-but-under-threshold, slow.
+        for sid, ms in (("fast", 100.0), ("med", 5000.0), ("slow", 300000.0)):
+            d = DispatchDecision(
+                worker=_stub_worker("w"),
+                intent="chat",
+                reason="role_match",
+                session_id=sid,
+                candidates_considered=1,
+            )
+            d.total_ms = ms
+            gateway._dispatcher._record(d)
+        # Also a decision with no total_ms (in-flight) — must be
+        # excluded from the >=N filter.
+        gateway._dispatcher._record(
+            DispatchDecision(
+                worker=_stub_worker("w"),
+                intent="chat",
+                reason="role_match",
+                session_id="no-timing",
+                candidates_considered=1,
+            )
+        )
+
+        client = TestClient(gateway._build_http_app())
+        resp = client.get("/dispatch/recent?min_total_ms=60000").json()
+        sids = {d["session_id"] for d in resp["decisions"]}
+        assert sids == {"slow"}, sids
+
+        # A lower threshold catches both slow and medium.
+        resp = client.get("/dispatch/recent?min_total_ms=1000").json()
+        sids = {d["session_id"] for d in resp["decisions"]}
+        assert sids == {"med", "slow"}, sids
+
+    def test_min_total_ms_rejects_non_numeric(self, gateway):
+        """Bogus input should error fast rather than silently fall
+        through (same defensive shape as `limit=abc`)."""
+        client = TestClient(gateway._build_http_app())
+        resp = client.get("/dispatch/recent?min_total_ms=abc")
+        assert resp.status_code == 400
+
+    def test_min_total_ms_rejects_negative(self, gateway):
+        """Negative thresholds make no sense — surface as 400 instead
+        of accepting them and silently matching everything."""
+        client = TestClient(gateway._build_http_app())
+        resp = client.get("/dispatch/recent?min_total_ms=-1")
+        assert resp.status_code == 400
+
     def test_combined_filters(self, gateway):
         _seed_decisions(gateway)
         client = TestClient(gateway._build_http_app())

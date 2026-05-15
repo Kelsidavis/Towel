@@ -426,6 +426,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
             <label><input type="checkbox" id="dispatch-filter-degraded"> only quality-degraded</label>
             <label><input type="checkbox" id="dispatch-filter-affinity-missed"> only affinity-missed</label>
             <label><input type="checkbox" id="dispatch-filter-pin-missed"> only pin-missed</label>
+            <label><input type="checkbox" id="dispatch-filter-slow"> only slow (≥60s)</label>
           </div>
           <div class="fleet-list" id="fleet-dispatch-list"></div>
         </div>
@@ -1118,7 +1119,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     }
     // Re-fetch the dispatch list whenever a filter checkbox flips, instead
     // of waiting up to 5s for the periodic refresh tick.
-    ['dispatch-filter-degraded', 'dispatch-filter-affinity-missed', 'dispatch-filter-pin-missed'].forEach(function(id) {
+    ['dispatch-filter-degraded', 'dispatch-filter-affinity-missed', 'dispatch-filter-pin-missed', 'dispatch-filter-slow'].forEach(function(id) {
       const el = document.getElementById(id);
       if (el && !el.dataset.wired) {
         el.addEventListener('change', loadFleetState);
@@ -1518,10 +1519,15 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     const degraded = document.getElementById('dispatch-filter-degraded');
     const affinityMissed = document.getElementById('dispatch-filter-affinity-missed');
     const pinMissed = document.getElementById('dispatch-filter-pin-missed');
+    const slow = document.getElementById('dispatch-filter-slow');
     const params = [];
     if (degraded && degraded.checked) params.push('only_degraded=1');
     if (affinityMissed && affinityMissed.checked) params.push('only_affinity_missed=1');
     if (pinMissed && pinMissed.checked) params.push('only_pin_missed=1');
+    // 60_000 ms matches the chat_fast_timeout default — anything
+    // slower than that is firmly in the "I should look at this"
+    // bucket without filtering out normal small-model latency.
+    if (slow && slow.checked) params.push('min_total_ms=60000');
     return params.length ? '&' + params.join('&') : '';
   }
   function advertisedLauncherUrl(workerId) {

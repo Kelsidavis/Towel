@@ -3399,6 +3399,7 @@ class GatewayServer:
               ``?only_degraded=1``     — only quality_degraded decisions
               ``?only_affinity_missed=1`` — only affinity_missed decisions
               ``?only_pin_missed=1``   — only pin_missed decisions
+              ``?min_total_ms=N``      — only decisions with total_ms ≥ N
               ``?limit=N``             — cap the response (default 20)
 
             Filters apply *before* the limit so a tight limit doesn't hide
@@ -3420,6 +3421,28 @@ class GatewayServer:
             # "my pin is being ignored" — the bypassed decision
             # looked like a normal route in the log.
             only_pin_missed = request.query_params.get("only_pin_missed") in {"1", "true"}
+            # `min_total_ms=<N>` surfaces only decisions whose
+            # measured wall-time is >= N ms — operators triaging slow
+            # / timed-out requests previously had to eyeball the
+            # whole list for high `total_ms` values. Pairs naturally
+            # with the worker_inference_timeout (default 300s) and
+            # chat_fast_timeout (60s) so a quick `?min_total_ms=60000`
+            # lights up every long tail. Entries without total_ms
+            # (e.g. recorded mid-flight) are excluded — they haven't
+            # yet been stamped with timing.
+            try:
+                min_total_ms_raw = request.query_params.get("min_total_ms")
+                min_total_ms = (
+                    float(min_total_ms_raw) if min_total_ms_raw is not None else None
+                )
+            except ValueError:
+                return JSONResponse(
+                    {"error": "min_total_ms must be a number"}, status_code=400,
+                )
+            if min_total_ms is not None and min_total_ms < 0:
+                return JSONResponse(
+                    {"error": "min_total_ms must be ≥ 0"}, status_code=400,
+                )
 
             assert self._dispatcher is not None
             entries = [d.to_dict() for d in self._dispatcher.history()]
@@ -3451,6 +3474,12 @@ class GatewayServer:
                 entries = [e for e in entries if e.get("affinity_missed")]
             if only_pin_missed:
                 entries = [e for e in entries if e.get("pin_missed")]
+            if min_total_ms is not None:
+                entries = [
+                    e for e in entries
+                    if isinstance(e.get("total_ms"), (int, float))
+                    and e["total_ms"] >= min_total_ms
+                ]
 
             # Log freshness: oldest-entry age + cap occupancy so the
             # UI can warn when the operator is looking at a saturated
