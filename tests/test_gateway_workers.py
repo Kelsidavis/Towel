@@ -467,6 +467,48 @@ class TestRemoteExecution:
         assert not worker.busy
 
     @pytest.mark.asyncio
+    async def test_quick_remote_infer_appends_anti_tool_call_directive(self, gateway):
+        """Live observation: 22% of chat dispatches in the running
+        cluster were retry_empty_text because the small Gemma-4-E2B
+        worker emits <tool_call> blocks for plain chat questions —
+        ``infer`` mode doesn't advertise tools, so any emitted tool
+        call is dropped by the parser and the coordinator sees empty
+        text. Explicit anti-tool-call directive in the chat system
+        prompt nudges the model toward plain prose."""
+        session = gateway.sessions.get_or_create("anti-tool-call")
+        session.conversation.add(Role.USER, "What is 2+2?")
+        worker_ws = DummyWS()
+        worker = gateway._workers.register(
+            "qri-worker", worker_ws,
+            {"modes": ["llama_chat"], "model": "test-model"},
+        )
+        # Drive the call far enough to capture the outgoing WS frame,
+        # then short-circuit via a fake queue.get that returns a
+        # job_done.
+        captured_payload: dict = {}
+
+        async def fake_send(s: str) -> None:
+            import json as _json
+            captured_payload["raw"] = _json.loads(s)
+            # Now feed a synthetic job_done so the coroutine returns.
+            job_id = captured_payload["raw"]["job_id"]
+            queue = gateway._job_queues.get(job_id)
+            if queue:
+                queue.put_nowait({
+                    "type": "job_done",
+                    "result": {"text": "4", "metadata": {"tokens": 1, "tps": 5.0}},
+                })
+
+        worker.ws.send = fake_send  # type: ignore[method-assign]
+        # Patch wait_for so this doesn't block on the asyncio queue
+        # if the fake_send hasn't put anything yet.
+        await gateway._quick_remote_infer("anti-tool-call", session, worker)
+        # The system prompt that flew on the wire carries the
+        # anti-tool-call directive.
+        system_prompt = captured_payload["raw"]["request"]["system"]
+        assert "plain text only" in system_prompt
+        assert "tool_call" in system_prompt or "function-call" in system_prompt
+
     async def test_quick_remote_infer_timeout_surfaces_useful_error(self, gateway):
         """`asyncio.TimeoutError` stringifies to "" — without an explicit
         catch the caller (simple_ask) returns `{"error": ""}` HTTP 500

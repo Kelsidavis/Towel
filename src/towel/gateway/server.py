@@ -2169,6 +2169,24 @@ class GatewayServer:
             or getattr(self.config, "identity", "")
             or "You are a helpful assistant. Answer concisely."
         )
+        # Append a chat-mode-specific anti-tool-call directive.
+        # Live observation: 22% of chat dispatches in the running
+        # cluster were retry_empty_text — the small Gemma-4-E2B
+        # worker (trained heavily on tool-use traces) emits
+        # <tool_call> blocks for "what's 2+2?" because that's
+        # what the chat template encourages. ``infer`` mode does
+        # NOT advertise tools to the worker (no tools list in
+        # the payload), so any emitted tool call is silently
+        # dropped by the parser and the coordinator sees empty
+        # text. Tell the model explicitly to respond with prose
+        # — this is cheap, idempotent, and saves the 21s round-
+        # trip the empty-text retry costs on every flaky request.
+        identity = (
+            identity
+            + "\n\nRespond with plain text only. Do not emit "
+            "<tool_call>, function-call, or tool-use blocks — "
+            "those are not available in this turn."
+        )
         # Inject coordinator memory into the worker's system prompt
         # (see _conv_dict_with_memory for the rationale — workers have
         # empty local memory stores so any /api/ask question that
