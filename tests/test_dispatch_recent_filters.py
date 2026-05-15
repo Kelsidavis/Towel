@@ -248,3 +248,42 @@ class TestDispatchRecentFilters:
         client = TestClient(gateway._build_http_app())
         resp = client.get("/dispatch/recent?limit=abc")
         assert resp.status_code == 400
+
+    def test_log_status_includes_oldest_age_seconds(self, gateway):
+        """`log_status.oldest_age_seconds` is meant to drive the UI's
+        log-freshness indicator, but the original code looked for an
+        `ts` field that to_dict() never emits — the actual field is
+        `timestamp` (Unix float). datetime.fromisoformat("") raised
+        ValueError, the bare except swallowed it, and the field was
+        silently missing from every payload.
+
+        With a few recorded decisions, the freshness number should
+        now appear and be non-negative."""
+        import time
+        # Two decisions: one a few seconds old, one fresh.
+        old_decision = DispatchDecision(
+            worker=_stub_worker("w"),
+            intent="chat",
+            reason="role_match",
+            session_id="old",
+            candidates_considered=1,
+        )
+        old_decision.timestamp = time.time() - 5.0
+        gateway._dispatcher._record(old_decision)
+        gateway._dispatcher._record(
+            DispatchDecision(
+                worker=_stub_worker("w"),
+                intent="chat",
+                reason="role_match",
+                session_id="fresh",
+                candidates_considered=1,
+            )
+        )
+
+        client = TestClient(gateway._build_http_app())
+        resp = client.get("/dispatch/recent").json()
+        assert "oldest_age_seconds" in resp["log_status"], resp["log_status"]
+        # Sanity: oldest_age_seconds is non-negative and at least
+        # a couple of seconds for the 5s-old entry.
+        assert resp["log_status"]["oldest_age_seconds"] >= 0
+        assert resp["log_status"]["oldest_age_seconds"] >= 4

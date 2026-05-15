@@ -3502,13 +3502,20 @@ class GatewayServer:
             }
             full_history = self._dispatcher.history()
             if full_history:
-                from datetime import datetime, UTC
+                # `oldest_age_seconds` previously looked for an
+                # `ts` field in ISO string form, but to_dict() emits
+                # `timestamp` as a Unix float (time.time()). The
+                # mismatch made datetime.fromisoformat("") raise
+                # ValueError, which the bare except swallowed —
+                # `oldest_age_seconds` was silently missing from
+                # every log_status payload. The UI's "log freshness"
+                # warning had no signal to act on.
                 try:
-                    oldest_ts = datetime.fromisoformat(
-                        full_history[0].to_dict().get("ts", "")
-                    )
-                    age_s = (datetime.now(UTC) - oldest_ts).total_seconds()
-                    log_status["oldest_age_seconds"] = int(age_s)
+                    import time as _time
+                    oldest_ts = full_history[0].timestamp
+                    if isinstance(oldest_ts, (int, float)):
+                        age_s = _time.time() - oldest_ts
+                        log_status["oldest_age_seconds"] = max(0, int(age_s))
                 except Exception:
                     pass
                 log_status["saturated"] = len(full_history) >= history_size
