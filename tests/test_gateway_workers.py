@@ -562,6 +562,28 @@ class TestRemoteExecution:
         assert cancel_msgs[0]["job_id"] == job_id
 
     @pytest.mark.asyncio
+    async def test_quick_remote_infer_sends_cancel_on_timeout(self, gateway):
+        """`_quick_remote_infer` is the chat-fast path. A worker
+        timeout used to leave the worker still generating in the
+        background — same waste as the streaming paths. Verify the
+        cancel_job fires when the wait_for times out."""
+        session = gateway.sessions.get_or_create("qri-timeout")
+        session.conversation.add(Role.USER, "hi")
+        worker_ws = DummyWS()
+        worker = gateway._workers.register("worker-qto", worker_ws, {"tools": False})
+
+        # Patch chat_fast_timeout so we don't actually wait 60s.
+        gateway.config.chat_fast_timeout = 0.05
+
+        with pytest.raises(RuntimeError):
+            await gateway._quick_remote_infer("qri-timeout", session, worker)
+
+        # First message is the `infer`, then the `cancel_job`.
+        types = [m.get("type") for m in worker_ws.sent]
+        assert "infer" in types
+        assert "cancel_job" in types
+
+    @pytest.mark.asyncio
     async def test_iter_remote_tokens_no_cancel_on_normal_completion(self, gateway):
         """When the worker emits job_done normally, we should NOT
         send a redundant cancel_job."""

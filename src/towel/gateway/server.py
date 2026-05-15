@@ -996,6 +996,12 @@ class GatewayServer:
         chat_fast_timeout = float(
             getattr(self.config, "chat_fast_timeout", 60.0) or 60.0
         )
+        # Track whether the worker reached a terminal state on its own.
+        # If we exit any other way (timeout, asyncio cancel, Starlette
+        # client-disconnect propagating CancelledError), the finally
+        # block sends `cancel_job` so the worker stops generating a
+        # response nobody will read.
+        completed_normally = False
         try:
             try:
                 msg = await asyncio.wait_for(queue.get(), timeout=chat_fast_timeout)
@@ -1060,10 +1066,29 @@ class GatewayServer:
                     },
                 )
                 session.conversation.messages.append(response)
+                completed_normally = True
                 return response
             elif msg.get("type") == "job_error":
+                # Worker reported failure — it's done on its own;
+                # no cancel needed.
+                completed_normally = True
                 raise RuntimeError(msg.get("message", "Worker failed"))
+            # Any other message type isn't a terminal state. Fall
+            # through to finally — `completed_normally` stays False
+            # and we cancel the job.
         finally:
+            if not completed_normally:
+                try:
+                    await worker.ws.send(
+                        json.dumps(
+                            {"type": "cancel_job", "job_id": job_id, "session": session_id}
+                        )
+                    )
+                except Exception as exc:
+                    log.debug(
+                        "Failed to send cancel_job to %s for %s: %s",
+                        worker.id, job_id, exc,
+                    )
             self._job_queues.pop(job_id, None)
             self._session_jobs.pop(session_id, None)
             self._workers.release(worker.id)
@@ -1476,6 +1501,12 @@ class GatewayServer:
         # 30B model doesn't trip a 120s default before its first
         # token. Falls back to 300s if config is absent.
         chunk_timeout = float(getattr(self.config, "worker_inference_timeout", 300.0) or 300.0)
+        # Same cancel-on-disconnect pattern as the streaming siblings:
+        # only the worker's own terminal event counts as "completed
+        # normally"; anything else (timeout, CancelledError, client
+        # disconnect propagating up) triggers a cancel_job so the
+        # worker doesn't keep producing for nobody.
+        completed_normally = False
         try:
             while True:
                 try:
@@ -1511,10 +1542,25 @@ class GatewayServer:
                             "text": resp.get("content", ""),
                             "metadata": resp.get("metadata", {}),
                         }
+                    completed_normally = True
                     return result
                 elif msg_type == "job_error":
+                    # Worker already failed on its own; no cancel needed.
+                    completed_normally = True
                     raise RuntimeError(msg.get("message", "Remote worker failed"))
         finally:
+            if not completed_normally:
+                try:
+                    await worker.ws.send(
+                        json.dumps(
+                            {"type": "cancel_job", "job_id": job_id, "session": session_id}
+                        )
+                    )
+                except Exception as exc:
+                    log.debug(
+                        "Failed to send cancel_job to %s for %s: %s",
+                        worker.id, job_id, exc,
+                    )
             self._job_queues.pop(job_id, None)
             self._session_jobs.pop(session_id, None)
             self._workers.release(worker.id)
