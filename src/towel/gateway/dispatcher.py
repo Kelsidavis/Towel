@@ -363,7 +363,38 @@ class Dispatcher:
         ):
             from towel.nodes.roles import TASK_REQUIREMENTS as _TR
             reqs = _TR.get(task_type, {})
-            if reqs.get("prefer_fast"):
+            if reqs.get("prefer_quality"):
+                # Live observation: a GENERATE task landed on the
+                # 4GB worker because the 24GB worker was on an
+                # idle PROACTIVE_HELP. The small worker then
+                # spent 5+ minutes tool-looping while the big
+                # worker generated diagnostic prose nobody asked
+                # for. Mirror the prefer_fast preempt but in the
+                # bigger-is-better direction so quality tasks
+                # land on workers actually sized for them.
+                bigger = self._bigger_idle_worker_for_task(
+                    picked=decision.worker, task=task_type, excluded=excluded,
+                )
+                if bigger is not None:
+                    await self._preempt_hook(bigger)
+                    decision = DispatchDecision(
+                        worker=bigger,
+                        intent=intent,
+                        task_type=task_type,
+                        reason=REASON_PREEMPT_IDLE,
+                        notes=(
+                            f"preempted idle task on {bigger.id} "
+                            f"(bigger model than {decision.worker.id})"
+                        ),
+                        candidates_considered=decision.candidates_considered,
+                        session_id=session_id,
+                        preempted_idle=True,
+                        affinity_missed=decision.affinity_missed,
+                        previous_worker_id=decision.previous_worker_id,
+                        pin_missed=decision.pin_missed,
+                        pinned_worker_id=decision.pinned_worker_id,
+                    )
+            elif reqs.get("prefer_fast"):
                 smaller = self._smaller_idle_worker_for_task(
                     picked=decision.worker, task=task_type, excluded=excluded,
                 )
@@ -391,6 +422,42 @@ class Dispatcher:
                     )
         self._record(decision)
         return decision
+
+    def _bigger_idle_worker_for_task(
+        self, *, picked: WorkerInfo, task: TaskType, excluded: set[str]
+    ) -> WorkerInfo | None:
+        """Find a bigger-VRAM worker currently running an idle task.
+
+        Symmetric to ``_smaller_idle_worker_for_task`` but used for
+        prefer_quality tasks. Live observation: a GENERATE task
+        landed on the 4GB small worker because the 24GB big worker
+        was running an idle PROACTIVE_HELP task — the small worker
+        then spent 5+ minutes tool-looping while the big worker
+        ground through diagnostic generation. Preempting the idle
+        task on the big worker lets the user's real GENERATE land
+        where it actually has enough VRAM to be productive.
+        """
+        from towel.nodes.capability import _safe_int
+        picked_vram = _safe_int(
+            (picked.capabilities or {}).get("total_vram_mb")
+        )
+        for w in self._workers.list():
+            if w.id in excluded or w.id == picked.id:
+                continue
+            if not w.enabled or w.draining:
+                continue
+            if not self._is_idle_task(w.id):
+                continue
+            caps = w.capabilities or {}
+            if task not in (caps.get("assigned_tasks") or []):
+                continue
+            w_vram = _safe_int(caps.get("total_vram_mb"))
+            # Strictly bigger so we don't churn between equally-sized
+            # workers. The picked worker has 0 vram only when it's
+            # unknown; in that case any worker with known vram beats it.
+            if w_vram > picked_vram:
+                return w
+        return None
 
     def _smaller_idle_worker_for_task(
         self, *, picked: WorkerInfo, task: TaskType, excluded: set[str]

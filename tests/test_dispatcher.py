@@ -365,6 +365,81 @@ class TestPreemption:
         assert decision.preempted_idle is True
         assert preempt_called == ["small_busy_idle"]
 
+    def test_bigger_busy_idle_worker_preempted_for_quality(self):
+        """Symmetric to test_smaller_busy_idle_worker_preempted_for_chat
+        but in the other direction. Live observation: a GENERATE
+        task landed on the 4GB small worker because the 24GB big
+        worker was running an idle PROACTIVE_HELP. The small worker
+        spent 5+ minutes tool-looping while the big worker generated
+        diagnostic prose nobody asked for. Bigger-is-better preempt
+        on prefer_quality tasks lets the user's real GENERATE land
+        where it has enough VRAM to be productive."""
+        workers = WorkerRegistry()
+        # The big quality-capable worker is busy with idle work.
+        big = _make_worker(workers, "big_busy_idle", busy=True)
+        big.capabilities["total_vram_mb"] = 24000
+        big.capabilities["assigned_tasks"] = [TaskType.GENERATE]
+        # The small worker is free.
+        small = _make_worker(workers, "small_free", busy=False)
+        small.capabilities["total_vram_mb"] = 4096
+        small.capabilities["assigned_tasks"] = [TaskType.GENERATE]
+
+        preempt_called: list[str] = []
+
+        async def preempt(w: WorkerInfo) -> None:
+            preempt_called.append(w.id)
+            workers.release(w.id)
+
+        d = _make_dispatcher(
+            workers,
+            tasks={"big_busy_idle": [TaskType.GENERATE], "small_free": [TaskType.GENERATE]},
+            roles={
+                "big_busy_idle": [NodeRole.INFERENCE, NodeRole.TOOL_WORKER],
+                "small_free": [NodeRole.INFERENCE, NodeRole.TOOL_WORKER],
+            },
+            idle_task_workers={"big_busy_idle"},
+            preempt_hook=preempt,
+        )
+        decision = asyncio.run(
+            d.async_select_for_session("s1", intent="task", task_type=TaskType.GENERATE)
+        )
+        assert decision.worker is not None
+        assert decision.worker.id == "big_busy_idle"
+        assert decision.reason == REASON_PREEMPT_IDLE
+        assert decision.preempted_idle is True
+        assert preempt_called == ["big_busy_idle"]
+
+    def test_no_bigger_preempt_when_picked_is_already_biggest(self):
+        """If the quality path picked the bigger worker, no preempt
+        should happen even when a smaller worker is busy with idle."""
+        workers = WorkerRegistry()
+        big_free = _make_worker(workers, "big_free", busy=False)
+        big_free.capabilities["total_vram_mb"] = 24000
+        big_free.capabilities["assigned_tasks"] = [TaskType.GENERATE]
+        small_idle = _make_worker(workers, "small_idle", busy=True)
+        small_idle.capabilities["total_vram_mb"] = 4096
+        small_idle.capabilities["assigned_tasks"] = [TaskType.GENERATE]
+
+        preempted: list[str] = []
+
+        async def preempt(w: WorkerInfo) -> None:
+            preempted.append(w.id)
+            workers.release(w.id)
+
+        d = _make_dispatcher(
+            workers,
+            tasks={"big_free": [TaskType.GENERATE], "small_idle": [TaskType.GENERATE]},
+            idle_task_workers={"small_idle"},
+            preempt_hook=preempt,
+        )
+        decision = asyncio.run(
+            d.async_select_for_session("s1", intent="task", task_type=TaskType.GENERATE)
+        )
+        assert decision.worker is not None
+        assert decision.worker.id == "big_free"
+        # No preempt — we already had the biggest worker available.
+        assert preempted == []
+
     def test_no_smaller_preempt_when_picked_is_already_smallest(self):
         """If the chat path picked the smaller worker, no preempt
         should happen even when a larger worker is busy with idle."""
