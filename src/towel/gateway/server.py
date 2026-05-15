@@ -1186,6 +1186,7 @@ class GatewayServer:
         session_id: str,
         question: str,
         user_session: Any = None,
+        identity_override: str | None = None,
     ) -> tuple[str, list[dict[str, Any]], str]:
         """Fan the same prompt to every idle capable worker in parallel.
 
@@ -1254,7 +1255,7 @@ class GatewayServer:
             candidates.append(w)
 
         if not candidates:
-            return "", []
+            return "", [], "none"
 
         # uuid suffix so concurrent ensemble runs on the same
         # user-facing session_id don't collide on the ephemeral
@@ -1286,6 +1287,7 @@ class GatewayServer:
             try:
                 resp = await self._quick_remote_infer(
                     sess_id, session, worker, max_tokens=512,
+                    identity_override=identity_override,
                 )
                 ms = round((_time.monotonic() - t0) * 1000.0, 1)
                 meta = resp.metadata or {}
@@ -5132,6 +5134,7 @@ class GatewayServer:
                     arbitrated, ensemble_contributions, ensemble_arb_mode = (
                         await self._ensemble_dispatch(
                             session_id, message, user_session=session,
+                            identity_override=identity_override,
                         )
                     )
                     if arbitrated:
