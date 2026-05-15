@@ -3010,10 +3010,16 @@ class GatewayServer:
                 return JSONResponse({"error": "invalid JSON body"}, status_code=400)
             if not isinstance(body, dict):
                 return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
-            key = body.get("key")
+            raw_key = body.get("key")
             content = body.get("content")
-            if not (isinstance(key, str) and key.strip()):
+            if not (isinstance(raw_key, str) and raw_key.strip()):
                 return JSONResponse({"error": "key required"}, status_code=400)
+            # Strip leading/trailing whitespace. Operators submitting
+            # `"trailing  "` almost never mean a different key from
+            # `"trailing"` — and the as-stored value was invisible in
+            # URL bars and CLI output, making the entry effectively
+            # unrecallable without exact whitespace replay.
+            key = raw_key.strip()
             # Hard cap key length. Memory keys appear in URL paths
             # (/memory/{key}/inspect, /nudge, ...), in dispatch logs,
             # and in the web UI. Anything past a couple hundred chars

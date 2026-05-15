@@ -264,6 +264,22 @@ class TestMemoryEndpoint:
             assert resp.status_code == 400, f"accepted bad key {bad_key!r}"
             assert "control" in resp.json()["error"].lower()
 
+    def test_post_strips_leading_trailing_whitespace_from_key(self, store, memory):
+        """A key like "trailing  " was stored as-is, so recall via the
+        natural-looking "trailing" returned 404 — invisible whitespace
+        made the entry effectively unrecallable without exact replay."""
+        gw = _gateway(store, _FakeAgent(memory))
+        client = TestClient(gw._build_http_app())
+        resp = client.post(
+            "/memory",
+            json={"key": "  spaced_key  ", "content": "x"},
+        )
+        assert resp.status_code == 201
+        # The persisted key is the stripped version.
+        assert memory.recall("spaced_key") is not None
+        # And the as-stored key has no leading/trailing space.
+        assert resp.json()["key"] == "spaced_key"
+
     def test_post_tags_and_scope_persist(self, store, memory):
         gw = _gateway(store, _FakeAgent(memory))
         client = TestClient(gw._build_http_app())
