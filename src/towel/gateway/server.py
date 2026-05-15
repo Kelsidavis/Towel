@@ -434,11 +434,27 @@ class GatewayServer:
 
                 if msg_type == "message":
                     session_id = msg.get("session", "default")
-                    session = self.sessions.get_or_create(session_id)
+                    # WS clients sending {"session": 42} or {"session":
+                    # null} previously crashed in ConversationStore
+                    # ._path_for (which iterates the id char-by-char,
+                    # not supported on int/None). That TypeError
+                    # propagated out of the per-message handler, exited
+                    # the read loop, and killed the WebSocket
+                    # connection — a single bad client could disconnect
+                    # itself. Coerce at the boundary instead.
+                    if not isinstance(session_id, str) or not session_id:
+                        session_id = "default"
                     content = msg.get("content", "")
+                    # Same defensive coercion for content — a non-string
+                    # would crash inside conversation.add later.
+                    if not isinstance(content, str):
+                        content = str(content)
                     channel = msg.get("channel", "unknown")
-                    stream = msg.get("stream", True)
+                    if not isinstance(channel, str):
+                        channel = "unknown"
+                    stream = bool(msg.get("stream", True))
 
+                    session = self.sessions.get_or_create(session_id)
                     session.conversation.add(Role.USER, content, channel=channel)
 
                     # ── Role-based dispatch ─────────────────────────────

@@ -137,3 +137,21 @@ class TestGatewayCancel:
         # checks isinstance(..., str) and caps to 256.
         assert "isinstance(raw_id, str)" in src
         assert "256" in src
+
+    def test_gateway_ws_message_coerces_bad_field_types(self):
+        """A client sending {"type":"message","session":42} previously
+        crashed deep in ConversationStore._path_for (iterating the int
+        char-by-char), exited the read loop, and killed the WebSocket
+        connection — a single bad client could disconnect itself.
+        Coerce session_id / content / channel at the handler boundary
+        so the read loop survives."""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._handle_ws)
+        # In the "message" branch, session_id, content, channel must
+        # have type checks.
+        assert "not isinstance(session_id, str)" in src
+        assert "not isinstance(content, str)" in src
+        assert "not isinstance(channel, str)" in src
