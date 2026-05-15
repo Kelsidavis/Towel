@@ -728,6 +728,44 @@ class TestConversationsAPI:
         assert resp.json()["deleted"] == 3
         assert store.count == 0
 
+    def test_delete_all_clears_session_pins(
+        self, gateway, store, client, tmp_path,
+    ):
+        """Delete-all clears the in-memory session affinity dict +
+        node tracker context slots, but previously left
+        `_session_pins` untouched. Pins for now-deleted conversations
+        then re-persisted on the next /sessions/<id>/pin-worker save,
+        showing up as ghost entries in the on-disk pin file. Operators
+        who used delete-all to reset state and then re-pinned a new
+        session found stale entries reappearing.
+
+        Parity with `test_delete_clears_session_worker_pin` for the
+        single-conversation delete path."""
+        from unittest.mock import MagicMock
+
+        gateway._workers.register(
+            "alpha", MagicMock(), {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "beta", MagicMock(), {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        # Two conversations + two pins.
+        for sid, worker in (("conv-1", "alpha"), ("conv-2", "beta")):
+            conv = Conversation(id=sid)
+            conv.add(Role.USER, "hi")
+            store.save(conv)
+            gateway._session_pins[sid] = worker
+        assert len(gateway._session_pins) == 2
+
+        resp = client.request("DELETE", "/conversations?confirm=yes")
+        assert resp.status_code == 200
+        # All in-memory pins gone after delete-all.
+        assert gateway._session_pins == {}
+        # Persisted state is also empty so the next save can't
+        # resurrect the stale entries.
+        assert gateway.pin_store.load() == {}
+
     def test_export_markdown(self, store, client):
         conv = Conversation(id="exp-1", channel="cli")
         conv.add(Role.USER, "hello")

@@ -665,12 +665,21 @@ class TestHttpSkill:
         result = await http.execute(
             "http_request", {"url": "https://httpbin.org/get", "timeout": 5}
         )
-        assert "200" in result or "TIMEOUT" in result or "Error" in result
+        # The intent is "skill made a request and returned something
+        # well-formed" — not "the upstream service is currently 200".
+        # Tightening the assertion to `"200" in result` made the test
+        # flake whenever httpbin returned 503 (observed in CI when the
+        # service was throttled). Accept any HTTP <status> response
+        # or the local error/timeout paths.
+        assert (
+            "HTTP " in result or "TIMEOUT" in result or "Error" in result
+        ), result
 
     @pytest.mark.asyncio
     async def test_head(self, http):
         result = await http.execute("http_head", {"url": "https://httpbin.org/get"})
-        assert "200" in result or "Error" in result
+        # Same flakiness rationale as test_get above.
+        assert "HTTP " in result or "Error" in result, result
 
 
 class TestHeartbeat:

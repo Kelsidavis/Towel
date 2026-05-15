@@ -5065,6 +5065,17 @@ class GatewayServer:
             for sid, worker_id in list(self._session_workers.items()):
                 self._node_tracker.close_context_slot(worker_id, sid)
             self._session_workers.clear()
+            # Also wipe the worker-pin map. The per-conversation
+            # delete path drops pins (commit explaining the leak path
+            # there), but delete-all left them in memory — next
+            # /sessions/<id>/pin-worker save() re-persisted them as
+            # ghost entries pointing at conversations that no longer
+            # exist. Operators who used Delete-All to reset state and
+            # then re-pinned a NEW session found stale entries
+            # reappearing on disk.
+            if self._session_pins:
+                self._session_pins.clear()
+                self.pin_store.save(self._session_pins)
             return JSONResponse({"deleted": count})
 
         async def conversation_export(request: Request) -> HTMLResponse:
