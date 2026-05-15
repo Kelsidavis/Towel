@@ -775,6 +775,32 @@ def check_storage() -> Check:
                 c.ok(f"Storage size: {total / 1024:.0f} KB")
         except OSError:
             pass
+
+        # Surface corruption backups left by ConversationStore.load()
+        # when a file failed to parse. Same as the memory-store check
+        # so operators see them on the very next `doctor` rather than
+        # only when something else breaks. Also surfaces orphan .tmp
+        # files from interrupted atomic saves (2b9060c).
+        corrupted = sorted(conv_dir.glob("*.json.corrupted-*"))
+        if corrupted:
+            c.warn(
+                f"Found {len(corrupted)} corrupted-conversation backup(s) "
+                f"— most recent: {corrupted[-1].name}"
+            )
+            c.suggestions.append(
+                "Inspect each backup and either recover content or rm if "
+                "no longer needed."
+            )
+        orphan_tmps = sorted(conv_dir.glob("*.json.tmp"))
+        if orphan_tmps:
+            c.warn(
+                f"Found {len(orphan_tmps)} orphan .json.tmp file(s) from "
+                "interrupted atomic saves"
+            )
+            c.suggestions.append(
+                "DELETE /conversations?confirm=yes also sweeps these, "
+                "or rm them manually."
+            )
     else:
         c.ok("No conversations stored yet")
 

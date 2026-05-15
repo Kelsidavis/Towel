@@ -54,7 +54,15 @@ class ConversationStore:
         return path
 
     def load(self, conversation_id: str) -> Conversation | None:
-        """Load a conversation by ID. Returns None if not found."""
+        """Load a conversation by ID. Returns None if not found.
+
+        On corruption, renames the bad file to a sibling
+        ``.corrupted-<timestamp>`` before returning None. Without
+        this, the next save() for this id would overwrite the
+        corrupt file with fresh empty content — silently destroying
+        whatever was there. Same pattern memory/store.py adopted
+        in 5512834.
+        """
         path = self._path_for(conversation_id)
         if not path.exists():
             return None
@@ -62,7 +70,25 @@ class ConversationStore:
             data = json.loads(path.read_text(encoding="utf-8"))
             return Conversation.from_dict(data)
         except (json.JSONDecodeError, KeyError, ValueError) as e:
-            log.warning(f"Failed to load conversation {conversation_id}: {e}")
+            from datetime import UTC, datetime
+            backup = path.with_name(
+                f"{path.name}.corrupted-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}"
+            )
+            try:
+                path.replace(backup)
+                log.warning(
+                    "Failed to load conversation %s: %s. Backed up the "
+                    "bad file to %s — the next save would otherwise "
+                    "overwrite it with fresh empty content.",
+                    conversation_id, e, backup,
+                )
+            except OSError as rename_exc:
+                log.warning(
+                    "Failed to load conversation %s: %s. Also failed to "
+                    "back up the corrupt file (%s) — data may be lost on "
+                    "the next save.",
+                    conversation_id, e, rename_exc,
+                )
             return None
 
     def delete(self, conversation_id: str) -> bool:

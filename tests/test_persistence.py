@@ -174,6 +174,32 @@ class TestConversationStore:
         summaries = store.list_conversations()
         assert len(summaries) == 0
 
+    def test_load_corrupt_file_backs_up_before_returning_none(
+        self, store, tmp_path,
+    ):
+        """If load() returns None on corruption, the next save() for
+        the same id would overwrite the corrupt file with fresh
+        empty content — silently destroying whatever was there. Rename
+        the bad file aside first so the corrupted bytes are
+        recoverable. Same pattern memory/store.py adopted in
+        5512834."""
+        # Write a file that looks like a conversation path but isn't
+        # valid JSON. The path sanitizer maps the id "corrupt-conv"
+        # to "corrupt-conv.json" so we can write it directly.
+        bad_path = tmp_path / "corrupt-conv.json"
+        bad_path.write_text("{ not valid json")
+
+        assert store.load("corrupt-conv") is None
+
+        # The original file is gone (renamed aside) so the next save
+        # can't overwrite it.
+        assert not bad_path.exists()
+        # A corruption backup is on disk.
+        backups = list(tmp_path.glob("corrupt-conv.json.corrupted-*"))
+        assert len(backups) == 1
+        # And the backup still has the corrupt bytes.
+        assert backups[0].read_text() == "{ not valid json"
+
     def test_delete_all_cleans_up_orphan_tmp_files(self, store, tmp_path):
         """Atomic saves can leak `*.json.tmp` files when the rename
         fails (kill / disk-full). They're invisible to
