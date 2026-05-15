@@ -108,6 +108,27 @@ class TestExistingTaskTypes:
     def test_git_keyword(self):
         assert classify_task_type("git commit and push the changes") == TaskType.GIT_OPS
 
+    def test_build_keyword_only_matches_compile_context(self):
+        """Bare "build a X" was silently classified as TaskType.BUILD
+        (prefer_fast), which routed code-generation orchestrations to
+        the smaller worker. Live observation:
+        "Build a tic-tac-toe game" landed on Gemma-4-E2B 4GB instead
+        of SparklesMint 27B. Only the explicit compile/package
+        phrases should match BUILD now."""
+        # Compile-context phrases still match.
+        assert classify_task_type("compile the kernel") == TaskType.BUILD
+        assert classify_task_type("npm run build") == TaskType.BUILD
+        assert classify_task_type("pip install towel") == TaskType.BUILD
+        assert classify_task_type("build the project") == TaskType.BUILD
+        assert classify_task_type("build the docker image") == TaskType.BUILD
+        # Generation-context phrases must NOT match BUILD — they
+        # should fall through to GENERATE (or whichever later rule
+        # catches them), which is prefer_quality and lands on the
+        # larger worker.
+        assert classify_task_type("build a tic-tac-toe game") != TaskType.BUILD
+        assert classify_task_type("Build a 3D pygame demo") != TaskType.BUILD
+        assert classify_task_type("build a snake clone in python") != TaskType.BUILD
+
 
 class TestFastTaskRouting:
     """prefer_fast tasks (CHAT, TRIAGE, LINT) must pick the smallest

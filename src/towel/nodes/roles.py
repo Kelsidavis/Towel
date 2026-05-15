@@ -649,9 +649,20 @@ def classify_task_type(text: str) -> TaskType | None:
         if sig in stripped:
             return TaskType.GIT_OPS
 
-    # Build
-    for sig in ("build", "compile", "make ", "cargo ", "npm run", "pip install"):
+    # Build (compile / package — NOT "build a game", which is generation).
+    # The bare "build" keyword used to match "build a tic-tac-toe" and
+    # silently routed the entire orchestration onto the smaller
+    # prefer_fast worker because BUILD is prefer_fast. Require either
+    # a programming-specific build verb (compile, make, cargo, …) or
+    # an unambiguous "build the project / target / artifact" phrase.
+    for sig in ("compile", "make ", "cargo ", "npm run", "pip install"):
         if stripped.startswith(sig) or f" {sig}" in stripped:
+            return TaskType.BUILD
+    for sig in (
+        "build the project", "build the package", "build the target",
+        "build the artifact", "build the docker", "build script",
+    ):
+        if sig in stripped:
             return TaskType.BUILD
 
     # Lint / type check
