@@ -1118,6 +1118,40 @@ class TestConversationsAPI:
         assert "text/plain" in resp.headers["content-type"]
         assert "[you]" in resp.text
 
+    def test_export_json_pretty_default(self, store, client):
+        """JSON exports default to pretty-printed (indent=2) so a
+        browser/curl operator sees readable output. Existing
+        behaviour — guarded by test so a flag flip doesn't break
+        operators who eyeballed `format=json` responses."""
+        conv = Conversation(id="exp-pretty", channel="cli")
+        conv.add(Role.USER, "hi")
+        store.save(conv)
+
+        resp = client.get("/conversations/exp-pretty/export?format=json")
+        assert resp.status_code == 200
+        # Indented JSON has newlines between top-level fields.
+        assert "\n" in resp.text
+
+    def test_export_json_compact_opt_in(self, store, client):
+        """`?pretty=0` opts into compact JSON for piping into jq or
+        any byte-conscious tooling. Earlier the gateway always
+        returned pretty regardless — operators wanting compact had
+        to either pipe through jq -c or run their own Python."""
+        conv = Conversation(id="exp-compact", channel="cli")
+        conv.add(Role.USER, "hi")
+        store.save(conv)
+
+        resp = client.get(
+            "/conversations/exp-compact/export?format=json&pretty=0"
+        )
+        assert resp.status_code == 200
+        # Compact JSON: no indenting newlines.
+        assert "\n" not in resp.text
+        # Still valid JSON.
+        import json as _json
+        data = _json.loads(resp.text)
+        assert data["id"] == "exp-compact"
+
     def test_export_html(self, store, client):
         """export_html already shipped in the persistence layer (and
         is tested in test_export.py for the rendering itself) but

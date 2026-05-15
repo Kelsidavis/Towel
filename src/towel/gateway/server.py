@@ -5406,7 +5406,13 @@ class GatewayServer:
                 return JSONResponse({"error": "Not found"}, status_code=404)
 
             if fmt == "json":
-                content = export_json(conv)
+                # Default pretty (indent=2) for human reading via
+                # browser/curl. Opt into compact (`?pretty=0`) for
+                # piping into jq, log shipping, or any other use that
+                # cares about bytes more than readability.
+                pretty_raw = request.query_params.get("pretty")
+                pretty = pretty_raw not in {"0", "false", "no"}
+                content = export_json(conv, pretty=pretty)
                 media_type = "application/json"
                 ext = "json"
             elif fmt == "text":
