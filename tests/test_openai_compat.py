@@ -108,6 +108,28 @@ class TestChatCompletionsEndpoint:
             assert resp.status_code == 400, f"accepted max_tokens={bad!r}"
             assert "max_tokens" in resp.json()["error"]["message"]
 
+    def test_rejects_multimodal_content_with_clear_message(self, client):
+        """OpenAI's vision/audio shape uses `content` as a list of
+        parts. Towel doesn't support multimodal — but the previous
+        generic "non-empty content" 400 made vision clients think
+        their content was empty. The error should name multimodal."""
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "x",
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "describe"},
+                        {"type": "image_url", "image_url": {"url": "..."}},
+                    ],
+                }],
+            },
+        )
+        assert resp.status_code == 400
+        assert "multimodal" in resp.json()["error"]["message"]
+        assert "plain string" in resp.json()["error"]["message"]
+
     def test_rejects_non_string_model(self, client):
         """`model` is cosmetic but echoes into the response and SSE
         chunks. Non-string would render badly in JSON output."""

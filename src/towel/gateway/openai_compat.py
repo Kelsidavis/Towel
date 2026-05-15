@@ -138,6 +138,19 @@ def build_openai_routes(
         # then the caller waited the full chat-fast timeout (60s)
         # before getting `{"error": "worker ... did not respond ..."}`.
         # Fail loud at the coordinator instead.
+        #
+        # Also surface multimodal content (`content` as a list of
+        # parts, OpenAI's vision/audio shape) with a specific error
+        # — those clients deserve to know towel doesn't support
+        # multimodal yet, not a generic "non-empty content" message.
+        any_multimodal = any(
+            isinstance(m.get("content"), list) for m in messages
+        )
+        if any_multimodal:
+            return JSONResponse(
+                {"error": {"message": "multimodal content (list parts) is not supported; pass a plain string", "type": "invalid_request_error"}},
+                status_code=400,
+            )
         has_content = any(
             isinstance(m.get("content"), str) and m.get("content", "").strip()
             for m in messages
