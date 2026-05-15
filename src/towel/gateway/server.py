@@ -2247,7 +2247,28 @@ class GatewayServer:
             })
 
         async def cluster_nodes(_request: Any) -> JSONResponse:
-            return JSONResponse(self._node_tracker.to_dict())
+            # Merge operator state (enabled / draining / busy) onto
+            # each node entry so operators debugging "why isn't this
+            # worker being used" don't have to cross-reference
+            # /workers in another tab. The NodeTracker tracks
+            # hardware + context-slot state; the WorkerRegistry
+            # tracks operator-set flags.
+            data = self._node_tracker.to_dict()
+            nodes = data.get("nodes", {}) or {}
+            for worker_id, node_entry in nodes.items():
+                worker = self._workers.get(worker_id)
+                if worker is not None:
+                    node_entry["enabled"] = worker.enabled
+                    node_entry["draining"] = worker.draining
+                    node_entry["busy"] = worker.busy
+                else:
+                    # Node-tracker has an entry the registry no longer
+                    # knows about. Mark explicitly so the UI can show
+                    # the discrepancy.
+                    node_entry["enabled"] = None
+                    node_entry["draining"] = None
+                    node_entry["busy"] = None
+            return JSONResponse(data)
 
         async def dispatch_explain(request: Request) -> JSONResponse:
             """Preview where a request would be routed for a session.

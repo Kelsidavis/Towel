@@ -131,6 +131,55 @@ class TestWorkersEndpoint:
         assert data["pins"] == {}
 
 
+class TestClusterNodes:
+    """`/cluster/nodes` must surface operator-set flags
+    (enabled / draining / busy) on each node, so operators
+    debugging "why isn't this worker being used" don't need to
+    cross-reference /workers."""
+
+    def test_cluster_nodes_includes_operator_state(self, gateway, client):
+        gateway._workers.register(
+            "node-a", object(),
+            {
+                "backend": "llama",
+                "modes": ["llama_chat"],
+                "total_vram_mb": 16000,
+                "context_window": 8192,
+                "max_tokens": 4096,
+                "hostname": "node-a",
+                "resources": {"hostname": "node-a", "ram_total_mb": 32000},
+            },
+        )
+        # Also register the node in the tracker (the WS register
+        # handler does this in prod; we exercise it here directly).
+        gateway._node_tracker.register("node-a", gateway._workers.get("node-a").capabilities)
+        gateway._workers.set_draining("node-a", True)
+
+        resp = client.get("/cluster/nodes")
+        assert resp.status_code == 200
+        nodes = resp.json()["nodes"]
+        assert "node-a" in nodes
+        entry = nodes["node-a"]
+        assert entry["enabled"] is True
+        assert entry["draining"] is True
+        assert entry["busy"] is False
+
+    def test_cluster_nodes_marks_unknown_workers(self, gateway, client):
+        """If the node tracker has a stale entry the registry doesn't,
+        the operator-state fields surface as null so the UI can flag
+        the discrepancy explicitly rather than guessing."""
+        # Register the node only in the tracker, not the registry.
+        gateway._node_tracker.register(
+            "ghost-node",
+            {"backend": "llama", "context_window": 8192, "max_tokens": 4096},
+        )
+        resp = client.get("/cluster/nodes")
+        entry = resp.json()["nodes"]["ghost-node"]
+        assert entry["enabled"] is None
+        assert entry["draining"] is None
+        assert entry["busy"] is None
+
+
 class TestWorkerStateEndpoint:
     def test_worker_state_update_sets_draining(self, gateway, client):
         gateway._workers.register(
