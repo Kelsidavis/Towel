@@ -143,6 +143,73 @@ class TestFastTaskRouting:
         assert _role_for_intent("tool") == NodeRole.TOOL_WORKER
 
 
+class TestQualityTaskRouting:
+    """prefer_quality tasks (EXPLAIN, TRANSLATE, ANALYZE, …) must pick
+    the largest available worker. Live observation in 2026-05: an
+    "explain X" prompt routed to the 4GB small worker (where every
+    other prefer_quality task already favors the big one), the small
+    worker timed out at 5 min, and the user waited the full
+    worker_inference_timeout for nothing. EXPLAIN and TRANSLATE were
+    falling through to default least-loaded sort because they alone
+    of the INFERENCE-role tasks had no prefer_* flag set — a config
+    oversight, not a deliberate choice."""
+
+    def _stub_workers(self, task):
+        small = {
+            "id": "small-w", "enabled": True, "busy": False,
+            "assigned_tasks": [task],
+            "capabilities": {
+                "total_vram_mb": 4096, "context_window": 32768,
+                "backend": "llama",
+            },
+        }
+        big = {
+            "id": "big-w", "enabled": True, "busy": False,
+            "assigned_tasks": [task],
+            "capabilities": {
+                "total_vram_mb": 24000, "context_window": 65536,
+                "backend": "llama",
+            },
+        }
+        return small, big
+
+    def test_explain_routes_to_larger_worker(self):
+        from towel.nodes.roles import TaskType, best_node_for_task
+        small, big = self._stub_workers(TaskType.EXPLAIN)
+        for nodes in ([small, big], [big, small]):
+            chosen = best_node_for_task(TaskType.EXPLAIN, nodes)
+            assert chosen is big, f"got {chosen['id']}"
+
+    def test_translate_routes_to_larger_worker(self):
+        from towel.nodes.roles import TaskType, best_node_for_task
+        small, big = self._stub_workers(TaskType.TRANSLATE)
+        for nodes in ([small, big], [big, small]):
+            chosen = best_node_for_task(TaskType.TRANSLATE, nodes)
+            assert chosen is big, f"got {chosen['id']}"
+
+    def test_every_inference_task_has_a_routing_preference(self):
+        """A regression guard for the EXPLAIN/TRANSLATE oversight:
+        every INFERENCE-role task should have either prefer_quality
+        or prefer_fast set explicitly. Falling through to the default
+        least-loaded sort means an idle fleet with two equally-loaded
+        workers picks arbitrarily — which is exactly how this bug
+        slipped in: live an "explain" landed on the small worker and
+        timed out. New INFERENCE tasks added in the future will trip
+        this test if they forget to specify a preference."""
+        from towel.nodes.roles import TASK_REQUIREMENTS, NodeRole
+        missing = []
+        for task, reqs in TASK_REQUIREMENTS.items():
+            roles = reqs.get("roles", [])
+            if NodeRole.INFERENCE not in roles:
+                continue
+            if not (reqs.get("prefer_quality") or reqs.get("prefer_fast")):
+                missing.append(task)
+        assert not missing, (
+            f"INFERENCE-role tasks without prefer_quality/prefer_fast: "
+            f"{[t.value for t in missing]}"
+        )
+
+
 class TestIntentClassification:
     def test_url_is_tool(self):
         assert classify_message_intent("check https://google.com") == "tool"

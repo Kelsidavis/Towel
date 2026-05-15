@@ -99,13 +99,13 @@ TASK_REQUIREMENTS: dict[TaskType, dict[str, Any]] = {
     # Research & analysis — large context, quality models
     TaskType.RESEARCH:    {"roles": [NodeRole.INFERENCE, NodeRole.TOOL_WORKER], "needs_tools": True, "min_vram_mb": 4000, "min_context": 32768, "prefer_quality": True},
     TaskType.SUMMARIZE:   {"roles": [NodeRole.INFERENCE], "needs_tools": False, "min_vram_mb": 4000, "min_context": 65536, "prefer_quality": True},
-    TaskType.EXPLAIN:     {"roles": [NodeRole.INFERENCE], "needs_tools": False, "min_vram_mb": 2000, "min_context": 16384},
+    TaskType.EXPLAIN:     {"roles": [NodeRole.INFERENCE], "needs_tools": False, "min_vram_mb": 2000, "min_context": 16384, "prefer_quality": True},
     TaskType.ANALYZE:     {"roles": [NodeRole.INFERENCE], "needs_tools": False, "min_vram_mb": 8000, "min_context": 32768, "prefer_quality": True},
 
     # Generation — quality models, decent context
     TaskType.GENERATE:    {"roles": [NodeRole.INFERENCE, NodeRole.TOOL_WORKER], "needs_tools": True, "min_vram_mb": 4000, "min_context": 32768, "prefer_quality": True},
     TaskType.DRAFT:       {"roles": [NodeRole.INFERENCE], "needs_tools": False, "min_vram_mb": 4000, "min_context": 16384, "prefer_quality": True},
-    TaskType.TRANSLATE:   {"roles": [NodeRole.INFERENCE], "needs_tools": False, "min_vram_mb": 2000, "min_context": 16384},
+    TaskType.TRANSLATE:   {"roles": [NodeRole.INFERENCE], "needs_tools": False, "min_vram_mb": 2000, "min_context": 16384, "prefer_quality": True},
 
     # Tool-heavy — needs tools, speed matters
     TaskType.FETCH:       {"roles": [NodeRole.TOOL_WORKER], "needs_tools": True, "min_vram_mb": 0, "min_context": 8192, "prefer_fast": True},
