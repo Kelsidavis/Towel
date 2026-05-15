@@ -163,6 +163,23 @@ def build_sse_routes(agent: Any, config: Any) -> list[Route]:
                         'tokens': tokens_val,
                     }
                     yield f"data: {json.dumps(payload)}\n\n"
+                elif event.type == EventType.ERROR:
+                    # Parity with the GET stream handler — emit an
+                    # error payload so the client sees the failure
+                    # instead of a silently-empty stream.
+                    payload = {
+                        'type': 'error',
+                        'message': event.data.get('message', 'unknown'),
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
+                elif event.type == EventType.CANCELLED:
+                    payload = {
+                        'type': 'cancelled',
+                        'reason': event.data.get(
+                            'metadata', {}
+                        ).get('reason', 'user_cancelled'),
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
 
             yield "data: [DONE]\n\n"
 
