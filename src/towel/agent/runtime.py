@@ -559,11 +559,24 @@ class AgentRuntime:
                 )
 
         # Either hit max iterations OR loop detection broke us out.
+        # Persist the terminal message into the conversation so callers
+        # that just forward the event stream (e.g. the WS handler and
+        # the OpenAI-compat SSE path) still leave the same text on
+        # disk that the live client received. Same asymmetry that bit
+        # _stream_remote_inference in 803d1b4: the non-streaming step()
+        # returns a Message for the caller to append; the streaming
+        # variant has no return value, so it must mutate the
+        # conversation here or the assistant turn disappears from
+        # replay.
         if stuck_call_name is not None:
             stuck_msg = (
                 f"I got stuck calling {stuck_call_name!r} repeatedly. "
                 "Stopping to avoid burning more time on this turn."
             )
+            # remaining_text was already appended earlier in this
+            # iteration's tool-call branch (line "if remaining_text"),
+            # so only stuck_msg needs adding here.
+            conversation.add(Role.ASSISTANT, stuck_msg)
             yield AgentEvent.complete(
                 (remaining_text + "\n\n" + stuck_msg) if remaining_text else stuck_msg,
                 metadata={
@@ -574,8 +587,11 @@ class AgentRuntime:
             )
             return
         log.warning(f"Hit max tool iterations ({MAX_TOOL_ITERATIONS})")
+        max_iter_msg = "I've reached my tool execution limit for this turn."
+        if not remaining_text:
+            conversation.add(Role.ASSISTANT, max_iter_msg)
         yield AgentEvent.complete(
-            remaining_text or "I've reached my tool execution limit for this turn.",
+            remaining_text or max_iter_msg,
             metadata={"tps": 0, "tokens": total_tokens, "max_iterations": True},
         )
 

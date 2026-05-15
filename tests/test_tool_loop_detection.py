@@ -78,3 +78,22 @@ class TestCheckToolLoop:
         assert _check_tool_loop(hist, "a") is False
         # hist = ["b", "a", "a"] — still not all same.
         assert _check_tool_loop(hist, "a") is False
+
+
+class TestStepStreamingPersistsTerminalMessages:
+    """The streaming path has no return value — its callers (the WS
+    handler, OpenAI-compat SSE) just forward events. So the agent
+    must mutate the conversation itself when the loop terminates,
+    not just emit a complete event. Otherwise replay of the saved
+    transcript loses the assistant turn that ended the run. Same
+    asymmetry that bit _stream_remote_inference in 803d1b4."""
+
+    def test_step_streaming_persists_terminal_messages(self):
+        import inspect
+
+        from towel.agent.runtime import AgentRuntime
+
+        src = inspect.getsource(AgentRuntime.step_streaming)
+        # Both terminal branches must append to the conversation.
+        assert "conversation.add(Role.ASSISTANT, stuck_msg)" in src
+        assert "conversation.add(Role.ASSISTANT, max_iter_msg)" in src
