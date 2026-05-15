@@ -22,7 +22,7 @@ class TestFileSystemSkill:
     def test_tools_defined(self, fs_skill):
         tools = fs_skill.tools()
         names = {t.name for t in tools}
-        assert names == {"read_file", "write_file", "list_directory"}
+        assert names == {"read_file", "write_file", "edit_file", "list_directory"}
 
     @pytest.mark.asyncio
     async def test_read_file(self, fs_skill, tmp_path):
@@ -52,6 +52,79 @@ class TestFileSystemSkill:
         assert "a.txt" in result
         assert "b.txt" in result
         assert "subdir" in result
+
+    @pytest.mark.asyncio
+    async def test_edit_file_replaces_unique_string(self, fs_skill, tmp_path):
+        f = tmp_path / "edit.py"
+        f.write_text("def foo():\n    return 1\n")
+        result = await fs_skill.execute(
+            "edit_file",
+            {
+                "path": str(f),
+                "old_string": "return 1",
+                "new_string": "return 42",
+            },
+        )
+        assert "Edited" in result
+        assert "1 occurrence" in result
+        assert f.read_text() == "def foo():\n    return 42\n"
+
+    @pytest.mark.asyncio
+    async def test_edit_file_refuses_non_unique_match(self, fs_skill, tmp_path):
+        f = tmp_path / "ambiguous.py"
+        # `pass` appears twice — edit_file must refuse rather than
+        # silently pick one.
+        f.write_text("def a():\n    pass\n\ndef b():\n    pass\n")
+        result = await fs_skill.execute(
+            "edit_file",
+            {"path": str(f), "old_string": "pass", "new_string": "return"},
+        )
+        assert "matches 2 places" in result
+        # File is unchanged — the refusal is atomic.
+        assert f.read_text() == "def a():\n    pass\n\ndef b():\n    pass\n"
+
+    @pytest.mark.asyncio
+    async def test_edit_file_refuses_missing_match(self, fs_skill, tmp_path):
+        f = tmp_path / "miss.txt"
+        f.write_text("hello")
+        result = await fs_skill.execute(
+            "edit_file",
+            {"path": str(f), "old_string": "goodbye", "new_string": "x"},
+        )
+        assert "not found" in result.lower()
+        assert f.read_text() == "hello"
+
+    @pytest.mark.asyncio
+    async def test_edit_file_missing_file(self, fs_skill, tmp_path):
+        result = await fs_skill.execute(
+            "edit_file",
+            {
+                "path": str(tmp_path / "ghost.txt"),
+                "old_string": "x",
+                "new_string": "y",
+            },
+        )
+        assert "File not found" in result
+
+    @pytest.mark.asyncio
+    async def test_edit_file_refuses_empty_old_string(self, fs_skill, tmp_path):
+        f = tmp_path / "empty.txt"
+        f.write_text("content")
+        result = await fs_skill.execute(
+            "edit_file",
+            {"path": str(f), "old_string": "", "new_string": "x"},
+        )
+        assert "old_string must be non-empty" in result
+
+    @pytest.mark.asyncio
+    async def test_edit_file_refuses_noop(self, fs_skill, tmp_path):
+        f = tmp_path / "noop.txt"
+        f.write_text("hello")
+        result = await fs_skill.execute(
+            "edit_file",
+            {"path": str(f), "old_string": "hello", "new_string": "hello"},
+        )
+        assert "identical" in result.lower()
 
 
 class TestShellSkill:

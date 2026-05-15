@@ -43,6 +43,36 @@ class FileSystemSkill(Skill):
                 },
             ),
             ToolDefinition(
+                name="edit_file",
+                description=(
+                    "Replace an exact string in a file with new text. "
+                    "Use this for targeted edits — much safer than "
+                    "rewriting the whole file via write_file, especially "
+                    "for large files. The old_string must match EXACTLY "
+                    "(including whitespace) and must be unique in the "
+                    "file or the edit is refused."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Path to the file"},
+                        "old_string": {
+                            "type": "string",
+                            "description": (
+                                "Exact text to find. Must be unique in the "
+                                "file — include enough surrounding context "
+                                "to make it unique if needed."
+                            ),
+                        },
+                        "new_string": {
+                            "type": "string",
+                            "description": "Replacement text",
+                        },
+                    },
+                    "required": ["path", "old_string", "new_string"],
+                },
+            ),
+            ToolDefinition(
                 name="list_directory",
                 description="List files and subdirectories in a directory",
                 parameters={
@@ -69,6 +99,59 @@ class FileSystemSkill(Skill):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(arguments["content"], encoding="utf-8")
                 return f"Written {len(arguments['content'])} bytes to {path}"
+
+            case "edit_file":
+                # Targeted string replacement. The Codex / Claude
+                # Edit tool pattern — much safer than write_file
+                # for modifying existing files because the model
+                # doesn't have to reproduce the whole file from
+                # memory, and any drift surfaces as a unique-match
+                # failure rather than a silent rewrite.
+                path = Path(arguments["path"]).expanduser()
+                if not path.exists():
+                    return f"File not found: {path}"
+                if path.stat().st_size > 1_000_000:
+                    return (
+                        f"File too large for edit_file "
+                        f"({path.stat().st_size} bytes). Max 1MB — use "
+                        "write_file for full-rewrites or chunk the edit."
+                    )
+                old_string = arguments.get("old_string", "")
+                new_string = arguments.get("new_string", "")
+                if not old_string:
+                    return (
+                        "Error: old_string must be non-empty. To "
+                        "create or replace a whole file use write_file."
+                    )
+                if old_string == new_string:
+                    return (
+                        "Error: old_string and new_string are identical "
+                        "— no edit to perform."
+                    )
+                content = path.read_text(encoding="utf-8", errors="replace")
+                count = content.count(old_string)
+                if count == 0:
+                    return (
+                        f"Error: old_string not found in {path}. "
+                        "Check whitespace, escape sequences, and "
+                        "exact characters."
+                    )
+                if count > 1:
+                    return (
+                        f"Error: old_string matches {count} places in "
+                        f"{path} — must be unique. Add surrounding "
+                        "context to the old_string to disambiguate."
+                    )
+                new_content = content.replace(old_string, new_string, 1)
+                path.write_text(new_content, encoding="utf-8")
+                # Surface the actual delta so the model knows what
+                # changed without re-reading the file.
+                delta = len(new_content) - len(content)
+                sign = "+" if delta >= 0 else ""
+                return (
+                    f"Edited {path}: replaced 1 occurrence "
+                    f"({sign}{delta} bytes)"
+                )
 
             case "list_directory":
                 path = Path(arguments.get("path", ".")).expanduser()
