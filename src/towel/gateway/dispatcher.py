@@ -644,8 +644,31 @@ class Dispatcher:
         default). This top-level entry surfaces under the user's
         actual session_id so the operator can see "session X ran
         ensemble" alongside other dispatch events.
+
+        Stamps total_ms from the longest contributing worker
+        (parallel fan-out runs bound by the slowest worker that
+        actually answered) plus any synthesis_ms reported. Gives
+        operators latency-at-a-glance for the aggregate entry
+        without needing to drill into the per-worker decisions.
         """
         contributing = [c.get("worker_id", "?") for c in contributions if c.get("answer")]
+        # Slowest worker that returned text bounds the fan-out
+        # wall-clock; failed/timeout workers don't extend it. Record
+        # whenever at least one contribution succeeded — even a
+        # near-zero ms (mocked-worker test scenarios) is still a
+        # legitimate timing signal worth surfacing.
+        any_answered = any(c.get("answer") for c in contributions)
+        worker_ms = max(
+            (c.get("ms", 0.0) for c in contributions if c.get("answer")),
+            default=0.0,
+        )
+        synth_ms = next(
+            (c.get("synthesis_ms") for c in contributions if c.get("synthesis_ms")),
+            None,
+        )
+        total_ms = (
+            round(worker_ms + (synth_ms or 0.0), 1) if any_answered else None
+        )
         decision = DispatchDecision(
             worker=None,
             intent="task",
@@ -658,6 +681,8 @@ class Dispatcher:
             session_id=session_id,
             candidates_considered=len(contributions),
         )
+        if total_ms is not None:
+            decision.total_ms = total_ms
         self._record(decision)
         return decision
 

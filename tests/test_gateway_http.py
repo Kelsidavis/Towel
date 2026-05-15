@@ -839,6 +839,49 @@ class TestDispatchRecentEphemeralFilter:
         )
         gateway._dispatcher._history.append(d)
 
+    def test_ensemble_aggregate_dispatch_has_timing(self, gateway, client):
+        """The aggregate `ensemble` dispatch entry stamps total_ms so
+        an operator can see latency-at-a-glance without drilling
+        into the per-worker decisions. total_ms = slowest-contributor
+        + synthesis_ms (parallel fan-out is bound by slowest)."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "a", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "b", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            return Message(
+                role=Role.ASSISTANT, content=f"answer from {worker.id}",
+                metadata={"remote_worker": worker.id, "tokens": 5, "tps": 5.0},
+            )
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "q", "session_id": "ens-time-disp", "ensemble": True},
+        )
+        assert resp.status_code == 200
+
+        agg = client.get("/dispatch/recent?session=ens-time-disp").json()
+        ensemble_entries = [d for d in agg["decisions"] if d.get("reason") == "ensemble"]
+        assert ensemble_entries
+        entry = ensemble_entries[0]
+        # total_ms reflects slowest worker (synthesis didn't run on
+        # this test path because the stubbed agent.step/generate
+        # isn't loaded). Whatever the actual value, it should be a
+        # non-negative number.
+        assert "total_ms" in entry
+        assert entry["total_ms"] >= 0
+
     def test_ensemble_records_aggregate_dispatch_entry(self, gateway, client):
         """When ensemble runs, an aggregate dispatch entry is
         recorded under the USER session_id (not the ephemeral
