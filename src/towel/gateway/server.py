@@ -942,9 +942,33 @@ class GatewayServer:
                 log.exception("Idle-result sweep failed")
 
     async def _stream_response(self, ws: ServerConnection, session_id: str, session: Any) -> None:
-        """Stream agent response events to the WebSocket."""
-        async for event in self.agent.step_streaming(session.conversation):
-            await ws.send(json.dumps(event.to_ws_message(session_id)))
+        """Stream agent response events to the WebSocket.
+
+        Wraps the agent iteration so a model crash / mid-stream
+        failure becomes an explicit `AgentEvent.error` frame on the
+        WS instead of an unhandled exception propagating up and
+        tearing down the connection. The connection stays alive for
+        the next message; the client just sees the failure for this
+        turn.
+        """
+        try:
+            async for event in self.agent.step_streaming(session.conversation):
+                await ws.send(json.dumps(event.to_ws_message(session_id)))
+        except asyncio.CancelledError:
+            # Caller wraps `await task` with a CancelledError handler
+            # that emits the cancelled event; re-raise so that path
+            # owns the user-visible message.
+            raise
+        except Exception as exc:
+            log.warning(
+                "WS stream for session %s failed mid-iteration: %s",
+                session_id, exc,
+            )
+            await ws.send(
+                json.dumps(
+                    AgentEvent.error(_err_str(exc)).to_ws_message(session_id)
+                )
+            )
 
     # ── Role-based routing ──────────────────────────────────────────
 

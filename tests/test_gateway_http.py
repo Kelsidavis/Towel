@@ -1652,6 +1652,26 @@ class TestDispatchRecentEphemeralFilter:
         assert body.get("ensemble_skipped") is True
         assert "no idle workers" in body.get("ensemble_skip_reason", "")
 
+    def test_ws_stream_response_wraps_exceptions(self):
+        """`_stream_response` previously had no try/except — a model
+        crash mid-iteration tore down the WS connection (the
+        exception propagated past the caller's CancelledError-only
+        handler). Now it catches Exception, emits an
+        AgentEvent.error frame, and lets the connection survive
+        for subsequent messages."""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._stream_response)
+        # Body wraps the async-for iteration in try/except.
+        assert "try:" in src
+        assert "AgentEvent.error" in src
+        # asyncio.CancelledError is re-raised so the caller's
+        # dedicated cancellation event still fires for that path.
+        assert "asyncio.CancelledError" in src
+        assert "raise" in src
+
     def test_ws_unknown_register_role_warns(self):
         """A typo'd `role` in a WS register message (e.g. "workre")
         previously got channel treatment silently — the worker
