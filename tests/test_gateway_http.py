@@ -472,6 +472,7 @@ class TestClusterHandoffs:
         already carry `duration_ms`; this is the pending equivalent."""
         import time
         from datetime import UTC, datetime
+
         from towel.gateway.handoff import HandoffReason, HandoffRecord
 
         # Started ~50ms ago — elapsed should reflect at least that.
