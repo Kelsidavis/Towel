@@ -1099,22 +1099,26 @@ class TestSimpleAskAPI:
 
         gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
 
-        # Stub the local agent's step so synthesis returns a known
-        # reconciled answer — proves the synthesis path was reached
-        # and used, rather than the longest-answer fallback.
-        async def fake_step(conv):
+        # Stub the local agent's generate so synthesis returns a
+        # known reconciled answer — proves the synthesis path was
+        # reached and used, rather than the longest-answer fallback.
+        # Synthesis uses generate() (not step()) so a tool-call from
+        # the synthesizer can't trigger side effects.
+        from towel.agent.runtime import GenerationResult
+
+        async def fake_generate(conv):
             # The synthesis prompt should mention both workers' answers.
             user_msg = conv.messages[-1].content
             assert "Worker A answered:" in user_msg
             assert "Worker B answered:" in user_msg
             assert "Paris" in user_msg
-            return Message(
-                role=Role.ASSISTANT,
-                content="Synthesized: The capital of France is Paris.",
-                metadata={"tps": 10.0, "tokens": 8},
+            return GenerationResult(
+                text="Synthesized: The capital of France is Paris.",
+                tokens_per_second=10.0,
+                total_tokens=8,
             )
 
-        gateway.agent.step = fake_step  # type: ignore[method-assign]
+        gateway.agent.generate = fake_generate  # type: ignore[method-assign]
 
         resp = client.post(
             "/api/ask",

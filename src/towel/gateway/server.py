@@ -1390,8 +1390,18 @@ class GatewayServer:
         synth_conv = Conversation(id="_synth_ensemble")
         synth_conv.add(_Role.USER, "\n".join(lines))
         try:
-            response = await self.agent.step(synth_conv)
-            return (response.content or "").strip()
+            # Use generate() instead of step() so a tool-call emitted
+            # by the synthesis model doesn't actually run. The
+            # synthesizer should be producing TEXT — if the model
+            # decides to call e.g. memory.remember on the synthesis
+            # context, that's a side-effect bug, not a feature. Strip
+            # any tool-call shaped output via parse_tool_calls and
+            # keep only the prose.
+            from towel.agent.tool_parser import parse_tool_calls
+
+            result = await self.agent.generate(synth_conv)
+            _tool_calls, remaining_text = parse_tool_calls(result.text)
+            return (remaining_text or "").strip()
         except Exception as exc:
             log.warning(
                 "Ensemble synthesis on local agent failed (%s); "
