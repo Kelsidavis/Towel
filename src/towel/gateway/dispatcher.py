@@ -298,6 +298,13 @@ class Dispatcher:
             if preempt is not None:
                 worker, notes = preempt
                 await self._preempt_hook(worker)
+                # Propagate the original decision's miss flags onto
+                # the preempt-replacement decision. Without this, a
+                # session whose explicit pin or context affinity was
+                # bypassed lost that signal the moment a preempt
+                # fired — operators saw a clean "preempted_idle" entry
+                # with no hint that the operator's pin had been
+                # ignored or context was being thrown away.
                 decision = DispatchDecision(
                     worker=worker,
                     intent=intent,
@@ -307,6 +314,10 @@ class Dispatcher:
                     candidates_considered=decision.candidates_considered,
                     session_id=session_id,
                     preempted_idle=True,
+                    affinity_missed=decision.affinity_missed,
+                    previous_worker_id=decision.previous_worker_id,
+                    pin_missed=decision.pin_missed,
+                    pinned_worker_id=decision.pinned_worker_id,
                 )
         # Layer 6b: smaller-is-better preempt. The layered path
         # already picked a non-busy worker, but for prefer_fast
@@ -328,6 +339,9 @@ class Dispatcher:
                 )
                 if smaller is not None:
                     await self._preempt_hook(smaller)
+                    # Propagate miss flags onto the smaller-preempt
+                    # decision too (same rationale as the no-worker
+                    # preempt path above).
                     decision = DispatchDecision(
                         worker=smaller,
                         intent=intent,
@@ -340,6 +354,10 @@ class Dispatcher:
                         candidates_considered=decision.candidates_considered,
                         session_id=session_id,
                         preempted_idle=True,
+                        affinity_missed=decision.affinity_missed,
+                        previous_worker_id=decision.previous_worker_id,
+                        pin_missed=decision.pin_missed,
+                        pinned_worker_id=decision.pinned_worker_id,
                     )
         self._record(decision)
         return decision

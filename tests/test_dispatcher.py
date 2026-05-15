@@ -279,6 +279,42 @@ class TestPreemption:
         assert decision.reason == REASON_PREEMPT_IDLE
         assert preempt_called == ["idle_runner"]
 
+    def test_preempt_preserves_pin_missed_flag(self):
+        """When the original (no-worker) decision had pin_missed=True
+        because the pinned worker was busy/draining, the preempt
+        path's replacement decision must still carry that flag.
+        Without this, the operator's bypassed pin signal evaporates
+        the moment a preempt fires — the new "preempted_idle"
+        decision looks clean and the dispatch log loses the
+        "pin was ignored" trace."""
+        workers = WorkerRegistry()
+        # All three workers are busy. One is the pinned one (not
+        # idle-runner so it can't be preempted), one is busy_real,
+        # and one is idle_runner that can be preempted.
+        _make_worker(workers, "pinned_busy", busy=True)
+        _make_worker(workers, "busy_real", busy=True)
+        _make_worker(workers, "idle_runner", busy=True)
+        preempt_called: list[str] = []
+
+        async def preempt(w: WorkerInfo) -> None:
+            preempt_called.append(w.id)
+            workers.release(w.id)
+
+        d = _make_dispatcher(
+            workers,
+            idle_task_workers={"idle_runner"},
+            session_pins={"s1": "pinned_busy"},
+            preempt_hook=preempt,
+        )
+        decision = asyncio.run(d.async_select_for_session("s1"))
+        # Preempt fired and we got idle_runner.
+        assert decision.preempted_idle is True
+        assert decision.worker is not None
+        assert decision.worker.id == "idle_runner"
+        # The pin_missed signal survives the preempt replacement.
+        assert decision.pin_missed is True
+        assert decision.pinned_worker_id == "pinned_busy"
+
     def test_sync_select_never_preempts(self):
         workers = WorkerRegistry()
         _make_worker(workers, "busy_real", busy=True)
