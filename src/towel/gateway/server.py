@@ -607,8 +607,8 @@ class GatewayServer:
                                         exc,
                                     )
                             if arbitrated:
-                                from towel.agent.conversation import Message as _M
-                                response = _M(
+                                from towel.agent.conversation import Message
+                                response = Message(
                                     role=Role.ASSISTANT,
                                     content=arbitrated,
                                     metadata={
@@ -3756,8 +3756,8 @@ class GatewayServer:
             # connection to the same file with no default. Cheaper
             # than threading another sentinel through recall_all().
             if scope_raw == "__all__":
-                from towel.memory.store import MemoryStore as _MS
-                view = _MS(store_dir=memory.store_dir)
+                from towel.memory.store import MemoryStore
+                view = MemoryStore(store_dir=memory.store_dir)
                 scope_arg: str | None = None
             else:
                 view = memory
@@ -5709,8 +5709,8 @@ class GatewayServer:
                                 "Failed to record ensemble dispatch: %s", exc,
                             )
                     if arbitrated:
-                        from towel.agent.conversation import Message as _Message
-                        response = _Message(
+                        from towel.agent.conversation import Message
+                        response = Message(
                             role=Role.ASSISTANT,
                             content=arbitrated,
                             metadata={

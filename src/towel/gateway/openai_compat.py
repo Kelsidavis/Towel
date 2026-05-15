@@ -368,10 +368,9 @@ def build_openai_routes(
                             except Exception:
                                 pass
                         if arbitrated:
-                            from towel.agent.conversation import Message as _M
-                            from towel.agent.conversation import Role as _R
-                            response = _M(
-                                role=_R.ASSISTANT, content=arbitrated,
+                            from towel.agent.conversation import Message
+                            response = Message(
+                                role=Role.ASSISTANT, content=arbitrated,
                                 metadata={
                                     "ensemble": True,
                                     "ensemble_arbitration": arb_mode,
