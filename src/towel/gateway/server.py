@@ -251,6 +251,20 @@ class GatewayServer:
                     self._connections[conn_id] = ws
                     role = msg.get("role", "channel")
                     capabilities = msg.get("capabilities", {})
+                    # A worker that registers with a non-object
+                    # `capabilities` (probing client, buggy worker
+                    # build, hand-rolled curl) would crash several
+                    # levels deeper in `assign_roles` /
+                    # `_node_tracker.register`. Coerce to empty dict
+                    # and continue — the worker gets defaults, fleet
+                    # state stays consistent.
+                    if not isinstance(capabilities, dict):
+                        log.warning(
+                            "Worker %s registered with non-object capabilities "
+                            "(%s); treating as empty",
+                            conn_id, type(capabilities).__name__,
+                        )
+                        capabilities = {}
                     if role == "worker":
                         self._workers.register(conn_id, ws, capabilities)
                         self._node_tracker.register(conn_id, capabilities)
@@ -309,6 +323,15 @@ class GatewayServer:
                 if msg_type == "heartbeat":
                     if conn_id and self._workers.get(conn_id):
                         caps = msg.get("capabilities")
+                        # Coerce non-dict capabilities to None so
+                        # update_heartbeat doesn't crash deeper.
+                        if caps is not None and not isinstance(caps, dict):
+                            log.warning(
+                                "Heartbeat from %s carried non-object "
+                                "capabilities (%s); skipping update",
+                                conn_id, type(caps).__name__,
+                            )
+                            caps = None
                         self._workers.heartbeat(conn_id, caps)
                         if caps:
                             self._node_tracker.update_heartbeat(conn_id, caps)
@@ -318,6 +341,15 @@ class GatewayServer:
                     # Worker is sending memory mutations to the controller
                     if conn_id and self._cluster_memory:
                         mutations = msg.get("mutations", [])
+                        # Empty / non-list mutations are silently
+                        # ignored — same effect as no mutations.
+                        if not isinstance(mutations, list):
+                            log.warning(
+                                "memory_sync from %s carried non-list "
+                                "mutations (%s); ignoring",
+                                conn_id, type(mutations).__name__,
+                            )
+                            mutations = []
                         self._cluster_memory.apply_mutations(mutations)
                         # Broadcast to other workers
                         await self._broadcast_memory_sync(conn_id)

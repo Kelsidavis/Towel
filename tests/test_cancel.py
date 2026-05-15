@@ -104,3 +104,19 @@ class TestGatewayCancel:
         # Non-dict frames likewise.
         assert "isinstance(msg, dict)" in src
         assert "Ignoring non-object WS frame" in src
+
+    def test_gateway_ws_loop_tolerates_non_object_capabilities(self):
+        """A register / heartbeat / memory_sync message with a non-
+        object inner field (capabilities, mutations) shouldn't crash
+        the loop either — same reconnect-storm avoidance."""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._handle_ws)
+        # Register coerces non-dict capabilities to {}.
+        assert "non-object capabilities" in src
+        # Heartbeat skips the update on non-dict capabilities.
+        assert "non-object" in src and "capabilities" in src
+        # memory_sync coerces non-list mutations to [].
+        assert "non-list" in src and "mutations" in src
