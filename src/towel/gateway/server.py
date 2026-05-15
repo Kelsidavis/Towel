@@ -1109,12 +1109,14 @@ class GatewayServer:
         # ~8KB of each field is plenty to spot factual errors;
         # past that we'd be embedding the workers' irrelevant
         # context overlap anyway.
-        _Q_CAP = 8000
-        _A_CAP = 8000
-        capped_q = question if len(question) <= _Q_CAP else question[:_Q_CAP] + "…"
+        verify_field_cap = 8000
+        capped_q = (
+            question if len(question) <= verify_field_cap
+            else question[:verify_field_cap] + "…"
+        )
         capped_a = (
-            primary_answer if len(primary_answer) <= _A_CAP
-            else primary_answer[:_A_CAP] + "…"
+            primary_answer if len(primary_answer) <= verify_field_cap
+            else primary_answer[:verify_field_cap] + "…"
         )
 
         verify_conv = Conversation(id=verify_sess_id)
