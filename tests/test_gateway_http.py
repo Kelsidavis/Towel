@@ -1195,6 +1195,55 @@ class TestSimpleAskAPI:
                 f"worker {wid} missing latest turn: {hist}"
             )
 
+    def test_ask_ensemble_consensus_skips_synthesis(self, gateway, client):
+        """When workers basically agree (Jaccard ≥ 0.7 on
+        lowercased word tokens), skip the ~30s local-agent synthesis
+        call and return the longest answer directly. Synthesis adds
+        no value when the workers already converged."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "a", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "b", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            # Nearly-identical answers — high Jaccard overlap.
+            answers = {
+                "a": "The capital of France is Paris and Paris is famous for the Eiffel Tower.",
+                "b": "The capital of France is Paris; Paris is also famous for the Eiffel Tower.",
+            }
+            return Message(
+                role=Role.ASSISTANT, content=answers[worker.id],
+                metadata={"remote_worker": worker.id, "tokens": 14, "tps": 5.0},
+            )
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        synth_called = []
+        async def fake_step(conv):
+            synth_called.append(True)
+            return Message(role=Role.ASSISTANT, content="should not appear")
+
+        gateway.agent.step = fake_step  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "q", "session_id": "ens-cons", "ensemble": True},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # Synthesis must NOT have run — workers agreed.
+        assert synth_called == [], "synthesis ran on near-consensus answers"
+        # The answer comes from one of the workers, not the synthesizer.
+        assert "Paris" in body["response"]
+
     def test_ask_ensemble_skips_classifier_only_workers(
         self, gateway, client,
     ):

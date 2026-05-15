@@ -108,6 +108,48 @@ def _memory_entry_dict(entry: Any) -> dict[str, Any]:
     return d
 
 
+def _answers_in_near_consensus(
+    contributions: list[dict[str, Any]],
+    threshold: float = 0.7,
+) -> bool:
+    """Return True iff every pair of answers shares ≥ threshold of
+    tokens (Jaccard similarity on lowercased word sets).
+
+    Used by ensemble arbitration to skip the synthesis call when the
+    workers basically agreed — synthesis takes ~30s of local-agent
+    compute and adds no value when the answers were already close.
+
+    Conservative threshold (0.7): real worker outputs phrase things
+    differently even for the same factual answer. Only fires on
+    near-identical responses (short factual answers, definitions,
+    yes/no with reasoning).
+    """
+    import re
+
+    def _tokens(text: str) -> set[str]:
+        # Word-ish tokens, lowercased. Strip very short tokens —
+        # function words ("a", "in") aren't a useful agreement signal.
+        return {
+            t for t in re.findall(r"\w+", text.lower())
+            if len(t) >= 3
+        }
+
+    sets = [_tokens(c["answer"]) for c in contributions]
+    # Empty sets mean no overlap is possible — treat as not-consensus.
+    if any(not s for s in sets):
+        return False
+    for i in range(len(sets)):
+        for j in range(i + 1, len(sets)):
+            a, b = sets[i], sets[j]
+            union = a | b
+            if not union:
+                return False
+            similarity = len(a & b) / len(union)
+            if similarity < threshold:
+                return False
+    return True
+
+
 def _guess_model_param_b(name: str) -> float | None:
     """Pull a rough parameter count out of a model name.
 
@@ -1278,17 +1320,24 @@ class GatewayServer:
         # Arbitration:
         # - 0 real answers → caller falls through to single-worker dispatch
         # - 1 real answer → return it directly (nothing to arbitrate)
-        # - 2+ real answers → use the coordinator's local agent as
-        #   LLM-as-judge to synthesize the final answer from all
-        #   contributions. This is the "coordinator pieces it
-        #   together" half of the collaboration model — the workers
-        #   each contribute an independent attempt, the coordinator
-        #   reconciles them into one final answer.
+        # - 2+ real answers, near-consensus → skip synthesis, return
+        #   the longest (saves ~30s of local-agent work for cases
+        #   where the workers basically agreed on the answer)
+        # - 2+ real answers, divergent → use the coordinator's local
+        #   agent as LLM-as-judge to synthesize. This is the
+        #   "coordinator pieces it together" half of the
+        #   collaboration model — the workers each contribute an
+        #   independent attempt, the coordinator reconciles them.
         real_answers = [c for c in contributions if c["answer"]]
         if not real_answers:
             return "", contributions
         if len(real_answers) == 1:
             return real_answers[0]["answer"], contributions
+        if _answers_in_near_consensus(real_answers):
+            # Workers basically agreed — skip the synthesis call.
+            # The longest answer usually has the most detail; pick it.
+            best = max(real_answers, key=lambda c: len(c["answer"]))
+            return best["answer"], contributions
 
         synthesized = await self._synthesize_ensemble(question, real_answers)
         if synthesized:
