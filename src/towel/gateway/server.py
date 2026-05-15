@@ -2520,9 +2520,27 @@ class GatewayServer:
             if not sid:
                 return JSONResponse({"error": "session_id required"}, status_code=400)
             intent = request.query_params.get("intent", "task")
+            # Only the three intent codes the dispatcher actually
+            # branches on. Without this, a typo like ?intent=tools
+            # silently fell into the "task" path (the layered selector
+            # treats unknown intents as task) so the preview was wrong
+            # in a way the operator couldn't see.
+            if intent not in ("chat", "tool", "task"):
+                return JSONResponse(
+                    {"error": "intent must be one of: chat, tool, task"},
+                    status_code=400,
+                )
             task_type_raw = request.query_params.get("task_type")
             task_type: TaskType | None = None
             if task_type_raw:
+                # Cap before TaskType() so a 2000-char bogus value
+                # can't get echoed verbatim in the error response (same
+                # rule as /workers/{id}/tasks).
+                if len(task_type_raw) > 64:
+                    return JSONResponse(
+                        {"error": "task_type must be 64 chars or fewer"},
+                        status_code=400,
+                    )
                 try:
                     task_type = TaskType(task_type_raw)
                 except ValueError:
@@ -2534,6 +2552,22 @@ class GatewayServer:
             except ValueError:
                 return JSONResponse(
                     {"error": "estimated_tokens must be an integer"}, status_code=400
+                )
+            # Sanity bounds. Negative tokens make no sense; absurd
+            # large values would propagate to selector checks like
+            # `estimated_tokens > worker.context_window` and trip
+            # quality_degraded even for tiny real requests routed
+            # alongside the bogus preview. Cap at 10M — far above
+            # any real context window — and floor at 0.
+            if estimated_tokens < 0:
+                return JSONResponse(
+                    {"error": "estimated_tokens must be ≥ 0"},
+                    status_code=400,
+                )
+            if estimated_tokens > 10_000_000:
+                return JSONResponse(
+                    {"error": "estimated_tokens must be ≤ 10000000"},
+                    status_code=400,
                 )
             assert self._dispatcher is not None
             decision = self._dispatcher.explain_for_session(

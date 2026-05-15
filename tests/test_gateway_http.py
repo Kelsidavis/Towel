@@ -652,6 +652,65 @@ class TestSearch:
             assert "control" in resp.json()["error"].lower()
 
 
+class TestDispatchExplain:
+    """`/dispatch/explain` is a previewing endpoint — it shouldn't
+    silently fall through bogus inputs (typo'd intent, negative
+    tokens) because the whole point is to surface what the
+    dispatcher would do."""
+
+    def test_missing_session_id(self, client):
+        resp = client.get("/dispatch/explain")
+        assert resp.status_code == 400
+        assert "session_id" in resp.json()["error"]
+
+    def test_intent_must_be_known(self, client):
+        """A typo like ?intent=tools previously fell into the task
+        branch silently. The preview must surface the typo instead."""
+        resp = client.get("/dispatch/explain?session_id=s&intent=tools")
+        assert resp.status_code == 400
+        assert "intent" in resp.json()["error"].lower()
+
+    def test_estimated_tokens_must_be_non_negative(self, client):
+        resp = client.get(
+            "/dispatch/explain?session_id=s&estimated_tokens=-1",
+        )
+        assert resp.status_code == 400
+        assert "≥" in resp.json()["error"] or "non-negative" in resp.json()["error"].lower() or "0" in resp.json()["error"]
+
+    def test_estimated_tokens_must_be_sane_size(self, client):
+        """A 17-digit token estimate would trip the dispatcher's
+        context-window comparisons and mark quality_degraded for
+        every fleet — preview should reject the absurd input."""
+        resp = client.get(
+            "/dispatch/explain?session_id=s&estimated_tokens=99999999999999",
+        )
+        assert resp.status_code == 400
+        assert "10000000" in resp.json()["error"] or "≤" in resp.json()["error"]
+
+    def test_estimated_tokens_not_an_int(self, client):
+        resp = client.get("/dispatch/explain?session_id=s&estimated_tokens=abc")
+        assert resp.status_code == 400
+        assert "integer" in resp.json()["error"].lower()
+
+    def test_task_type_overlong_rejected(self, client):
+        """Same echo-bloat protection as /workers/{id}/tasks — a
+        2000-char bogus value must not be inlined in the error."""
+        resp = client.get(
+            "/dispatch/explain?session_id=s&task_type=" + "a" * 200,
+        )
+        assert resp.status_code == 400
+        assert "64" in resp.json()["error"]
+        # Bad value must NOT be echoed back.
+        assert "a" * 100 not in resp.json()["error"]
+
+    def test_task_type_unknown_value(self, client):
+        resp = client.get(
+            "/dispatch/explain?session_id=s&task_type=not-a-task",
+        )
+        assert resp.status_code == 400
+        assert "task_type" in resp.json()["error"]
+
+
 class TestSimpleAskAPI:
     def test_ask_missing_message(self, client):
         resp = client.post("/api/ask", json={})
