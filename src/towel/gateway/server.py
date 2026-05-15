@@ -1459,12 +1459,21 @@ class GatewayServer:
             "4. Output ONLY the final answer — no preamble, no "
             "'Worker A said...' framing, no meta-commentary.",
             "",
-            f"Question: {question}",
+            # Cap the embedded question + each worker answer so a
+            # user paste of an enormous document can't blow past the
+            # local agent's context window. The arbiter judges from
+            # a representative sample; if a 64KB-per-field prompt
+            # isn't enough to compare answers, the workers already
+            # had context overflow problems upstream.
+            f"Question: {question[:64000]}{'…' if len(question) > 64000 else ''}",
             "",
         ]
         for i, c in enumerate(ordered[: len(labels)]):
+            ans = c["answer"]
+            if len(ans) > 64000:
+                ans = ans[:64000] + "…"
             lines.append(f"Worker {labels[i]} answered:")
-            lines.append(c["answer"])
+            lines.append(ans)
             lines.append("")
         lines.append("Final answer:")
 
