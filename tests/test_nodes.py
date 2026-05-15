@@ -79,6 +79,29 @@ class TestNodeCapability:
         assert updated is True
         assert node.total_context_tokens_used == 5000
 
+    def test_add_context_slot_caps_oversized_estimate(self):
+        """A coordinator-side token estimate larger than the worker's
+        context window must be capped — the worker can't physically
+        load more than its window, and an uncapped estimate poisons
+        context_pressure (saw pressure=1.0 from a single 1MB-probe
+        slot on the live coordinator)."""
+        node = NodeCapability(worker_id="w1", context_window=8192)
+        slot = node.add_context_slot("s1", tokens_used=250_000)
+        assert slot.tokens_used == 8192
+        # One oversized slot can't single-handedly push pressure
+        # above the equivalent of one full window.
+        assert node.context_pressure == 1.0
+        # And total_context_tokens_used reflects the cap.
+        assert node.total_context_tokens_used == 8192
+
+    def test_update_context_slot_caps_oversized_estimate(self):
+        """Same cap applies on update — otherwise a later turn with
+        a huge user message could re-poison a previously-fine slot."""
+        node = NodeCapability(worker_id="w1", context_window=8192)
+        node.add_context_slot("s1", tokens_used=1000)
+        node.update_context_slot("s1", 250_000)
+        assert node.context_slots[0].tokens_used == 8192
+
     def test_can_fit_conversation(self):
         node = NodeCapability(worker_id="w1", context_window=8192)
         assert node.can_fit_conversation(4000) is True

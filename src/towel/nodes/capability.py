@@ -194,10 +194,21 @@ class NodeCapability:
     def add_context_slot(
         self, session_id: str, tokens_used: int = 0, model: str = ""
     ) -> ContextSlot:
-        """Register an active context window on this node."""
+        """Register an active context window on this node.
+
+        ``tokens_used`` is capped at this node's ``context_window``
+        because the worker can't physically load more than that — the
+        coordinator-side token estimate is an upper bound on what the
+        request needs, not what the worker actually holds. Without the
+        cap, a single oversized request (e.g. a 1MB user message
+        flowing into the count) drove context_pressure to 1.0 and
+        steered the dispatcher away from a worker that was actually
+        idle.
+        """
+        capped = min(tokens_used, self.context_window) if self.context_window > 0 else tokens_used
         slot = ContextSlot(
             session_id=session_id,
-            tokens_used=tokens_used,
+            tokens_used=capped,
             context_window=self.context_window,
             model=model or self.model,
         )
@@ -211,10 +222,15 @@ class NodeCapability:
         return len(self.context_slots) < before
 
     def update_context_slot(self, session_id: str, tokens_used: int) -> bool:
-        """Update token usage for an active session's context slot."""
+        """Update token usage for an active session's context slot.
+
+        Same context-window cap as ``add_context_slot`` so a wildly
+        inflated estimate can't poison context_pressure.
+        """
+        capped = min(tokens_used, self.context_window) if self.context_window > 0 else tokens_used
         for slot in self.context_slots:
             if slot.session_id == session_id:
-                slot.tokens_used = tokens_used
+                slot.tokens_used = capped
                 return True
         return False
 
