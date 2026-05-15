@@ -1316,6 +1316,23 @@ class TestDispatchExplain:
         assert resp.status_code == 400
         assert "session_id" in resp.json()["error"]
 
+    def test_session_id_too_long_rejected(self, client):
+        """Same 256-char cap /api/ask applies — without this, an
+        absurd session_id flowed into the dispatcher decision and
+        got echoed verbatim in the response and any access log."""
+        resp = client.get("/dispatch/explain?session_id=" + "a" * 300)
+        assert resp.status_code == 400
+        assert "256" in resp.json()["error"]
+
+    def test_session_id_with_control_chars_rejected(self, client):
+        """Newlines / NUL / tab in session_id break log readability
+        and would surface in the echoed JSON. Same rule as the rest
+        of the session-id-accepting endpoints."""
+        for encoded in ("%00", "a%0ab", "tab%09here"):
+            resp = client.get(f"/dispatch/explain?session_id={encoded}")
+            assert resp.status_code == 400, f"accepted {encoded!r}"
+            assert "control" in resp.json()["error"].lower()
+
     def test_intent_must_be_known(self, client):
         """A typo like ?intent=tools previously fell into the task
         branch silently. The preview must surface the typo instead."""

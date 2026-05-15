@@ -3333,6 +3333,22 @@ class GatewayServer:
             sid = request.query_params.get("session_id")
             if not sid:
                 return JSONResponse({"error": "session_id required"}, status_code=400)
+            # Match the length + control-char rules /api/ask applies
+            # to session_id. Without this, a 100KB session_id slipped
+            # through to the dispatcher (which builds a decision
+            # carrying the id), got echoed back in the response, and
+            # surfaced verbatim in any access log entry. Control
+            # characters embedded in the id break log readability.
+            if len(sid) > 256:
+                return JSONResponse(
+                    {"error": "session_id must be 256 chars or fewer"},
+                    status_code=400,
+                )
+            if any(ord(c) < 0x20 or ord(c) == 0x7F for c in sid):
+                return JSONResponse(
+                    {"error": "session_id must not contain control characters"},
+                    status_code=400,
+                )
             intent = request.query_params.get("intent", "task")
             # Only the three intent codes the dispatcher actually
             # branches on. Without this, a typo like ?intent=tools
