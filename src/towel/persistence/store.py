@@ -239,6 +239,7 @@ class ConversationStore:
                         created_at=conv.created_at.isoformat(),
                         summary=conv.summary,
                         matches=matches,
+                        title=conv.title or "",
                     )
                 )
 
@@ -287,12 +288,20 @@ class SearchResult:
         created_at: str,
         summary: str,
         matches: list[SearchMatch],
+        title: str = "",
     ) -> None:
         self.conversation_id = conversation_id
         self.channel = channel
         self.created_at = created_at
         self.summary = summary
         self.matches = matches
+        # Title is the operator-visible name in the conversations
+        # list. Search results that omit it forced UIs to fall back
+        # to the conversation_id (e.g. "openai-chatcmpl-abc123") in
+        # the results panel — useless for browsing. Default to ""
+        # for backwards compatibility with callers that construct
+        # SearchResult directly.
+        self.title = title
 
 
 class ConversationSummary:

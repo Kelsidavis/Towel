@@ -933,6 +933,43 @@ class TestSearch:
             assert resp.status_code == 400, f"accepted q={encoded!r}"
             assert "control" in resp.json()["error"].lower()
 
+    def test_search_surfaces_conversation_title(self, store, client):
+        """Search results previously omitted `title` — UIs fell back
+        to the conversation_id (e.g. "openai-chatcmpl-abc123") in the
+        results panel, which is meaningless for browsing. Title now
+        rides alongside conversation_id so the operator-readable name
+        appears in search hits."""
+        conv = Conversation(id="search-titled")
+        conv.title = "How to deploy"
+        conv.add(Role.USER, "tell me about ingress controllers")
+        store.save(conv)
+
+        resp = client.get("/search?q=ingress")
+        assert resp.status_code == 200
+        results = resp.json()["results"]
+        assert len(results) >= 1, results
+        hit = next(r for r in results if r["conversation_id"] == "search-titled")
+        assert hit["title"] == "How to deploy"
+
+    def test_search_title_empty_for_untitled_conversations(self, store, client):
+        """Untitled conversations get an empty-string title rather
+        than the field being absent — keeps the response shape
+        uniform so client code doesn't need an `if "title" in hit`
+        special case."""
+        conv = Conversation(id="search-untitled")
+        # No conv.title set.
+        conv.add(Role.USER, "find this needle")
+        store.save(conv)
+
+        resp = client.get("/search?q=needle")
+        assert resp.status_code == 200
+        hit = next(
+            r for r in resp.json()["results"]
+            if r["conversation_id"] == "search-untitled"
+        )
+        assert "title" in hit
+        assert hit["title"] == ""
+
 
 class TestDispatchRecentEphemeralFilter:
     """/dispatch/recent hides ephemeral collaboration sessions by

@@ -4896,6 +4896,13 @@ class GatewayServer:
                     "results": [
                         {
                             "conversation_id": r.conversation_id,
+                            # Title rides alongside conversation_id
+                            # so search-result UIs can show the
+                            # human-readable name. Without this,
+                            # results panels fell back to the
+                            # session_id (e.g. "openai-chatcmpl-…")
+                            # which is meaningless for browsing.
+                            "title": r.title,
                             "channel": r.channel,
                             "created_at": r.created_at,
                             "summary": r.summary,
