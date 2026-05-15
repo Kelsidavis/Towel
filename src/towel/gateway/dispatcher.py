@@ -741,9 +741,10 @@ class Dispatcher:
     def record_verify(
         self,
         session_id: str,
-        verifier_id: str,
+        verifier_id: str | None,
         primary_id: str,
         was_corrected: bool,
+        skip_reason: str | None = None,
     ) -> DispatchDecision:
         """Log a verify pass as an aggregate dispatch decision.
 
@@ -753,18 +754,31 @@ class Dispatcher:
         its own decision under the ephemeral _verify_<...> session
         (accessible via /dispatch/recent?include_ephemeral=1). This
         entry is the operator-visible marker that links them.
+
+        Pass ``verifier_id=None`` with a ``skip_reason`` (e.g.
+        ``"no alternate worker"``) to log a "verify skipped" entry —
+        symmetric to the ensemble-skipped path. The user opted in
+        to two-worker verification; if no alternate is available we
+        still want the operator to see the request was made.
         """
+        if verifier_id is None:
+            reason_text = skip_reason or "no alternate worker available"
+            notes = f"verify: skipped ({reason_text})"
+            candidates = 1
+        else:
+            notes = (
+                f"verify: primary={primary_id} verifier={verifier_id} "
+                f"{'corrected' if was_corrected else 'confirmed'}"
+            )
+            candidates = 2
         decision = DispatchDecision(
             worker=None,
             intent="task",
             reason=REASON_VERIFY,
-            notes=(
-                f"verify: primary={primary_id} verifier={verifier_id} "
-                f"{'corrected' if was_corrected else 'confirmed'}"
-            ),
+            notes=notes,
             session_id=session_id,
             previous_worker_id=primary_id,
-            candidates_considered=2,
+            candidates_considered=candidates,
         )
         self._record(decision)
         return decision

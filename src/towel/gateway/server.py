@@ -649,11 +649,10 @@ class GatewayServer:
                                 )
                                 # Aggregate dispatch entry — parity
                                 # with /api/ask's record_verify call
-                                # (e00fb6d).
-                                if (
-                                    verifier_id is not None
-                                    and self._dispatcher is not None
-                                ):
+                                # (e00fb6d). Always record when verify
+                                # was opted in, including the no-alt
+                                # skipped case (verifier_id=None).
+                                if self._dispatcher is not None:
                                     try:
                                         self._dispatcher.record_verify(
                                             session_id=session_id,
@@ -5469,11 +5468,12 @@ class GatewayServer:
                         )
                         verified_by = verifier_id
                         # Aggregate dispatch entry — see record_ensemble
-                        # comment for the same pattern.
-                        if (
-                            verifier_id is not None
-                            and self._dispatcher is not None
-                        ):
+                        # comment for the same pattern. Always record
+                        # when the user opted in: a `verifier_id=None`
+                        # means "no alternate worker available" and
+                        # the operator still wants to see the request
+                        # was made (symmetric to ensemble: skipped).
+                        if self._dispatcher is not None:
                             try:
                                 self._dispatcher.record_verify(
                                     session_id=session_id,

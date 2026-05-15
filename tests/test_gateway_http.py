@@ -987,6 +987,57 @@ class TestDispatchRecentEphemeralFilter:
         # "candidates ran but failed" in the operator UI.
         assert entry["candidates_considered"] == 0
 
+    def test_verify_skipped_when_no_alternate_records_dispatch(
+        self, gateway, client,
+    ):
+        """When verify=true but only one worker is registered, the
+        verifier pass falls through without finding an alternate.
+        Previously the dispatch log showed nothing — operators saw a
+        verify=true request that didn't get verified and had no
+        record explaining why. Now a "verify: skipped" aggregate
+        entry surfaces with the skip reason."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        # Only ONE worker — _verify_pass will return verifier_id=None.
+        gateway._workers.register(
+            "solo", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"], "tools": False},
+        )
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            msg = Message(
+                role=Role.ASSISTANT, content="primary answer",
+                metadata={"remote_worker": worker.id, "tokens": 2, "tps": 5.0},
+            )
+            session.conversation.messages.append(msg)
+            return msg
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        async def fake_route(_msg, _sid):
+            return gateway._workers.get("solo"), "chat"
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={
+                "message": "q", "session_id": "ver-skip", "verify": True,
+            },
+        )
+        assert resp.status_code == 200
+
+        agg = client.get("/dispatch/recent?session=ver-skip").json()
+        verify_entries = [
+            d for d in agg["decisions"] if d.get("reason") == "verify"
+        ]
+        assert len(verify_entries) == 1, agg["decisions"]
+        entry = verify_entries[0]
+        assert "skipped" in entry["notes"], entry["notes"]
+        assert "no alternate worker" in entry["notes"], entry["notes"]
+        # The response itself shouldn't claim it was verified.
+        assert "verified_by" not in resp.json()
+
     def test_ensemble_all_workers_failed_notes_have_no_dangling_colon(
         self, gateway,
     ):

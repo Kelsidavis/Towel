@@ -506,10 +506,11 @@ def build_openai_routes(
                         )
                         # Aggregate dispatch entry — parity with
                         # /api/ask's record_verify call (e00fb6d).
-                        if (
-                            verifier_id is not None
-                            and getattr(gateway, "_dispatcher", None) is not None
-                        ):
+                        # Always record when verify was opted in,
+                        # including the no-alt skipped case
+                        # (verifier_id=None) so operators see why a
+                        # response lacks the verified_by marker.
+                        if getattr(gateway, "_dispatcher", None) is not None:
                             try:
                                 gateway._dispatcher.record_verify(
                                     session_id=session_id,
