@@ -101,6 +101,18 @@ def build_openai_routes(
     """
 
     async def chat_completions(request: Request) -> JSONResponse | StreamingResponse:
+        """POST /v1/chat/completions — OpenAI-compat chat endpoint.
+
+        Routes the request through the worker fleet (or the local
+        agent if no gateway is wired), formats the response in
+        OpenAI's `chat.completion` shape (or SSE chunks when
+        `stream=true`), and surfaces Towel-specific collaboration
+        state under a `towel` namespaced field on non-streaming
+        responses.
+
+        See the module docstring for the full param schema,
+        including towel extensions (`verify`, `ensemble`).
+        """
         try:
             body = await request.json()
         except Exception:
