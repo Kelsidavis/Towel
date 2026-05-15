@@ -449,6 +449,35 @@ class TestClusterHandoffs:
         assert len(recent) == 2
         assert all(not r["success"] for r in recent)
 
+    def test_reason_filter(self, gateway, client):
+        """`?reason=` narrows to a single HandoffReason — the seeded
+        records cover worker_draining (success) and
+        worker_disconnected (failure), filter picks each one out."""
+        self._seed_handoffs(gateway, n_success=2, n_failed=3)
+        resp = client.get("/cluster/handoffs?reason=worker_draining")
+        recent = resp.json()["recent"]
+        assert len(recent) == 2
+        assert all(r["reason"] == "worker_draining" for r in recent)
+
+        resp = client.get("/cluster/handoffs?reason=worker_disconnected")
+        recent = resp.json()["recent"]
+        assert len(recent) == 3
+        assert all(r["reason"] == "worker_disconnected" for r in recent)
+
+    def test_reason_filter_rejects_unknown(self, client):
+        """A typo like `?reason=draining` (missing the worker_
+        prefix) returns 400 with the list of valid reasons —
+        better than silent empty results that look like "the
+        coordinator is idle"."""
+        resp = client.get("/cluster/handoffs?reason=draining")
+        assert resp.status_code == 400
+        # All five enum values listed for fixing the typo.
+        for r in (
+            "worker_draining", "worker_disconnected", "worker_overloaded",
+            "manual_rebalance", "capacity_exceeded",
+        ):
+            assert r in resp.json()["error"]
+
 
 class TestWorkerStateEndpoint:
     def test_worker_state_update_sets_draining(self, gateway, client):

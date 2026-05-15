@@ -4864,6 +4864,9 @@ class GatewayServer:
               ``only_failed=1`` — narrow to failed handoffs so the
                           operator can ask "what's going wrong?"
                           without grepping success: false client-side.
+              ``reason`` — narrow to one HandoffReason (e.g.
+                          worker_draining, worker_disconnected,
+                          manual_rebalance). Bogus values reject 400.
             """
             try:
                 limit = int(request.query_params.get("limit", "20"))
@@ -4873,9 +4876,28 @@ class GatewayServer:
                 )
             limit = max(1, min(limit, 200))
             only_failed = request.query_params.get("only_failed") in {"1", "true"}
+            reason_filter = request.query_params.get("reason")
+            if reason_filter is not None:
+                # The stats output's by_reason map keys are the same
+                # set we accept here. Compare against the actual
+                # HandoffReason values rather than hardcoding the
+                # list so adding a new enum member doesn't drift.
+                valid_reasons = {r.value for r in HandoffReason}
+                if reason_filter not in valid_reasons:
+                    return JSONResponse(
+                        {
+                            "error": (
+                                "reason must be one of: "
+                                f"{', '.join(sorted(valid_reasons))}"
+                            ),
+                        },
+                        status_code=400,
+                    )
             recent = self._handoff_manager.recent_handoffs(limit=limit)
             if only_failed:
                 recent = [r for r in recent if not r.get("success")]
+            if reason_filter is not None:
+                recent = [r for r in recent if r.get("reason") == reason_filter]
             return JSONResponse(
                 {
                     "stats": self._handoff_manager.stats(),
