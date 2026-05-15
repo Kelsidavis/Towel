@@ -1654,8 +1654,12 @@ class GatewayServer:
         # Build a single-turn synthesis prompt. The worker answers
         # are tagged A/B/C/... so the model can refer to them without
         # being primed by raw worker_ids (which encode hardware
-        # specs the model shouldn't anchor on).
-        labels = "ABCDEFGHIJKLMN"
+        # specs the model shouldn't anchor on). Full alphabet gives
+        # headroom for big fleets (the previous 14-char list silently
+        # truncated workers 15+ out of the synthesis prompt; a 20-node
+        # cluster wouldn't see the last six workers' contributions
+        # influence arbitration at all).
+        labels = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         # Prompt that biases toward concrete grounded text: prefer
         # specifics over averaging, copy whichever phrasing is more
         # precise rather than rewriting in the arbiter's voice, and
