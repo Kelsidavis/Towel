@@ -5217,7 +5217,18 @@ class GatewayServer:
         async def simple_ask(request: Request) -> JSONResponse:
             """POST /api/ask — simple one-shot question/answer endpoint.
 
-            Body: {"message": "...", "session_id": "default", "system": null}
+            Body fields (all optional except ``message``)::
+
+                {
+                  "message": "...",            // required
+                  "session_id": "default",     // resume / pin context
+                  "system": null,              // identity override
+                  "verify": false,             // second-worker review pass
+                  "ensemble": false,           // parallel fan-out + synthesis
+                  "max_tokens": 256,           // 1..4096, default 256
+                  "temperature": 0.7           // 0..2, default 0.7
+                }
+
             Response: {"response": "...", "session": "...", "tokens": N, "tps": N.N}
 
             Either ``session`` or ``session_id`` is accepted; the rest of
