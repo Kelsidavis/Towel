@@ -21,7 +21,6 @@ import pytest
 from towel.memory import embeddings as emb
 from towel.memory.store import MemoryStore
 
-
 # ── module-state isolation ────────────────────────────────────────────
 
 

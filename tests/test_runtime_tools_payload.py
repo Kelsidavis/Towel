@@ -298,6 +298,7 @@ class TestLlamaTokenAccounting:
         # path that doesn't require a fixture is monkey-patching at the
         # module level for the duration of the call.
         import httpx
+
         from towel.agent import llama_runtime as mod
 
         orig_async_client = mod.httpx.AsyncClient

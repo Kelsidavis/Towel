@@ -5,7 +5,6 @@ import pytest
 from towel.memory.auto_capture import Capture, apply, extract
 from towel.memory.store import MemoryStore
 
-
 # ── extract() pattern coverage ────────────────────────────────────────
 
 

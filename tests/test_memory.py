@@ -270,6 +270,7 @@ class TestQueryRelevantPromptBlock:
         # be the most-recently-updated.
         import tempfile
         from pathlib import Path
+
         from towel.memory.store import MemoryStore
         with tempfile.TemporaryDirectory() as tmp:
             store = MemoryStore(store_dir=Path(tmp))
@@ -527,8 +528,8 @@ class TestSourceTracking:
         assert store.recall("role").source == ""
 
     def test_auto_forget_source_prefix_filter(self, tmp_path):
-        from datetime import UTC, datetime, timedelta
         import sqlite3
+        from datetime import UTC, datetime, timedelta
         store = MemoryStore(store_dir=tmp_path)
         store.remember("op_fact", "x", "fact", source="")
         store.remember("auto_fact", "y", "fact", source="auto_capture:role")

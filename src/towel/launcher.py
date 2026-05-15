@@ -256,7 +256,7 @@ def _record_upgrade_attempt(
 ) -> None:
     """Stash an upgrade outcome where the capability advertiser can find it."""
     global _last_upgrade_attempt
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
 
     _last_upgrade_attempt = {
         "ts": datetime.now(UTC).isoformat(),

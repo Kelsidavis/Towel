@@ -1186,7 +1186,8 @@ class GatewayServer:
         # Build a short conversation that's just the verification
         # prompt. We don't reuse the user's session — the verifier
         # gets a focused, single-turn ask.
-        from towel.agent.conversation import Conversation, Role as _Role
+        from towel.agent.conversation import Conversation
+        from towel.agent.conversation import Role as _Role
 
         # Cap the embedded question + primary answer so a user who
         # pasted a 100KB document doesn't push the verifier's prompt
@@ -1299,7 +1300,11 @@ class GatewayServer:
         - all workers timeout/error → returns the longest captured
           error string, or "" if none came back at all
         """
-        from towel.agent.conversation import Conversation, Role as _Role
+        from datetime import UTC
+        from datetime import datetime as _dt
+
+        from towel.agent.conversation import Conversation
+        from towel.agent.conversation import Role as _Role
         from towel.gateway.sessions import Session as _Session
 
         # Build the candidate pool: every enabled, non-draining,
@@ -1314,7 +1319,6 @@ class GatewayServer:
         # Including them would waste their compute and pollute the
         # arbiter with low-effort responses.
         from towel.nodes.roles import NodeRole as _NodeRole
-        from datetime import UTC, datetime as _dt
         now = _dt.now(UTC)
         stuck_threshold_secs = 300.0
         candidates: list[WorkerInfo] = []
@@ -1520,8 +1524,6 @@ class GatewayServer:
         Returns the synthesized answer text, or "" on failure
         (caller will fall back to a deterministic pick).
         """
-        from towel.agent.conversation import Conversation, Role as _Role
-
         # Shuffle the contributions before labeling. LLM-as-judge has
         # measurable primacy/recency bias — the model tends to favor
         # answers in certain positions regardless of content. Workers
@@ -1530,6 +1532,9 @@ class GatewayServer:
         # consistently get the privileged "Worker A" slot. Random
         # ordering removes that bias from the arbitration signal.
         import random as _random
+
+        from towel.agent.conversation import Conversation
+        from towel.agent.conversation import Role as _Role
         ordered = list(contributions)
         _random.shuffle(ordered)
 
@@ -1591,9 +1596,9 @@ class GatewayServer:
             # context, that's a side-effect bug, not a feature. Strip
             # any tool-call shaped output via parse_tool_calls and
             # keep only the prose.
-            from towel.agent.tool_parser import parse_tool_calls
-
             import time as _time
+
+            from towel.agent.tool_parser import parse_tool_calls
             # Bound synthesis time so a stuck local agent can't
             # extend an ensemble run forever. 90s is generous —
             # synthesis is short (one focused prompt → one focused
@@ -5393,7 +5398,10 @@ class GatewayServer:
             from starlette.responses import Response
 
             from towel.persistence.export import (
-                export_html, export_json, export_markdown, export_text,
+                export_html,
+                export_json,
+                export_markdown,
+                export_text,
             )
 
             conv_id = request.path_params["conv_id"]

@@ -454,7 +454,7 @@ class TestSelfUpgradeFailureRecord:
         _l._last_upgrade_attempt = None
 
     def test_unknown_strategy_records_failure(self):
-        from towel.launcher import self_upgrade_and_reexec, get_last_upgrade_attempt
+        from towel.launcher import get_last_upgrade_attempt, self_upgrade_and_reexec
         self._reset()
         assert self_upgrade_and_reexec("bogus") is False
         attempt = get_last_upgrade_attempt()
@@ -464,7 +464,7 @@ class TestSelfUpgradeFailureRecord:
         assert "ts" in attempt
 
     def test_command_failure_captures_exit_and_tail(self):
-        from towel.launcher import self_upgrade_and_reexec, get_last_upgrade_attempt
+        from towel.launcher import get_last_upgrade_attempt, self_upgrade_and_reexec
         self._reset()
         with patch("towel.launcher.subprocess.run") as run:
             fake = MagicMock()
@@ -480,8 +480,9 @@ class TestSelfUpgradeFailureRecord:
         assert "final explanation" in attempt["tail"]
 
     def test_timeout_records_status(self):
-        from towel.launcher import self_upgrade_and_reexec, get_last_upgrade_attempt
         import subprocess as _sp
+
+        from towel.launcher import get_last_upgrade_attempt, self_upgrade_and_reexec
         self._reset()
         with patch(
             "towel.launcher.subprocess.run",
@@ -493,7 +494,7 @@ class TestSelfUpgradeFailureRecord:
         assert attempt["status"] == "timeout"
 
     def test_command_not_found_records(self):
-        from towel.launcher import self_upgrade_and_reexec, get_last_upgrade_attempt
+        from towel.launcher import get_last_upgrade_attempt, self_upgrade_and_reexec
         self._reset()
         with patch(
             "towel.launcher.subprocess.run",

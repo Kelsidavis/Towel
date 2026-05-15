@@ -400,6 +400,7 @@ class TestClusterHandoffs:
 
     def _seed_handoffs(self, gateway, n_success: int, n_failed: int) -> None:
         from datetime import UTC, datetime
+
         from towel.gateway.handoff import HandoffReason, HandoffRecord
 
         for i in range(n_success):
@@ -470,6 +471,7 @@ class TestClusterHandoffs:
         more than the bare count. The pending list carries the same
         record shape as the recent list (minus completed_at fields)."""
         from datetime import UTC, datetime
+
         from towel.gateway.handoff import HandoffReason, HandoffRecord
 
         # Seed one pending (started, never completed).
@@ -2347,7 +2349,6 @@ class TestSimpleAskAPI:
         response surfaces arbitration mode 'longest_fallback' so
         the operator can see the synthesis hop bailed."""
         import asyncio
-
         from unittest.mock import MagicMock
 
         from towel.agent.conversation import Message, Role
@@ -2828,7 +2829,6 @@ class TestSimpleAskAPI:
         and records them as timeout contributions so the operator
         sees who lagged."""
         import asyncio
-
         from unittest.mock import MagicMock
 
         from towel.agent.conversation import Message, Role
@@ -3252,6 +3252,7 @@ class TestSimpleAskAPI:
         race (req A's worker would see req B's identity). The
         identity_override flows as a per-call kwarg now."""
         from unittest.mock import AsyncMock
+
         from towel.agent.conversation import Message, Role
         from towel.gateway.workers import WorkerInfo
 
@@ -3348,6 +3349,7 @@ class TestSimpleAskAPI:
         empty-response retry path. Operationally these are the same
         failure: 'primary didn't give us a useful answer.'"""
         from unittest.mock import AsyncMock
+
         from towel.agent.conversation import Message, Role
         from towel.gateway.workers import WorkerInfo
 
@@ -3400,6 +3402,7 @@ class TestSimpleAskAPI:
         trying to log or surface the failure. Now falls back to the
         type name when `str(exc)` is empty."""
         from unittest.mock import AsyncMock
+
         from towel.gateway.workers import WorkerInfo
 
         only_worker = WorkerInfo(id="w-empty-err", ws=AsyncMock(), capabilities={})
@@ -3437,6 +3440,7 @@ class TestSimpleAskAPI:
         caller should see the primary's exception bubble up as a
         500 — not silently masked."""
         from unittest.mock import AsyncMock
+
         from towel.gateway.workers import WorkerInfo
 
         only_worker = WorkerInfo(id="only-one", ws=AsyncMock(), capabilities={})
@@ -3470,6 +3474,7 @@ class TestSimpleAskAPI:
         got a 500."""
         import asyncio
         from unittest.mock import AsyncMock
+
         from towel.agent.conversation import Message, Role
         from towel.gateway.workers import WorkerInfo
 

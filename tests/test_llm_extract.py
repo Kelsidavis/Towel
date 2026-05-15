@@ -18,7 +18,6 @@ from towel.memory.llm_extract import (
     parse_response,
 )
 
-
 # ── parser ────────────────────────────────────────────────────────────
 
 
@@ -117,7 +116,7 @@ class TestScheduleBackgroundExtraction:
     the scheduled task complete, then inspect the store."""
 
     def test_schedules_and_writes_captures(self, tmp_path):
-        from towel.memory.llm_extract import schedule_background_extraction, _inflight
+        from towel.memory.llm_extract import _inflight, schedule_background_extraction
         from towel.memory.store import MemoryStore
 
         _inflight.clear()  # isolate from other tests
@@ -139,7 +138,7 @@ class TestScheduleBackgroundExtraction:
         assert store.recall("role").source == "llm_extract:auto"
 
     def test_deduplicates_inflight_text(self, tmp_path):
-        from towel.memory.llm_extract import schedule_background_extraction, _inflight
+        from towel.memory.llm_extract import _inflight, schedule_background_extraction
         from towel.memory.store import MemoryStore
 
         _inflight.clear()
@@ -166,7 +165,7 @@ class TestScheduleBackgroundExtraction:
     def test_no_loop_returns_false(self, tmp_path):
         # Calling outside an asyncio loop must just refuse to
         # schedule rather than crash the synchronous caller.
-        from towel.memory.llm_extract import schedule_background_extraction, _inflight
+        from towel.memory.llm_extract import _inflight, schedule_background_extraction
         from towel.memory.store import MemoryStore
 
         _inflight.clear()
@@ -180,7 +179,7 @@ class TestScheduleBackgroundExtraction:
         assert result is False
 
     def test_empty_text_skips_schedule(self, tmp_path):
-        from towel.memory.llm_extract import schedule_background_extraction, _inflight
+        from towel.memory.llm_extract import _inflight, schedule_background_extraction
         from towel.memory.store import MemoryStore
 
         _inflight.clear()

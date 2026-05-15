@@ -54,8 +54,8 @@ def is_available() -> bool:
     if _model_load_failed:
         return False
     try:
-        import sentence_transformers  # noqa: F401
         import numpy  # noqa: F401
+        import sentence_transformers  # noqa: F401
     except ImportError:
         _model_load_failed = True
         return False

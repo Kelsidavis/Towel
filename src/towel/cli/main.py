@@ -494,9 +494,8 @@ def worker(
 
     from towel.gateway.worker_client import RemoteWorkerClient, default_worker_capabilities
     from towel.memory.store import MemoryStore
-    from towel.skills.registry import SkillRegistry
-
     from towel.memory.store import open_for_config as _mk_memory_store
+    from towel.skills.registry import SkillRegistry
     memory = _mk_memory_store(config)
     skills = _build_skill_registry(config, memory_store=memory) if allow_tools else SkillRegistry()
     agent_rt = _build_runtime(
@@ -630,9 +629,8 @@ def chat(
     from towel.agent.events import EventType
     from towel.cli.slash import SlashContext, handle_slash
     from towel.memory.store import MemoryStore
-    from towel.persistence.store import ConversationStore
-
     from towel.memory.store import open_for_config as _mk_memory_store
+    from towel.persistence.store import ConversationStore
     memory = _mk_memory_store(config)
     skills = _build_skill_registry(config, memory_store=memory)
     agent_rt = _build_runtime(
@@ -1993,7 +1991,6 @@ def ask(
         config.identity = system
 
     from towel.memory.store import MemoryStore
-
     from towel.memory.store import open_for_config as _mk_memory_store
     memory = _mk_memory_store(config)
     skills = _build_skill_registry(config, memory_store=memory)
@@ -3032,7 +3029,7 @@ def memory_backup(keep: int, backup_dir: str | None) -> None:
     backups so the directory doesn't grow forever.
     """
     import json as _json
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
     from pathlib import Path
 
     from towel.config import TOWEL_HOME
