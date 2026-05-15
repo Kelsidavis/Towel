@@ -1008,6 +1008,110 @@ class GatewayServer:
             return primary_answer, False, alt.id
         return verifier_text, True, alt.id
 
+    async def _ensemble_dispatch(
+        self,
+        session_id: str,
+        question: str,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Fan the same prompt to every idle capable worker in parallel.
+
+        Returns ``(arbitrated_answer, contributions)`` where
+        ``contributions`` is a list of ``{worker_id, answer, ms,
+        error}`` dicts — one per worker that responded (or errored).
+
+        Coordinator-side arbitration is intentionally simple in this
+        first cut: pick the longest non-empty, non-placeholder answer.
+        Real synthesis (LLM-as-judge, voting, merge) can layer on top
+        of this collection step without changing the fan-out plumbing.
+
+        Falls back gracefully:
+        - 0 workers idle → returns ``("", [])`` and the caller falls
+          through to single-worker dispatch
+        - 1 worker idle → just that worker's answer (still useful;
+          ensemble=true on a tiny fleet still works)
+        - all workers timeout/error → returns the longest captured
+          error string, or "" if none came back at all
+        """
+        from towel.agent.conversation import Conversation, Role as _Role
+        from towel.gateway.sessions import Session as _Session
+
+        # Build the candidate pool: every enabled, non-draining,
+        # non-stuck worker. Skip busy workers — fan-out wants real
+        # concurrency, not queue thrash. (Operators who want to
+        # serialize against busy workers should use verify= instead.)
+        from datetime import UTC, datetime as _dt
+        now = _dt.now(UTC)
+        stuck_threshold_secs = 300.0
+        candidates: list[WorkerInfo] = []
+        for w in self._workers.list():
+            if not w.enabled or w.draining or w.busy:
+                continue
+            if w.busy_since is not None and (
+                (now - w.busy_since).total_seconds() >= stuck_threshold_secs
+            ):
+                continue
+            candidates.append(w)
+
+        if not candidates:
+            return "", []
+
+        async def _ask_one(worker: WorkerInfo) -> dict[str, Any]:
+            """One-shot inference on a fresh ephemeral session."""
+            import time as _time
+            sess_id = f"_ens_{session_id}_{worker.id}"
+            conv = Conversation(id=sess_id)
+            conv.add(_Role.USER, question)
+            session = _Session(id=sess_id, conversation=conv)
+            t0 = _time.monotonic()
+            try:
+                resp = await self._quick_remote_infer(
+                    sess_id, session, worker, max_tokens=512,
+                )
+                ms = round((_time.monotonic() - t0) * 1000.0, 1)
+                meta = resp.metadata or {}
+                # An empty-text fallback placeholder is not a real
+                # contribution; treat it as a "no answer" so
+                # arbitration doesn't pick the placeholder over a
+                # real response.
+                if meta.get("empty_text_fallback"):
+                    return {
+                        "worker_id": worker.id, "answer": "",
+                        "ms": ms, "error": "empty_text",
+                    }
+                return {
+                    "worker_id": worker.id,
+                    "answer": resp.content or "",
+                    "ms": ms,
+                    "error": None,
+                }
+            except Exception as exc:
+                ms = round((_time.monotonic() - t0) * 1000.0, 1)
+                return {
+                    "worker_id": worker.id, "answer": "",
+                    "ms": ms, "error": _err_str(exc),
+                }
+            finally:
+                try:
+                    self.cleanup_ephemeral_session(sess_id)
+                except Exception:
+                    pass
+
+        # Fire all candidates in parallel. `return_exceptions=False`
+        # because _ask_one already wraps each worker; nothing should
+        # raise out.
+        contributions = await asyncio.gather(
+            *(_ask_one(w) for w in candidates),
+        )
+
+        # Arbitration: longest non-empty answer wins. Conservative
+        # first cut — real synthesis (LLM-as-judge, voting, merging)
+        # comes later; this commit lands the fan-out plumbing.
+        real_answers = [c for c in contributions if c["answer"]]
+        if real_answers:
+            best = max(real_answers, key=lambda c: len(c["answer"]))
+            return best["answer"], contributions
+        return "", contributions
+
     def cleanup_ephemeral_session(self, session_id: str) -> None:
         """Drop in-memory state for a one-shot session.
 
@@ -4557,6 +4661,25 @@ class GatewayServer:
                     {"error": "verify must be true or false"}, status_code=400,
                 )
             verify = bool(verify_raw)
+            # Opt-in ensemble: fan the same prompt to every idle
+            # worker in parallel, then arbitrate. Different shape from
+            # verify: verify is sequential (draft → review), ensemble
+            # is parallel (everyone answers → coordinator picks).
+            # ensemble wins on latency (capped by slowest worker, not
+            # sum) and on coverage (every model contributes). Costs
+            # more compute. Mutually exclusive with verify — they
+            # represent two different collaboration models.
+            ensemble_raw = body.get("ensemble", False)
+            if not isinstance(ensemble_raw, bool):
+                return JSONResponse(
+                    {"error": "ensemble must be true or false"}, status_code=400,
+                )
+            ensemble = bool(ensemble_raw)
+            if ensemble and verify:
+                return JSONResponse(
+                    {"error": "ensemble and verify are mutually exclusive"},
+                    status_code=400,
+                )
 
             session = self.sessions.get_or_create(session_id)
             session.conversation.channel = "api"
@@ -4579,6 +4702,59 @@ class GatewayServer:
             identity_override = system_override or None
 
             try:
+                # Ensemble short-circuit: when the caller opted in
+                # (deep-reasoning task where extra compute is worth
+                # it), fan to every idle worker concurrently and let
+                # the coordinator arbitrate. Bypasses the dispatcher's
+                # single-worker routing entirely — every worker
+                # contributes, coordinator picks. Returns early when
+                # we got at least one real answer; falls through to
+                # the normal single-worker path otherwise.
+                ensemble_contributions: list[dict[str, Any]] = []
+                if ensemble:
+                    arbitrated, ensemble_contributions = (
+                        await self._ensemble_dispatch(session_id, message)
+                    )
+                    if arbitrated:
+                        from towel.agent.conversation import Message as _Message
+                        response = _Message(
+                            role=Role.ASSISTANT,
+                            content=arbitrated,
+                            metadata={
+                                "ensemble": True,
+                                "ensemble_contributions": ensemble_contributions,
+                                "ensemble_winners": [
+                                    c["worker_id"] for c in ensemble_contributions
+                                    if c["answer"] == arbitrated
+                                ],
+                                "remote_worker": "ensemble",
+                            },
+                        )
+                        session.conversation.messages.append(response)
+                        worker = None
+                        intent = "task"
+                        # Skip the rest of the normal flow.
+                        self._maybe_set_auto_title(session)
+                        self.sessions.save(session_id)
+                        request_total_ms = round(
+                            (time.monotonic() - request_start) * 1000.0, 1,
+                        )
+                        ens_body: dict[str, Any] = {
+                            "response": response.content,
+                            "session": session_id,
+                            "tokens": count_tokens_fallback(response.content),
+                            "tps": 0,
+                            "worker": "ensemble",
+                            "ensemble": True,
+                            "ensemble_contributions": ensemble_contributions,
+                            "request_total_ms": request_total_ms,
+                        }
+                        return JSONResponse(ens_body)
+                    # Ensemble fan-out returned nothing useful — fall
+                    # through to single-worker dispatch as a safety
+                    # net. The contributions list still surfaces what
+                    # each worker did so the operator can diagnose.
+
                 # Route through cluster workers when available
                 worker, intent = await self._route_by_role(message, session_id)
                 if worker and intent == "chat":

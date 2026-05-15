@@ -993,6 +993,126 @@ class TestSimpleAskAPI:
         assert isinstance(body["tokens"], int)
         assert body["tokens"] > 0
 
+    def test_ask_ensemble_must_be_bool(self, client):
+        for bad in ("yes", 1, "true", "false", [True]):
+            resp = client.post(
+                "/api/ask",
+                json={"message": "hi", "session_id": "e-bad", "ensemble": bad},
+            )
+            assert resp.status_code == 400, f"accepted ensemble={bad!r}"
+
+    def test_ask_ensemble_and_verify_mutually_exclusive(self, client):
+        """Two different collaboration models — verify is sequential
+        (draft → review), ensemble is parallel fan-out. Operators
+        pick one; combining them is almost certainly a mistake."""
+        resp = client.post(
+            "/api/ask",
+            json={
+                "message": "hi", "session_id": "ev-conflict",
+                "verify": True, "ensemble": True,
+            },
+        )
+        assert resp.status_code == 400
+        assert "mutually exclusive" in resp.json()["error"]
+
+    def test_ask_ensemble_fans_out_and_picks_longest(self, gateway, client):
+        """End-to-end ensemble: every idle worker gets the same prompt
+        concurrently, coordinator picks the longest non-empty answer.
+        Real multi-worker collaboration on a single request — every
+        worker contributes input, coordinator arbitrates."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "small", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "large", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        # Each worker returns a different-length answer so we can
+        # check arbitration picks the longest.
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            answers = {
+                "small": "Short answer.",
+                "large": "A more thorough, multi-sentence response that explains the topic in depth.",
+            }
+            return Message(
+                role=Role.ASSISTANT,
+                content=answers.get(worker.id, ""),
+                metadata={"remote_worker": worker.id, "tokens": 10, "tps": 5.0},
+            )
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={
+                "message": "deep reasoning question",
+                "session_id": "ens-1",
+                "ensemble": True,
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # The longer answer (large worker) wins arbitration.
+        assert "thorough" in body["response"]
+        # Response metadata exposes the parallel run.
+        assert body["worker"] == "ensemble"
+        assert body["ensemble"] is True
+        # Both workers contributed.
+        ids = {c["worker_id"] for c in body["ensemble_contributions"]}
+        assert ids == {"small", "large"}
+
+    def test_ask_ensemble_skips_empty_text_placeholder(self, gateway, client):
+        """An empty-text fallback isn't a real contribution — the
+        arbitrator must skip it and pick a real answer from another
+        worker."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "small", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "large", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            if worker.id == "small":
+                # Empty-text placeholder.
+                return Message(
+                    role=Role.ASSISTANT,
+                    content="(placeholder)",
+                    metadata={
+                        "remote_worker": "small",
+                        "empty_text_fallback": True,
+                    },
+                )
+            return Message(
+                role=Role.ASSISTANT,
+                content="A real answer from the large worker.",
+                metadata={"remote_worker": "large", "tokens": 8, "tps": 5.0},
+            )
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "q", "session_id": "ens-2", "ensemble": True},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # The placeholder must NOT have been picked.
+        assert "placeholder" not in body["response"]
+        assert "real answer" in body["response"]
+
     def test_ask_verify_must_be_bool(self, client):
         """Strict-bool guard on the opt-in `verify` flag — a truthy
         string like 'yes' would otherwise silently enable the
