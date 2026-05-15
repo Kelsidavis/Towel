@@ -1366,11 +1366,17 @@ class GatewayServer:
         synthesized = await self._synthesize_ensemble(
             question, real_answers, timing_sink=synth_timing,
         )
-        # Tag every contribution with the synthesis time so the
-        # caller has it next to the per-worker `ms` values.
+        # Tag every contribution with the synthesis time + timeout
+        # flag so the caller has them next to the per-worker `ms`
+        # values. The timeout flag is what disambiguates "synthesis
+        # ran fast and was useful" from "synthesis bailed and we
+        # fell back to longest" — both have a synthesis_ms but only
+        # the latter has synthesis_timeout=True.
         if "synthesis_ms" in synth_timing:
             for c in contributions:
                 c["synthesis_ms"] = synth_timing["synthesis_ms"]
+                if synth_timing.get("synthesis_timeout"):
+                    c["synthesis_timeout"] = True
         if synthesized:
             return synthesized, contributions, "synthesis"
         # Synthesis fell through (local agent unavailable, error, or

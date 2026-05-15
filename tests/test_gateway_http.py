@@ -1259,6 +1259,13 @@ class TestSimpleAskAPI:
             phrase in body["response"]
             for phrase in ("Trees photosynthesize", "Cars run on gasoline")
         )
+        # Each contribution carries synthesis_timeout=True so the
+        # operator can distinguish "synthesis bailed" from "synthesis
+        # produced empty" — both surface as longest_fallback but only
+        # the former has the timeout flag.
+        for c in body["ensemble_contributions"]:
+            if c.get("error") != "ensemble_timeout":
+                assert c.get("synthesis_timeout") is True
 
     def test_ask_ensemble_concurrent_requests_dont_collide(
         self, gateway, client,
