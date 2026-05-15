@@ -1676,6 +1676,13 @@ def doctor() -> None:
 
     if failed:
         console.print("\n  [dim]Fix the issues above, then run towel doctor again.[/dim]")
+        # Non-zero exit so scripted callers (CI, pre-commit hooks,
+        # `towel doctor && towel serve`) can detect a failed setup
+        # from the shell. Previously the exit was always 0 — a
+        # broken environment looked identical to a clean one from
+        # the shell's perspective, defeating the point of running
+        # doctor in a script.
+        raise SystemExit(1)
     elif warned:
         console.print("\n  [dim]Mostly hoopy. Check the warnings above.[/dim]")
     else:

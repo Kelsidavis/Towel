@@ -24,6 +24,57 @@ class TestCheck:
         assert len(c.details) == 1
         assert len(c.errors) == 0
 
+    def test_doctor_exits_nonzero_on_failure(self):
+        """``towel doctor`` previously always returned exit 0 — a
+        broken environment looked identical to a clean one from the
+        shell's perspective, defeating the point of running it in a
+        CI script or pre-commit hook. Now any failed check causes a
+        non-zero exit so scripted callers can detect setup issues."""
+        from unittest.mock import patch
+
+        from click.testing import CliRunner
+
+        from towel.cli.main import cli
+
+        # Inject a synthetic failing check by patching run_doctor.
+        c_failing = Check("synthetic-failure")
+        c_failing.fail("this check intentionally failed", "fix it")
+        c_passing = Check("synthetic-pass")
+        c_passing.ok("clean")
+
+        runner = CliRunner()
+        with patch(
+            "towel.cli.doctor.run_doctor",
+            return_value=[c_failing, c_passing],
+        ):
+            result = runner.invoke(cli, ["doctor"])
+        assert result.exit_code == 1
+        # Render still happened so the operator sees what failed.
+        assert "synthetic-failure" in result.output
+
+    def test_doctor_exits_zero_when_only_warnings(self):
+        """Warnings shouldn't fail the script — they're advisories,
+        not blockers. Only ``fail()`` calls should drive a non-zero
+        exit so a fleet with one flaky worker doesn't break every
+        CI run."""
+        from unittest.mock import patch
+
+        from click.testing import CliRunner
+
+        from towel.cli.main import cli
+
+        c_warned = Check("with-warning")
+        c_warned.ok("mostly fine")
+        c_warned.warn("but here's a thing")
+
+        runner = CliRunner()
+        with patch(
+            "towel.cli.doctor.run_doctor",
+            return_value=[c_warned],
+        ):
+            result = runner.invoke(cli, ["doctor"])
+        assert result.exit_code == 0
+
     def test_failing_check(self):
         c = Check("test")
         c.fail("something broke", "fix it")
