@@ -36,6 +36,30 @@ class TestArgvBuilder:
         assert err is not None
         assert "backend" in err
 
+    def test_rejects_non_string_controller(self):
+        """A non-string controller (list / dict / number) used to be
+        Python-repr'd into argv, producing a worker that connected to
+        a bogus URL like "['ws://x']" and silently failed. Reject at
+        the boundary."""
+        for bad in ([1, 2], {"x": 1}, 42, True):
+            argv, err = _build_worker_argv({"controller": bad})
+            assert err is not None, f"accepted {bad!r}"
+            assert "string" in err.lower(), f"unexpected error for {bad!r}: {err}"
+
+    def test_rejects_non_ws_scheme(self):
+        """A typo like 'http://controller:18742' (HTTP coordinator URL,
+        not the WS endpoint) used to spawn a worker that hung on
+        websockets.connect — opaque to the operator. Fail loud."""
+        for bad in (
+            "http://x:18742",
+            "https://x:18742",
+            "controller:18742",
+            "192.168.1.1:18742",
+        ):
+            argv, err = _build_worker_argv({"controller": bad})
+            assert err is not None, f"accepted {bad!r}"
+            assert "ws://" in err
+
     def test_full_payload_produces_expected_flags(self):
         argv, err = _build_worker_argv(
             {

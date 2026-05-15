@@ -83,6 +83,17 @@ def _build_worker_argv(payload: dict[str, Any]) -> tuple[list[str], str | None]:
     controller = payload.get("controller") or payload.get("master")
     if not controller:
         return [], "controller (ws:// or wss:// URL) is required"
+    # Reject non-string controller. A list / dict / number passed here
+    # previously got Python-repr'd into the argv ("['ws://x']") which
+    # produced a worker that silently failed to connect to a bogus URL
+    # — the operator saw a process spawn but no worker register.
+    if not isinstance(controller, str):
+        return [], "controller must be a string"
+    # Reject controller URLs that don't look like ws:// or wss:// —
+    # otherwise a typo'd "http://..." would launch a worker that
+    # immediately fails its websockets.connect with an opaque error.
+    if not (controller.startswith("ws://") or controller.startswith("wss://")):
+        return [], "controller must be a ws:// or wss:// URL"
     backend = payload.get("backend")
     if backend is not None and backend not in _VALID_BACKENDS:
         return [], f"unknown backend: {backend!r}"
