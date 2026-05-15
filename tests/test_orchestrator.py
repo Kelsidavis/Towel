@@ -112,6 +112,7 @@ class _RecordingDispatcher:
         session_id: str,
         max_tokens: int,
         temperature: float,
+        with_tools: bool,
     ) -> str:
         self.calls.append({
             "role": role,
@@ -120,6 +121,7 @@ class _RecordingDispatcher:
             "session_id": session_id,
             "max_tokens": max_tokens,
             "temperature": temperature,
+            "with_tools": with_tools,
         })
         return f"[{role} result for: {prompt[:40]}]"
 
@@ -188,11 +190,27 @@ class TestOrchestratorWithDispatcher:
         sids = {c["session_id"] for c in dispatcher.calls}
         assert len(sids) == 3
 
+    def test_with_tools_flows_through_to_dispatcher(self):
+        """A subtask declared with_tools=True must hand that down to
+        the dispatcher — without this, "coder" subtasks can never call
+        write_file etc., which makes piecemeal artifact building
+        impossible regardless of how good the planning is."""
+        from towel.config import TowelConfig
+        dispatcher = _RecordingDispatcher()
+        orch = Orchestrator(TowelConfig(), dispatcher=dispatcher)
+        tasks = [
+            AgentTask(role="writer", prompt="explain x"),               # no tools
+            AgentTask(role="coder", prompt="write x.py", with_tools=True),
+        ]
+        asyncio.run(orch.run("g", tasks))
+        assert dispatcher.calls[0]["with_tools"] is False
+        assert dispatcher.calls[1]["with_tools"] is True
+
     def test_dispatcher_error_propagates_as_failed_task(self):
         from towel.config import TowelConfig
 
         class _BrokenDispatcher:
-            async def dispatch_role_task(self, *args, **kwargs) -> str:
+            async def dispatch_role_task(self, *args, **kwargs) -> str:  # noqa: ARG002
                 raise RuntimeError("worker timed out")
 
         orch = Orchestrator(TowelConfig(), dispatcher=_BrokenDispatcher())

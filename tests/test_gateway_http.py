@@ -119,8 +119,11 @@ class TestOrchestrateEndpoint:
 
         async def fake_dispatch(
             role, role_system, prompt, *, session_id, max_tokens, temperature,
+            with_tools,
         ):
-            calls.append({"role": role, "prompt": prompt})
+            calls.append({
+                "role": role, "prompt": prompt, "with_tools": with_tools,
+            })
             return f"<<{role} did: {prompt[:30]}>>"
 
         gateway.dispatch_role_task = fake_dispatch  # type: ignore[method-assign]
@@ -143,6 +146,47 @@ class TestOrchestrateEndpoint:
         # the architect's result.
         assert "<<architect did:" in calls[1]["prompt"]
 
+    def test_orchestrate_with_tools_flag_propagates(self, gateway, client):
+        """Validation + plumbing for the with_tools flag — without this
+        the orchestrator endpoint would silently drop the flag and
+        every subtask would run on the no-tool path even when the
+        caller asked for tool access."""
+        captured: list[dict] = []
+
+        async def fake_dispatch(
+            role, role_system, prompt, *, session_id, max_tokens, temperature,
+            with_tools,
+        ):
+            captured.append({"role": role, "with_tools": with_tools})
+            return f"{role}-done"
+
+        gateway.dispatch_role_task = fake_dispatch  # type: ignore[method-assign]
+
+        resp = client.post("/api/orchestrate", json={
+            "goal": "build",
+            "tasks": [
+                {"role": "writer", "prompt": "explain"},
+                {"role": "coder", "prompt": "write code", "with_tools": True},
+            ],
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["tasks"][0]["with_tools"] is False
+        assert body["tasks"][1]["with_tools"] is True
+        # The dispatcher saw the same.
+        assert captured[0]["with_tools"] is False
+        assert captured[1]["with_tools"] is True
+
+    def test_orchestrate_with_tools_must_be_bool(self, client):
+        resp = client.post("/api/orchestrate", json={
+            "goal": "g",
+            "tasks": [
+                {"role": "coder", "prompt": "x", "with_tools": "yes"},
+            ],
+        })
+        assert resp.status_code == 400
+        assert "with_tools" in resp.json()["error"]
+
     def test_orchestrate_parallel_runs_concurrently(self, gateway, client):
         """parallel=true must not serialize independent subtasks. We
         verify by recording start times — all three should overlap."""
@@ -151,6 +195,7 @@ class TestOrchestrateEndpoint:
 
         async def fake_dispatch(
             role, role_system, prompt, *, session_id, max_tokens, temperature,
+            with_tools,  # noqa: ARG001
         ):
             import time as _time
             starts.append(_time.monotonic())

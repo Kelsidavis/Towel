@@ -2155,6 +2155,7 @@ class GatewayServer:
         session_id: str,
         max_tokens: int = 2048,
         temperature: float = 0.4,
+        with_tools: bool = False,
     ) -> str:
         """Dispatch a single orchestrator subtask to the best-fit worker.
 
@@ -2165,6 +2166,14 @@ class GatewayServer:
         ``session_id`` values, which prevents role-affinity bleed across
         unrelated subtasks.
 
+        With ``with_tools=True`` the subtask uses the full tool-loop
+        path (``_step_remote_inference``) so a "coder" subtask can call
+        ``write_file`` / ``edit_file`` / ``read_file`` to actually
+        produce artifacts on disk — without this flag the subtask can
+        only emit text, which defeats the point of having a "Codex-like"
+        fleet. Roles that don't need tools (writer, default chat) leave
+        the flag off to stay on the faster no-tool path.
+
         Returns the worker's response text; raises if the worker errors
         or returns nothing usable. The caller (the orchestrator) catches
         and converts the exception into a failed-task status, so the
@@ -2172,11 +2181,26 @@ class GatewayServer:
         """
         from towel.agent.conversation import Role as _Role
         session = self.sessions.get_or_create(session_id)
-        # Append the role-task prompt as a user message so
-        # _quick_remote_infer's message-list construction includes it.
-        # Re-using the session machinery (vs. a one-shot infer payload)
-        # keeps memory injection, context tracking, and dispatch
-        # bookkeeping consistent with the /api/ask flow.
+        # Tool-using path needs the role's system identity baked into
+        # the conversation since `_step_remote_inference` derives its
+        # system prompt from the conversation's first SYSTEM message
+        # rather than an `identity_override` parameter. Skip when the
+        # conversation already starts with a SYSTEM message — this
+        # avoids stacking duplicate systems if the orchestrator is
+        # ever called against a resumed session.
+        if (
+            with_tools
+            and role_system
+            and (
+                not session.conversation.messages
+                or session.conversation.messages[0].role != _Role.SYSTEM
+            )
+        ):
+            from towel.agent.conversation import Message as _Message
+            session.conversation.messages.insert(
+                0,
+                _Message(role=_Role.SYSTEM, content=role_system),
+            )
         session.conversation.add(_Role.USER, prompt)
 
         worker, _intent = await self._route_by_role(prompt, session_id)
@@ -2188,14 +2212,27 @@ class GatewayServer:
             raise RuntimeError(
                 f"no worker available for role={role} (session={session_id})"
             )
-        response = await self._quick_remote_infer(
-            session_id,
-            session,
-            worker,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            identity_override=role_system,
-        )
+
+        if with_tools:
+            # Tool-loop path: the worker can call write_file, read_file,
+            # edit_file etc. to actually produce artifacts. Note this
+            # uses chunk_timeout (default 300s) per generation pass, so
+            # a multi-iteration coder subtask can easily run several
+            # minutes — long-by-design.
+            response = await self._step_remote_inference(
+                session_id,
+                session,
+                worker,
+            )
+        else:
+            response = await self._quick_remote_infer(
+                session_id,
+                session,
+                worker,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                identity_override=role_system,
+            )
         text = getattr(response, "content", "") or ""
         if not text:
             raise RuntimeError(
@@ -6951,10 +6988,17 @@ class GatewayServer:
                             status_code=400,
                         )
                     deps.append(d)
+                with_tools_raw = raw.get("with_tools", False)
+                if not isinstance(with_tools_raw, bool):
+                    return JSONResponse(
+                        {"error": f"tasks[{i}].with_tools must be a boolean"},
+                        status_code=400,
+                    )
                 tasks.append(AgentTask(
                     role=role,
                     prompt=prompt.strip(),
                     depends_on=deps,
+                    with_tools=with_tools_raw,
                 ))
 
             parallel = bool(body.get("parallel", False))
@@ -6986,6 +7030,7 @@ class GatewayServer:
                         "role": t.role,
                         "prompt": t.prompt,
                         "depends_on": t.depends_on,
+                        "with_tools": t.with_tools,
                         "status": t.status,
                         "elapsed_ms": round(t.elapsed * 1000.0, 1),
                         "result": t.result,

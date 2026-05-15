@@ -47,6 +47,7 @@ class RoleDispatcher(Protocol):
         session_id: str,
         max_tokens: int,
         temperature: float,
+        with_tools: bool,
     ) -> str:
         ...
 
@@ -62,6 +63,10 @@ class AgentTask:
     result: str = ""
     status: str = "pending"  # pending, running, completed, failed
     elapsed: float = 0.0
+    # When True the subtask runs through the worker's tool loop so it
+    # can call write_file/read_file/edit_file. Defaults False so simple
+    # text-only roles (writer, default) stay on the faster path.
+    with_tools: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -195,7 +200,9 @@ class Orchestrator:
             task_start = time.perf_counter()
 
             try:
-                task.result = await self._run_agent(task.role, full_prompt)
+                task.result = await self._run_agent(
+                    task.role, full_prompt, with_tools=task.with_tools,
+                )
                 task.status = "completed"
             except Exception as e:
                 task.result = f"Error: {e}"
@@ -225,7 +232,9 @@ class Orchestrator:
             task_start = time.perf_counter()
             try:
                 full_prompt = f"Goal: {goal}\n\nYour task: {task.prompt}"
-                task.result = await self._run_agent(task.role, full_prompt)
+                task.result = await self._run_agent(
+                    task.role, full_prompt, with_tools=task.with_tools,
+                )
                 task.status = "completed"
             except Exception as e:
                 task.result = f"Error: {e}"
@@ -237,12 +246,15 @@ class Orchestrator:
         result = OrchestratorResult(tasks=tasks, total_elapsed=time.perf_counter() - start)
         return result
 
-    async def _run_agent(self, role: str, prompt: str) -> str:
+    async def _run_agent(
+        self, role: str, prompt: str, *, with_tools: bool = False,
+    ) -> str:
         """Run a single agent step with role-specific system prompt.
 
         Uses the configured remote dispatcher when present so each role's
         subtask can land on the best-fit worker; otherwise falls back to
-        a local AgentRuntime.
+        a local AgentRuntime. ``with_tools`` flips the dispatcher onto
+        the tool-loop path so the subtask can call write_file etc.
         """
         role_system = ROLE_PROMPTS.get(role, ROLE_PROMPTS["default"])
 
@@ -258,6 +270,7 @@ class Orchestrator:
                 session_id=session_id,
                 max_tokens=2048,
                 temperature=0.4,
+                with_tools=with_tools,
             )
 
         # Local fallback: spin up a coordinator-side AgentRuntime with
