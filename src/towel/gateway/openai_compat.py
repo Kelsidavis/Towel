@@ -943,7 +943,19 @@ def _format_completion(
     *,
     prompt_tokens: int | None = None,
 ) -> dict[str, Any]:
-    """Format a non-streaming ChatCompletion response."""
+    """Format a non-streaming ChatCompletion response.
+
+    Emits the OpenAI 2024-spec shape: ``id``, ``object`` set to
+    ``"chat.completion"``, ``created``, ``model``,
+    ``system_fingerprint`` (per-process stable, derived from
+    package version), ``choices`` (single message), and ``usage``.
+
+    Towel-specific metadata (``verified_by``, ``ensemble``,
+    ``verify_skipped``, ``dual_empty_text``, …) is attached by the
+    chat_completions handler under a top-level ``towel`` key, NOT
+    by this function. Keep this formatter's output strictly
+    OpenAI-spec — the handler decides whether to extend.
+    """
     if prompt_tokens is None:
         # No prompt information supplied — fall back to a 1-token
         # placeholder rather than a number derived from completion
