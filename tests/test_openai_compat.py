@@ -730,6 +730,50 @@ class TestCollaborationOnOpenAICompat:
         # ones see whether ensemble actually ran.
         assert data.get("towel", {}).get("ensemble") is True
 
+    def test_ensemble_skipped_surfaces_in_towel_field(self, tmp_path):
+        """When ensemble=true is requested but no idle inference
+        workers exist, the request falls through to the local agent
+        path. The response must carry `towel.ensemble_skipped: true`
+        so OpenAI-aware clients can render the same degraded-state
+        badge they would on /api/ask."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+        from towel.agent.runtime import GenerationResult
+
+        store = ConversationStore(store_dir=tmp_path)
+        config = TowelConfig()
+        agent = AgentRuntime(config)
+        sessions = SessionManager(store=store)
+        gw = GatewayServer(config=config, agent=agent, sessions=sessions)
+        client = TestClient(gw._build_http_app())
+
+        # No workers registered → ensemble_dispatch returns 0
+        # contributions → falls through. Local agent path needs
+        # a stub since the real one isn't loaded.
+        async def fake_step(_conv, **_kwargs):
+            return Message(role=Role.ASSISTANT, content="local fallback answer")
+        agent.step = fake_step  # type: ignore[method-assign]
+
+        async def fake_route(_msg, _sid):
+            return None, "chat"
+        gw._route_by_role = fake_route  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "default",
+                "messages": [{"role": "user", "content": "hi"}],
+                "ensemble": True,
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        # Local-agent fallback answered; ensemble didn't actually run.
+        assert "local fallback" in data["choices"][0]["message"]["content"]
+        # Towel-namespaced field surfaces the silent degradation.
+        assert data.get("towel", {}).get("ensemble_skipped") is True
+
     def test_verify_corrects_through_openai_compat(self, tmp_path):
         """End-to-end verify through /v1/chat/completions: the
         primary worker generates an answer, the alternate verifies,
