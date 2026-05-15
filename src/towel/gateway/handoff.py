@@ -73,6 +73,17 @@ class HandoffRecord:
         if self.completed_at:
             d["completed_at"] = self.completed_at.isoformat()
             d["duration_ms"] = self.duration_ms
+        else:
+            # In-progress handoff: surface how long it's been
+            # in-flight. Without this, /cluster/handoffs?... showed
+            # the started_at but the operator had to subtract from
+            # now() themselves to triage "what's been stuck the
+            # longest." For completed handoffs `duration_ms`
+            # already covers this — `elapsed_ms` is just the
+            # pending equivalent.
+            d["elapsed_ms"] = (
+                datetime.now(UTC) - self.started_at
+            ).total_seconds() * 1000
         if self.error:
             d["error"] = self.error
         return d

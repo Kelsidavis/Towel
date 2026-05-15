@@ -465,6 +465,34 @@ class TestClusterHandoffs:
         assert len(recent) == 3
         assert all(r["reason"] == "worker_disconnected" for r in recent)
 
+    def test_pending_handoffs_carry_elapsed_ms(self, gateway, client):
+        """In-progress handoff records expose `elapsed_ms` (now -
+        started_at) so operators triaging "what's been stuck the
+        longest?" can sort by it directly. Completed handoffs
+        already carry `duration_ms`; this is the pending equivalent."""
+        import time
+        from datetime import UTC, datetime
+        from towel.gateway.handoff import HandoffReason, HandoffRecord
+
+        # Started ~50ms ago — elapsed should reflect at least that.
+        active = HandoffRecord(
+            session_id="elapsed-sess",
+            from_worker_id="a",
+            to_worker_id="b",
+            reason=HandoffReason.WORKER_DRAINING,
+            started_at=datetime.now(UTC),
+        )
+        gateway._handoff_manager._pending["elapsed-sess"] = active
+        time.sleep(0.05)
+
+        resp = client.get("/cluster/handoffs")
+        body = resp.json()
+        assert len(body["pending"]) == 1
+        entry = body["pending"][0]
+        assert "elapsed_ms" in entry
+        # At least 40ms since started (allow scheduler slack).
+        assert entry["elapsed_ms"] >= 40
+
     def test_pending_handoffs_in_response(self, gateway, client):
         """In-progress handoffs surface alongside the completed
         history — operators triaging "what's stuck right now?" need
