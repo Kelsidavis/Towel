@@ -2388,6 +2388,18 @@ class GatewayServer:
                     {"error": "tasks must be a list of strings"},
                     status_code=400,
                 )
+            # Reject obviously bogus task names early — TaskType values
+            # are short identifiers (chat, inference, classification,
+            # …). Without this cap, a 2000-char task name would be
+            # echoed verbatim in the error response and any access log,
+            # because the downstream ValueError stringifies the full
+            # bad value.
+            for t in task_names:
+                if len(t) > 64:
+                    return JSONResponse(
+                        {"error": "task names must be 64 chars or fewer"},
+                        status_code=400,
+                    )
 
             # Validate task names
             try:

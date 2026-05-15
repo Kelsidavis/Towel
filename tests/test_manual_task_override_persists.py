@@ -168,6 +168,27 @@ class TestManualTaskOverride:
         assert resp.status_code == 400
         assert "strings" in resp.json()["error"]
 
+    def test_rejects_overlong_task_name(self, gateway):
+        """Without the cap, a 2000-char bogus task name flows into the
+        ValueError that TaskType raises — and the error message
+        echoes the full string in the JSON response and the access
+        log. TaskType values are short identifiers (≤ ~20 chars in
+        practice); a 64-char cap is roomy and stops the echo bloat."""
+        worker_id = "longname-host"
+        gateway._workers.register(worker_id, ws=MagicMock(), capabilities={})
+        from starlette.testclient import TestClient
+
+        client = TestClient(gateway._build_http_app())
+        resp = client.post(
+            f"/workers/{worker_id}/tasks",
+            json={"tasks": ["a" * 200]},
+        )
+        assert resp.status_code == 400
+        assert "64" in resp.json()["error"]
+        # The bad value must NOT be echoed back — that's the whole
+        # point of capping before the ValueError fires.
+        assert "a" * 100 not in resp.json()["error"]
+
 
 class TestManualTaskOverridePersistsAcrossRestart:
     """Setting tasks via the HTTP handler should also write to disk so a
