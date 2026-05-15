@@ -516,6 +516,24 @@ def check_gateway(config: TowelConfig) -> Check:
         c.ok(f"HTTP API: http://{host}:{http_port}")
         c.ok(f"Web UI: http://{host}:{http_port}/")
         c.ok(f"Connections: {data.get('connections', '?')}, Sessions: {data.get('sessions', '?')}")
+        # Stuck workers: busy_for_seconds >= 5 minutes per /health's
+        # workers.stuck count. The fleet panel surfaces this with a
+        # red border, but operators running `towel doctor` from the
+        # CLI had no equivalent signal — they'd see "Gateway is
+        # running ✓" and miss that a worker was wedged on a long-
+        # dead request. Translate the count into an actionable warn
+        # so the doctor matches the panel's visibility.
+        workers_stats = data.get("workers") or {}
+        stuck = int(workers_stats.get("stuck", 0) or 0)
+        if stuck:
+            c.warn(
+                f"{stuck} worker(s) stuck (busy ≥ 5 min) — likely wedged "
+                "on a request that won't return"
+            )
+            c.suggestions.append(
+                "POST /workers/<id>/state with {\"enabled\": false} to "
+                "drain the stuck worker, or restart it"
+            )
         _probe_fleet_endpoints(c, host, http_port)
         return c
     except Exception:

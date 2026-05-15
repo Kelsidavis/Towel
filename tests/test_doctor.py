@@ -138,6 +138,67 @@ class TestGatewayCheck:
         c.finalize()
         assert any("available" in d or "not running" in d for d in c.details)
 
+    def test_stuck_worker_count_surfaces_as_warning(self, monkeypatch):
+        """The /health response carries `workers.stuck` — busy workers
+        wedged ≥5min on a request that won't return. The fleet panel
+        renders this with a red border, but operators running
+        `towel doctor` from the CLI had no equivalent signal until
+        now. Translate the count into an actionable warn + suggestion
+        so doctor matches the panel's visibility."""
+        from unittest.mock import MagicMock, patch
+
+        from towel.cli.doctor import check_gateway
+
+        config = TowelConfig()
+
+        resp = MagicMock()
+        resp.json.return_value = {
+            "status": "hoopy",
+            "connections": 1,
+            "sessions": 3,
+            "workers": {
+                "total": 2, "busy": 2, "idle": 0,
+                "enabled": 2, "draining": 0, "disabled": 0,
+                "stuck": 2,
+            },
+        }
+        with patch("httpx.get", return_value=resp):
+            c = check_gateway(config)
+
+        joined_warnings = " | ".join(c.warnings)
+        joined_suggestions = " | ".join(c.suggestions)
+        assert "2 worker(s) stuck" in joined_warnings
+        assert "wedged on a request" in joined_warnings
+        # Operator guidance: drain the stuck worker so doctor is
+        # actionable, not just informative.
+        assert "drain" in joined_suggestions.lower()
+
+    def test_no_stuck_workers_emits_no_warning(self, monkeypatch):
+        """Silent when workers.stuck == 0 — otherwise doctor's "WARN"
+        signal loses meaning."""
+        from unittest.mock import MagicMock, patch
+
+        from towel.cli.doctor import check_gateway
+
+        config = TowelConfig()
+
+        resp = MagicMock()
+        resp.json.return_value = {
+            "status": "hoopy",
+            "connections": 1,
+            "sessions": 3,
+            "workers": {
+                "total": 2, "busy": 0, "idle": 2,
+                "enabled": 2, "draining": 0, "disabled": 0,
+                "stuck": 0,
+            },
+        }
+        with patch("httpx.get", return_value=resp):
+            c = check_gateway(config)
+
+        joined_warnings = " | ".join(c.warnings)
+        assert "stuck" not in joined_warnings
+
 
 class TestStorageCheck:
     def test_storage_check_runs(self):
