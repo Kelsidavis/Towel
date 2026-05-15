@@ -2400,7 +2400,7 @@ class TestSimpleAskAPI:
         # the synthesizer can't trigger side effects.
         from towel.agent.runtime import GenerationResult
 
-        async def fake_generate(conv):
+        async def fake_generate(conv, **kwargs):
             # The synthesis prompt should mention both workers' answers.
             user_msg = conv.messages[-1].content
             assert "Worker A answered:" in user_msg
@@ -2532,7 +2532,7 @@ class TestSimpleAskAPI:
         gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
 
         # Synthesis hangs forever — outer timeout must cancel it.
-        async def fake_generate(conv):
+        async def fake_generate(conv, **kwargs):
             await asyncio.sleep(60)
             from towel.agent.runtime import GenerationResult
             return GenerationResult(text="never returns")
@@ -2622,7 +2622,7 @@ class TestSimpleAskAPI:
         # Capture the synthesis prompt so we can check ordering.
         captured_prompts: list[str] = []
 
-        async def fake_generate(conv):
+        async def fake_generate(conv, **kwargs):
             captured_prompts.append(conv.messages[-1].content)
             return GenerationResult(text="Synthesized.")
 
@@ -2700,7 +2700,7 @@ class TestSimpleAskAPI:
         gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
 
         # Stub generate so synthesis returns a known answer quickly.
-        async def fake_generate(conv):
+        async def fake_generate(conv, **kwargs):
             return GenerationResult(
                 text="Synthesized answer.",
                 tokens_per_second=10.0, total_tokens=4,
@@ -2720,6 +2720,51 @@ class TestSimpleAskAPI:
             assert "synthesis_ms" in c
             assert isinstance(c["synthesis_ms"], (int, float))
             assert c["synthesis_ms"] >= 0
+
+    def test_ensemble_synthesis_uses_low_temperature(self, gateway, client):
+        """Arbitration should be deterministic-ish, not creative —
+        the goal is "pick the best answer and copy it", not
+        "rewrite both in the arbiter's voice." The synthesizer
+        is invoked with a low temperature (0.2) override so the
+        arbitration doesn't drift across identical inputs."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+        from towel.agent.runtime import GenerationResult
+
+        gateway._workers.register(
+            "a", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+        gateway._workers.register(
+            "b", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"]},
+        )
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            answers = {
+                "a": "Apple is a fruit.",
+                "b": "Cars use gasoline.",
+            }
+            return Message(
+                role=Role.ASSISTANT, content=answers[worker.id],
+                metadata={"remote_worker": worker.id, "tokens": 5, "tps": 5.0},
+            )
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        captured: dict = {}
+        async def fake_generate(conv, **kwargs):
+            captured["temperature"] = kwargs.get("temperature")
+            return GenerationResult(text="Synthesized.", total_tokens=2)
+        gateway.agent.generate = fake_generate  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "q", "session_id": "ens-temp", "ensemble": True},
+        )
+        assert resp.status_code == 200
+        # Synthesis ran with the deterministic-ish temperature.
+        assert captured["temperature"] == 0.2
 
     def test_ensemble_synthesis_handles_none_text_gracefully(
         self, gateway, client,
@@ -2858,7 +2903,7 @@ class TestSimpleAskAPI:
 
         gateway.agent.step = fake_step  # type: ignore[method-assign]
 
-        async def fake_gen(conv):
+        async def fake_gen(conv, **kwargs):
             synth_called.append(True)
             from towel.agent.runtime import GenerationResult
             return GenerationResult(text="should not appear")
@@ -2909,7 +2954,7 @@ class TestSimpleAskAPI:
         gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
 
         synth_called = []
-        async def fake_gen(conv):
+        async def fake_gen(conv, **kwargs):
             synth_called.append(True)
             from towel.agent.runtime import GenerationResult
             return GenerationResult(text="should not appear")

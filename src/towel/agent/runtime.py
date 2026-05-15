@@ -213,13 +213,27 @@ class AgentRuntime:
         )
         return model, tokenizer
 
-    async def generate(self, conversation: Conversation) -> GenerationResult:
-        """Run a single generation pass."""
+    async def generate(
+        self,
+        conversation: Conversation,
+        *,
+        temperature: float | None = None,
+    ) -> GenerationResult:
+        """Run a single generation pass.
+
+        ``temperature``: optional override for the sampler. Defaults
+        to ``config.model.temperature``. Pass a low value (e.g. 0.2)
+        for tasks where deterministic-ish output matters more than
+        creativity — ensemble synthesis uses this to keep arbitration
+        consistent across runs of the same input.
+        """
         if not self._loaded:
             await self.load_model()
 
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(self._mlx_executor, self._generate_sync, conversation)
+        result = await loop.run_in_executor(
+            self._mlx_executor, self._generate_sync, conversation, temperature,
+        )
         return result
 
     def build_inference_request(self, conversation: Conversation) -> dict[str, Any]:
@@ -253,18 +267,33 @@ class AgentRuntime:
             qjl_ratio=self.config.model.turboquant_qjl_ratio,
         )
 
-    def _generate_sync(self, conversation: Conversation) -> GenerationResult:
+    def _generate_sync(
+        self,
+        conversation: Conversation,
+        temperature: float | None = None,
+    ) -> GenerationResult:
         """Synchronous generation via mlx_lm."""
         prompt = self._build_prompt(conversation)
-        return self._generate_prompt_sync(prompt)
+        return self._generate_prompt_sync(prompt, temperature=temperature)
 
-    def _generate_prompt_sync(self, prompt: str, max_tokens: int | None = None) -> GenerationResult:
+    def _generate_prompt_sync(
+        self,
+        prompt: str,
+        max_tokens: int | None = None,
+        *,
+        temperature: float | None = None,
+    ) -> GenerationResult:
         """Synchronous generation via mlx_lm from a prebuilt prompt."""
         from mlx_lm import generate
         from mlx_lm.sample_utils import make_sampler
 
+        effective_temp = (
+            temperature
+            if temperature is not None
+            else self.config.model.temperature
+        )
         sampler = make_sampler(
-            temp=self.config.model.temperature,
+            temp=effective_temp,
             top_p=self.config.model.top_p,
         )
         extra_kwargs: dict[str, Any] = {}

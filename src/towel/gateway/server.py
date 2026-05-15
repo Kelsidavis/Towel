@@ -1714,8 +1714,16 @@ class GatewayServer:
                 getattr(self.config, "chat_fast_timeout", 60.0) or 60.0
             ) * 1.5
             t0 = _time.monotonic()
+            # Use a low temperature for arbitration so the synthesis
+            # is deterministic-ish across runs. The default
+            # config.model.temperature (~0.7) gave creative
+            # rewordings of the worker answers; what we want is the
+            # arbiter to pick the best one and copy it, not invent
+            # new prose. 0.2 still lets it merge information from
+            # multiple workers but reduces "let me rephrase" drift.
             result = await asyncio.wait_for(
-                self.agent.generate(synth_conv), timeout=synth_timeout,
+                self.agent.generate(synth_conv, temperature=0.2),
+                timeout=synth_timeout,
             )
             if timing_sink is not None:
                 timing_sink["synthesis_ms"] = round(
