@@ -92,12 +92,25 @@ class ConversationStore:
             return None
 
     def delete(self, conversation_id: str) -> bool:
-        """Delete a conversation. Returns True if it existed."""
+        """Delete a conversation. Returns True if it existed.
+
+        Also unlinks the corresponding ``.json.tmp`` sibling if one
+        was left behind by an interrupted atomic save — otherwise
+        the orphan persists invisibly (list_conversations globs for
+        ``*.json``, not ``*.json.tmp``) until the next bulk delete.
+        Same housekeeping delete_all does (commit 0595b39).
+        """
         path = self._path_for(conversation_id)
-        if path.exists():
+        tmp = path.with_name(path.name + ".tmp")
+        existed = path.exists()
+        if existed:
             path.unlink()
-            return True
-        return False
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+        return existed
 
     def delete_all(self) -> int:
         """Delete all conversations. Returns count deleted.

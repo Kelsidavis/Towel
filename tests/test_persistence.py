@@ -98,6 +98,22 @@ class TestConversationStore:
         assert not store.exists(conv.id)
         assert not store.delete(conv.id)  # already gone
 
+    def test_delete_cleans_up_orphan_tmp(self, store, tmp_path):
+        """The atomic-save .tmp sibling left behind by an interrupted
+        save would survive a single-conversation delete (list +
+        bulk-delete glob `*.json`, not `*.json.tmp`). Single
+        delete now sweeps the tmp too — operator's "remove this
+        conversation" actually frees the disk space."""
+        conv = _make_conversation("orphan-host")
+        store.save(conv)
+        # Simulate a leaked tmp sibling from a prior interrupted save.
+        tmp = tmp_path / "orphan-host.json.tmp"
+        tmp.write_text("half-written")
+
+        assert store.delete("orphan-host") is True
+        assert not (tmp_path / "orphan-host.json").exists()
+        assert not tmp.exists()
+
     def test_list_conversations(self, store):
         for i in range(5):
             store.save(_make_conversation(f"conv-{i}"))
