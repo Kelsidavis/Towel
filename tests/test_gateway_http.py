@@ -1651,6 +1651,22 @@ class TestDispatchRecentEphemeralFilter:
         assert body.get("ensemble_skipped") is True
         assert "no idle workers" in body.get("ensemble_skip_reason", "")
 
+    def test_ws_unknown_register_role_warns(self):
+        """A typo'd `role` in a WS register message (e.g. "workre")
+        previously got channel treatment silently — the worker
+        never appeared in /workers and the operator had no
+        breadcrumb. The handler now logs at WARNING for any role
+        outside the known set."""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._handle_ws)
+        assert "unrecognized role" in src
+        # Both valid roles named in the warning so the operator's
+        # log entry is self-correcting.
+        assert "'worker', 'channel'" in src
+
     def test_ws_unknown_msg_type_logged(self):
         """Unknown WS message types previously fell through silently
         — a client sending `{"type": "messsage"}` (typo) got no

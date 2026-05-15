@@ -387,6 +387,21 @@ class GatewayServer:
                         conn_id = ws.id.hex[:12]
                     self._connections[conn_id] = ws
                     role = msg.get("role", "channel")
+                    # A typo'd role ("workre", "worker ") gets
+                    # channel treatment by falling through the
+                    # `role == "worker"` check below — the worker
+                    # then never appears in /workers and the
+                    # operator is stuck wondering why. Warn loudly
+                    # on anything outside the known set so the typo
+                    # surfaces in the coordinator log on first
+                    # registration.
+                    if role not in ("worker", "channel"):
+                        log.warning(
+                            "Registration from %s used unrecognized role %r; "
+                            "treating as 'channel'. Valid roles: "
+                            "'worker', 'channel'.",
+                            conn_id, role,
+                        )
                     capabilities = msg.get("capabilities", {})
                     # A worker that registers with a non-object
                     # `capabilities` (probing client, buggy worker
