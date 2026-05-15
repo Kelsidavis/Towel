@@ -856,7 +856,11 @@ async def _stream_sse_remote(
             "choices": [
                 {"index": 0, "delta": {}, "finish_reason": "error"},
             ],
-            "error": {"message": str(exc)},
+            # OpenAI's error shape always carries a `type` alongside
+            # `message` — clients that switch on the field were
+            # crashing on `KeyError: 'type'`. "server_error" matches
+            # the non-streaming 500 path's classification.
+            "error": {"message": str(exc), "type": "server_error"},
         }
         yield f"data: {json.dumps(err_chunk)}\n\n"
         yield "data: [DONE]\n\n"

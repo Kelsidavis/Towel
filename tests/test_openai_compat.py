@@ -543,6 +543,12 @@ class TestRemoteStreamFallback:
         assert "first-" in joined
         assert "second-" in joined
         assert '"error"' in joined or "finish_reason\": \"error\"" in joined
+        # The error frame must carry a `type` alongside `message` —
+        # OpenAI clients switch on the field, so omitting it raised
+        # `KeyError: 'type'` deep in the SDK.
+        err_frame = next(c for c in chunks if "finish_reason\": \"error\"" in c)
+        payload = json.loads(err_frame.replace("data: ", ""))
+        assert payload["error"]["type"] == "server_error"
 
 
 class TestCollaborationOnOpenAICompat:
