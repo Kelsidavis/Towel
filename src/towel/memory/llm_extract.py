@@ -29,7 +29,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
 log = logging.getLogger("towel.memory.llm_extract")
 

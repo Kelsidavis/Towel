@@ -2720,6 +2720,7 @@ def memory_extract(
     import sys as _sys
 
     from towel.memory.llm_extract import extract_via_llm
+    from towel.memory.scope import derive_scope
     from towel.memory.store import MemoryStore
 
     if stdin:
