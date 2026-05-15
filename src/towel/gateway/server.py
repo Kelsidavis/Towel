@@ -720,9 +720,13 @@ class GatewayServer:
         self._job_queues[job_id] = queue
         self._workers.assign(worker.id, job_id, "classify")
 
-        # Determine the worker's inference mode from its capabilities
-        modes = worker.capabilities.get("modes", [])
-        mode = modes[0] if modes else "llama_chat"
+        # Determine the worker's inference mode from its capabilities.
+        # Defensive against a buggy worker registering with `modes:
+        # "llama_chat"` (a bare string instead of a list) — modes[0]
+        # on a string would return "l" and silently send a garbage
+        # mode to the worker. isinstance check skips that.
+        modes = worker.capabilities.get("modes")
+        mode = modes[0] if isinstance(modes, list) and modes else "llama_chat"
 
         await worker.ws.send(
             json.dumps(
@@ -1105,9 +1109,13 @@ class GatewayServer:
             {"role": m.role.value, "content": m.content}
             for m in session.conversation.messages
         ]
-        # Determine the worker's inference mode from its capabilities
-        modes = worker.capabilities.get("modes", [])
-        mode = modes[0] if modes else "llama_chat"
+        # Determine the worker's inference mode from its capabilities.
+        # Defensive against a buggy worker registering with `modes:
+        # "llama_chat"` (a bare string instead of a list) — modes[0]
+        # on a string would return "l" and silently send a garbage
+        # mode to the worker. isinstance check skips that.
+        modes = worker.capabilities.get("modes")
+        mode = modes[0] if isinstance(modes, list) and modes else "llama_chat"
 
         # Send a minimal system prompt — empirically, some smaller
         # chat-tuned models (gemma-2B/4B variants observed on the
