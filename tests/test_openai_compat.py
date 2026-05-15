@@ -553,6 +553,72 @@ class TestCollaborationOnOpenAICompat:
         assert len(data["choices"]) == 1
         assert "Paris" in data["choices"][0]["message"]["content"]
 
+    def test_verify_corrects_through_openai_compat(self, tmp_path):
+        """End-to-end verify through /v1/chat/completions: the
+        primary worker generates an answer, the alternate verifies,
+        and a substantive correction replaces the primary's content
+        in choices[0].message.content. Same contract /api/ask has,
+        just reachable via OpenAI clients with extra_body=verify."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        store = ConversationStore(store_dir=tmp_path)
+        config = TowelConfig()
+        agent = AgentRuntime(config)
+        sessions = SessionManager(store=store)
+        gw = GatewayServer(config=config, agent=agent, sessions=sessions)
+        client = TestClient(gw._build_http_app())
+
+        gw._workers.register(
+            "primary", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"], "tools": False},
+        )
+        gw._workers.register(
+            "verifier", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"], "tools": False},
+        )
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            # Verifier sessions are prefixed `_verify_`.
+            if session_id.startswith("_verify_"):
+                # Substantive correction: must be > 30 chars to not
+                # be treated as a confirmation token.
+                return Message(
+                    role=Role.ASSISTANT,
+                    content="The capital of Germany is Berlin.",
+                    metadata={"remote_worker": worker.id, "tokens": 12, "tps": 5.0},
+                )
+            msg = Message(
+                role=Role.ASSISTANT, content="The wrong answer is Paris.",
+                metadata={"remote_worker": worker.id, "tokens": 7, "tps": 5.0},
+            )
+            session.conversation.messages.append(msg)
+            return msg
+
+        gw._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        async def fake_route(_msg, _sid):
+            return gw._workers.get("primary"), "chat"
+
+        gw._route_by_role = fake_route  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "default",
+                "messages": [{"role": "user", "content": "Capital of Germany?"}],
+                "verify": True,
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["object"] == "chat.completion"
+        content = data["choices"][0]["message"]["content"]
+        # Verifier's correction wins, not primary's wrong answer.
+        assert "Berlin" in content
+        assert "Paris" not in content
+
     def test_streaming_rejects_collaboration_modes(self, client):
         """Streaming can't carry synthesis (the arbiter waits for all
         contributions, which is inherently non-streaming). Reject
