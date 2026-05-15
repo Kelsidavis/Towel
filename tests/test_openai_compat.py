@@ -415,6 +415,15 @@ class TestSSEFormat:
         finish_data = json.loads(chunks[-2].replace("data: ", ""))
         assert finish_data["choices"][0]["finish_reason"] == "stop"
 
+        # Every data chunk must include system_fingerprint —
+        # parity with the non-streaming completion. OpenAI's
+        # streaming format includes the field on each chunk; some
+        # cache layers key on it per-chunk.
+        from towel.gateway.openai_compat import _SYSTEM_FINGERPRINT
+        for c in chunks[:-1]:  # all except trailing [DONE]
+            payload = json.loads(c.replace("data: ", ""))
+            assert payload.get("system_fingerprint") == _SYSTEM_FINGERPRINT, c
+
 
 class TestRemoteStreamFallback:
     """When a remote worker errors at the start of a stream, the

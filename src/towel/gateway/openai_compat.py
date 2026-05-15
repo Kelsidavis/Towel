@@ -736,6 +736,7 @@ async def _stream_sse_remote(
                 "object": "chat.completion.chunk",
                 "created": created,
                 "model": model,
+                "system_fingerprint": _SYSTEM_FINGERPRINT,
                 "choices": [
                     {
                         "index": 0,
@@ -763,6 +764,7 @@ async def _stream_sse_remote(
             "object": "chat.completion.chunk",
             "created": created,
             "model": model,
+            "system_fingerprint": _SYSTEM_FINGERPRINT,
             "choices": [
                 {"index": 0, "delta": {}, "finish_reason": "error"},
             ],
@@ -776,6 +778,7 @@ async def _stream_sse_remote(
         "object": "chat.completion.chunk",
         "created": created,
         "model": model,
+        "system_fingerprint": _SYSTEM_FINGERPRINT,
         "choices": [
             {"index": 0, "delta": {}, "finish_reason": "stop"},
         ],
@@ -801,6 +804,7 @@ async def _stream_sse(
                 "object": "chat.completion.chunk",
                 "created": created,
                 "model": model,
+                "system_fingerprint": _SYSTEM_FINGERPRINT,
                 "choices": [
                     {
                         "index": 0,
@@ -818,6 +822,7 @@ async def _stream_sse(
                 "object": "chat.completion.chunk",
                 "created": created,
                 "model": model,
+                "system_fingerprint": _SYSTEM_FINGERPRINT,
                 "choices": [
                     {
                         "index": 0,
@@ -836,6 +841,7 @@ async def _stream_sse(
                 "object": "chat.completion.chunk",
                 "created": created,
                 "model": model,
+                "system_fingerprint": _SYSTEM_FINGERPRINT,
                 "choices": [
                     {
                         "index": 0,
