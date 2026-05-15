@@ -224,10 +224,16 @@ def export_html(conv: Conversation, include_metadata: bool = True) -> str:
         # ran on a turn. Parity with the markdown export (b048b49).
         if include_metadata and msg.role == Role.ASSISTANT and msg.metadata:
             if msg.metadata.get("ensemble"):
-                arb = msg.metadata.get("ensemble_arbitration", "?")
+                # `metadata.get(key, "?")` returns "?" only when the
+                # key is MISSING — an explicit None bypasses the
+                # default and would crash html.escape (which calls
+                # .replace on its arg). Coerce to str at the
+                # boundary so the export survives unexpected metadata
+                # shapes, same way verified_by below already does.
+                arb = msg.metadata.get("ensemble_arbitration") or "?"
                 contribs = msg.metadata.get("ensemble_contributions") or []
                 parts.append(
-                    f'<span class="ts">ensemble:{html.escape(arb)} '
+                    f'<span class="ts">ensemble:{html.escape(str(arb))} '
                     f'({len(contribs)} workers)</span>'
                 )
             if msg.metadata.get("verified_by"):

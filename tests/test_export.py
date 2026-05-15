@@ -128,6 +128,30 @@ class TestMarkdownExport:
         assert "tok/s" not in md
         assert "tokens" not in md.split("response")[0]
 
+    def test_html_export_survives_non_string_arbitration_mode(self):
+        """``html.escape`` calls ``.replace`` on its arg, so a non-
+        string ensemble_arbitration crashes the whole HTML export.
+        ``metadata.get(key, "?")`` returns the default only when the
+        key is MISSING — an explicit ``ensemble_arbitration: None``
+        bypasses it and used to bring down the export. Coercing to
+        str at the boundary keeps the page renderable."""
+        from towel.persistence.export import export_html
+        c = Conversation(id="bad-arb", channel="api")
+        c.add(Role.USER, "hi")
+        c.add(
+            Role.ASSISTANT,
+            "answer",
+            ensemble=True,
+            ensemble_arbitration=None,  # explicit None, not missing
+            ensemble_contributions=[{"worker_id": "a"}],
+        )
+        html_out = export_html(c, include_metadata=True)
+        # The conversation still renders; the unknown arbitration
+        # mode falls back to the "?" placeholder.
+        assert "answer" in html_out
+        assert "ensemble:?" in html_out
+        assert "1 workers" in html_out
+
     def test_ensemble_metadata_surfaces(self):
         """An exported transcript should make it obvious when
         multi-worker collaboration ran on a turn. Without this, the
