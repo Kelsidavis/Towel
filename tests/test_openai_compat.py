@@ -730,6 +730,58 @@ class TestCollaborationOnOpenAICompat:
         # ones see whether ensemble actually ran.
         assert data.get("towel", {}).get("ensemble") is True
 
+    def test_verify_skipped_surfaces_in_towel_field(self, tmp_path):
+        """When verify=true is requested but only one worker is
+        registered, the verify pass has no alternate to run on
+        and falls through. The response must carry
+        `towel.verify_skipped: true` + `verify_skip_reason` so
+        OpenAI-aware clients see the same degraded-state signal
+        they would on /api/ask."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        store = ConversationStore(store_dir=tmp_path)
+        config = TowelConfig()
+        agent = AgentRuntime(config)
+        sessions = SessionManager(store=store)
+        gw = GatewayServer(config=config, agent=agent, sessions=sessions)
+        client = TestClient(gw._build_http_app())
+
+        # Single worker → verify can't find an alternate.
+        gw._workers.register(
+            "solo", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"], "tools": False},
+        )
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            msg = Message(
+                role=Role.ASSISTANT, content="primary answer",
+                metadata={"remote_worker": worker.id, "tokens": 2, "tps": 5.0},
+            )
+            session.conversation.messages.append(msg)
+            return msg
+        gw._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        async def fake_route(_msg, _sid):
+            return gw._workers.get("solo"), "chat"
+        gw._route_by_role = fake_route  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "default",
+                "messages": [{"role": "user", "content": "hi"}],
+                "verify": True,
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "primary answer" in data["choices"][0]["message"]["content"]
+        towel_meta = data.get("towel", {})
+        assert towel_meta.get("verify_skipped") is True
+        assert "no alternate worker" in towel_meta.get("verify_skip_reason", "")
+
     def test_ensemble_skipped_surfaces_in_towel_field(self, tmp_path):
         """When ensemble=true is requested but no idle inference
         workers exist, the request falls through to the local agent
