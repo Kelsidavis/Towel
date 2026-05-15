@@ -89,6 +89,25 @@ def _err_str(exc: BaseException) -> str:
     return s if s else type(exc).__name__
 
 
+def _memory_entry_dict(entry: Any) -> dict[str, Any]:
+    """Render a MemoryEntry with consistent optional fields filled in.
+
+    ``MemoryEntry.to_dict`` conditionally omits ``tags``, ``source``,
+    ``scope``, and ``last_recalled_at`` when empty / None — sensible
+    for on-disk JSON (keeps files small) but confusing for API
+    consumers who have to special-case ``if "tags" in data``.
+
+    Apply defaults at the response boundary so every memory-entry
+    payload has the same keys.
+    """
+    d = entry.to_dict()
+    d.setdefault("tags", [])
+    d.setdefault("source", "")
+    d.setdefault("scope", "")
+    d.setdefault("last_recalled_at", None)
+    return d
+
+
 def _guess_model_param_b(name: str) -> float | None:
     """Pull a rough parameter count out of a model name.
 
@@ -2513,7 +2532,7 @@ class GatewayServer:
             entries = sorted(entries, key=lambda e: e.updated_at, reverse=True)
             return JSONResponse(
                 {
-                    "memories": [e.to_dict() for e in entries[:limit]],
+                    "memories": [_memory_entry_dict(e) for e in entries[:limit]],
                     "count": len(entries),
                     "truncated": len(entries) > limit,
                 }
@@ -2632,7 +2651,7 @@ class GatewayServer:
                 recent_recalls = []
             return JSONResponse(
                 {
-                    "entry": entry.to_dict(),
+                    "entry": _memory_entry_dict(entry),
                     "salience": score,
                     "related": [
                         {"weight": w, **rel.to_dict()} for rel, w in related
@@ -2698,7 +2717,7 @@ class GatewayServer:
                     "by_source": by_source,
                     "by_scope": by_scope,
                     "auto_capture_patterns": per_pattern,
-                    "recent_unvalidated": [e.to_dict() for e in pending],
+                    "recent_unvalidated": [_memory_entry_dict(e) for e in pending],
                 }
             )
 
@@ -3375,7 +3394,7 @@ class GatewayServer:
             except Exception as exc:
                 log.exception("memory.create(%r) failed: %s", key, exc)
                 return JSONResponse({"error": _err_str(exc)}, status_code=500)
-            return JSONResponse(entry.to_dict(), status_code=201)
+            return JSONResponse(_memory_entry_dict(entry), status_code=201)
 
         async def memory_nudge(request: Request) -> JSONResponse:
             """Manually bump an entry's recall_count by 1.
@@ -3400,7 +3419,7 @@ class GatewayServer:
                 log.exception("memory.nudge(%r) failed: %s", key, exc)
                 return JSONResponse({"error": _err_str(exc)}, status_code=500)
             entry = memory.recall(key)
-            return JSONResponse(entry.to_dict())
+            return JSONResponse(_memory_entry_dict(entry))
 
         async def memory_edit(request: Request) -> JSONResponse:
             """Update an existing memory's content, type, tags, or scope.
@@ -3496,7 +3515,7 @@ class GatewayServer:
             except Exception as exc:
                 log.exception("memory.edit(%r) failed: %s", key, exc)
                 return JSONResponse({"error": _err_str(exc)}, status_code=500)
-            return JSONResponse(updated.to_dict())
+            return JSONResponse(_memory_entry_dict(updated))
 
         async def memory_forget(request: Request) -> JSONResponse:
             """Delete a single memory by key.
@@ -3624,7 +3643,7 @@ class GatewayServer:
 
             updated = self._workers.get(worker_id)
             assert updated is not None
-            return JSONResponse(updated.to_dict())
+            return JSONResponse(_memory_entry_dict(updated))
 
         async def session_pin_worker(request: Request) -> JSONResponse:
             session_id = request.path_params["session_id"]
