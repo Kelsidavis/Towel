@@ -128,6 +128,24 @@ def build_openai_routes(
                 {"error": {"message": "at least one message must have non-empty content", "type": "invalid_request_error"}},
                 status_code=400,
             )
+        # Require at least one USER turn. A system-only conversation
+        # ("be terse" with no user prompt) has no question for the
+        # model to answer; most workers hang or return empty for these
+        # and the caller times out at 60s. OpenAI's API technically
+        # accepts system-only requests but no real model produces
+        # meaningful output — make it loud at the boundary so the
+        # caller gets immediate feedback.
+        has_user_content = any(
+            m.get("role") == "user"
+            and isinstance(m.get("content"), str)
+            and m.get("content", "").strip()
+            for m in messages
+        )
+        if not has_user_content:
+            return JSONResponse(
+                {"error": {"message": "messages must include at least one user turn with content", "type": "invalid_request_error"}},
+                status_code=400,
+            )
 
         # Build a temporary conversation from the messages
         from towel.agent.conversation import Conversation, Role

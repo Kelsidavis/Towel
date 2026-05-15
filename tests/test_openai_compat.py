@@ -108,6 +108,24 @@ class TestChatCompletionsEndpoint:
             assert resp.status_code == 400, f"accepted max_tokens={bad!r}"
             assert "max_tokens" in resp.json()["error"]["message"]
 
+    def test_rejects_system_only_conversation(self, client):
+        """A system-only conversation has no user prompt — most models
+        hang or return empty rather than producing meaningful output,
+        and the caller times out at 60s. Reject at the boundary."""
+        for body in (
+            {"model": "x", "messages": [{"role": "system", "content": "be terse"}]},
+            {
+                "model": "x",
+                "messages": [
+                    {"role": "system", "content": "you are a helper"},
+                    {"role": "assistant", "content": "ok"},
+                ],
+            },
+        ):
+            resp = client.post("/v1/chat/completions", json=body)
+            assert resp.status_code == 400, f"accepted {body}"
+            assert "user turn" in resp.json()["error"]["message"]
+
     def test_rejects_non_numeric_temperature(self, client):
         for bad in ("hot", [], {}):
             resp = client.post(
