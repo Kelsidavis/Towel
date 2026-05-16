@@ -760,6 +760,39 @@ class TestObservability:
         d = _make_dispatcher(workers)
         assert d.empty_text_retry_counts() == {}
 
+    def test_empty_text_counts_by_worker_aggregates_primary_decisions(self):
+        """Counts every empty-text response, including single-worker
+        cases where no retry is possible. Distinct from the retry
+        tally — that one only fires when an alternate worker was
+        tried, which can't happen on a one-worker fleet."""
+        workers = WorkerRegistry()
+        _make_worker(workers, "solo")
+        d = _make_dispatcher(workers)
+        # Three dispatches, two of which returned empty.
+        for empty in (True, False, True):
+            decision = asyncio.run(
+                d.async_select_for_session("s", intent="chat"),
+            )
+            assert decision.worker is not None
+            decision.record_completion(
+                ttft_ms=None, total_ms=100.0, empty_text=empty,
+            )
+            workers.release(decision.worker.id)
+        counts = d.empty_text_counts_by_worker()
+        assert counts == {"solo": 2}
+        # The retry tally is still 0 — no alternate was tried.
+        assert d.empty_text_retry_counts() == {}
+
+    def test_empty_text_counts_by_worker_empty_when_all_clean(self):
+        workers = WorkerRegistry()
+        _make_worker(workers, "solo")
+        d = _make_dispatcher(workers)
+        decision = asyncio.run(
+            d.async_select_for_session("s", intent="chat"),
+        )
+        decision.record_completion(ttft_ms=10.0, total_ms=50.0, empty_text=False)
+        assert d.empty_text_counts_by_worker() == {}
+
 
 # --------------------------------------------------------------------------- #
 # Excludes                                                                     #

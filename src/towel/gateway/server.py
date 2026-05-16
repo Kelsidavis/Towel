@@ -2501,6 +2501,7 @@ class GatewayServer:
                         decision.record_completion(
                             ttft_ms=remote_meta.get("ttft_ms"),
                             total_ms=remote_meta.get("total_ms"),
+                            empty_text=empty_text_fallback,
                         )
                 response = Message(
                     role=Role.ASSISTANT,
@@ -4356,6 +4357,17 @@ class GatewayServer:
             # special-casing the missing-field path.
             log_status["empty_text_retries_by_worker"] = (
                 self._dispatcher.empty_text_retry_counts()
+            )
+            # Total empty-text responses per worker — counts every
+            # decision that came back empty, including single-worker
+            # cases where no retry was possible. Surfaces "worker X
+            # just always returns empty text" even when a flaky
+            # fleet config makes retries impossible (one worker
+            # disconnected, all others excluded, …). Distinct from
+            # the retries tally above which only counts the cases
+            # where an alternate WAS tried.
+            log_status["empty_text_counts_by_worker"] = (
+                self._dispatcher.empty_text_counts_by_worker()
             )
             # Quality-degraded count across the full buffer. Same
             # always-present shape as the retry tally so doctor /

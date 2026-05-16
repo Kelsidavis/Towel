@@ -120,8 +120,22 @@ class DispatchDecision:
     # how long each routing decision actually took to satisfy.
     ttft_ms: float | None = None
     total_ms: float | None = None
+    # True when the inference returned the empty-text fallback shape
+    # (worker emitted no parseable text, gateway substituted the
+    # diagnostic placeholder). Distinct from the `retry_empty_text`
+    # reason which only fires when there IS an alternate worker to
+    # retry on. Tracking this on the original decision means a
+    # single-worker fleet's empty-text rate shows up in
+    # /dispatch/recent counts, not just on retry paths.
+    empty_text: bool = False
 
-    def record_completion(self, *, ttft_ms: float | None, total_ms: float | None) -> None:
+    def record_completion(
+        self,
+        *,
+        ttft_ms: float | None,
+        total_ms: float | None,
+        empty_text: bool | None = None,
+    ) -> None:
         """Stamp post-dispatch timing onto this decision.
 
         Inference paths (_quick_remote_infer / _step_remote_inference)
@@ -134,6 +148,8 @@ class DispatchDecision:
             self.ttft_ms = float(ttft_ms)
         if total_ms is not None:
             self.total_ms = float(total_ms)
+        if empty_text is not None:
+            self.empty_text = bool(empty_text)
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -156,6 +172,8 @@ class DispatchDecision:
             out["ttft_ms"] = round(self.ttft_ms, 1)
         if self.total_ms is not None:
             out["total_ms"] = round(self.total_ms, 1)
+        if self.empty_text:
+            out["empty_text"] = True
         return out
 
 
@@ -246,6 +264,25 @@ class Dispatcher:
             if "empty response" not in (d.notes or ""):
                 continue
             counts[prev] = counts.get(prev, 0) + 1
+        return counts
+
+    def empty_text_counts_by_worker(self) -> dict[str, int]:
+        """Tally ALL empty-text responses by their dispatched worker.
+
+        Distinct from :meth:`empty_text_retry_counts`, which only
+        counts cases where an alternate worker was tried after the
+        primary returned empty. On a single-worker fleet there's
+        no alt to retry on, so the retry tally stays at 0 even
+        when every chat request comes back empty — masking a real
+        worker-side problem. This method counts directly off the
+        primary dispatch decision's ``empty_text`` flag, so the
+        ratio surfaces regardless of retry availability.
+        """
+        counts: dict[str, int] = {}
+        for d in self._history:
+            if not d.empty_text or d.worker is None:
+                continue
+            counts[d.worker.id] = counts.get(d.worker.id, 0) + 1
         return counts
 
     def select_for_session(
