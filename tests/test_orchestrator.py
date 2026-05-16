@@ -482,6 +482,66 @@ class TestOrchestratorWithDispatcher:
         assert result.success
         assert (tmp_path / "ws" / "f.py").read_text(encoding="utf-8") == "def f(): return 1\n"
 
+    def test_extract_to_retries_on_python_syntax_error(self, tmp_path):
+        """When extract_to writes a .py file with a SyntaxError, the
+        orchestrator should treat that as a failed attempt and retry —
+        not leave broken code on disk and call the subtask completed.
+        Model-quality issues are stochastic; a re-roll often succeeds."""
+        from towel.config import TowelConfig
+
+        attempts = {"n": 0}
+
+        class _Flaky:
+            async def dispatch_role_task(  # noqa: PLR0913
+                self, role, role_system, prompt, *,
+                session_id, max_tokens, temperature, with_tools,
+                task_type, exclude_workers,
+            ):
+                attempts["n"] += 1
+                # First attempt: syntactically invalid Python.
+                # Second attempt: clean fenced block.
+                if attempts["n"] == 1:
+                    return "```python\ndef broken(\n    return 'oops'\n```"
+                return "```python\ndef ok():\n    return 'fine'\n```"
+
+        orch = Orchestrator(TowelConfig(), dispatcher=_Flaky(), max_attempts=3)
+        tasks = [AgentTask(role="coder", prompt="x", extract_to="hello.py")]
+        ws = str(tmp_path / "ws")
+        result = asyncio.run(orch.run("g", tasks, workspace_dir=ws))
+        # Second attempt's valid code is what landed on disk.
+        body = (tmp_path / "ws" / "hello.py").read_text(encoding="utf-8")
+        assert "def ok():" in body
+        assert "def broken" not in body
+        assert tasks[0].attempts == 2
+        assert tasks[0].status == "completed"
+        assert result.success
+
+    def test_extract_to_syntax_failure_marks_task_failed_after_attempts(self, tmp_path):
+        """When every attempt produces invalid code, the task ends
+        `failed` with the SyntaxError surfaced as the result. The
+        partial file from the last attempt remains on disk (operator
+        can inspect it) but the orchestrator reports failure."""
+        from towel.config import TowelConfig
+
+        class _AlwaysBroken:
+            async def dispatch_role_task(  # noqa: PLR0913
+                self, role, role_system, prompt, *,
+                session_id, max_tokens, temperature, with_tools,
+                task_type, exclude_workers,
+            ):
+                return "```python\ndef broken(\n    return 'oops'\n```"
+
+        orch = Orchestrator(
+            TowelConfig(), dispatcher=_AlwaysBroken(), max_attempts=2,
+        )
+        tasks = [AgentTask(role="coder", prompt="x", extract_to="bad.py")]
+        ws = str(tmp_path / "ws")
+        result = asyncio.run(orch.run("g", tasks, workspace_dir=ws))
+        assert not result.success
+        assert tasks[0].status == "failed"
+        assert "SyntaxError" in tasks[0].result
+        assert tasks[0].attempts == 2
+
     def test_extract_to_rejects_path_traversal(self, tmp_path):
         """A model-suggested `extract_to` shouldn't be able to write
         outside the workspace. Path resolution + ancestor check."""

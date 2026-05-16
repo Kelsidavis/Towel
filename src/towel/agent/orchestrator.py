@@ -225,7 +225,13 @@ class Orchestrator:
         # benchmarking of a particular worker.
         self.max_attempts = max(1, int(max_attempts))
 
-    async def _execute_with_retry(self, task: AgentTask, full_prompt: str) -> None:
+    async def _execute_with_retry(
+        self,
+        task: AgentTask,
+        full_prompt: str,
+        *,
+        workspace_dir: str | None = None,
+    ) -> None:
         """Run a subtask, retrying once on failure.
 
         Updates `task` in place — populates result/status/elapsed/attempts.
@@ -237,6 +243,13 @@ class Orchestrator:
         prefer_quality routing doesn't bounce back to the exact worker
         that just timed out. Other RuntimeErrors (no worker available,
         etc.) don't exclude anything since there's no worker to blame.
+
+        When the task has `extract_to` set and `workspace_dir` is
+        provided, the extraction + validation runs INSIDE the retry
+        loop — a written file with a SyntaxError raises to trigger
+        another attempt rather than leaving broken code on disk.
+        Model-quality issues are often stochastic; re-rolling the
+        same prompt frequently succeeds where the first try didn't.
         """
         task_start = time.perf_counter()
         task.status = "running"
@@ -250,6 +263,11 @@ class Orchestrator:
                     with_tools=task.with_tools,
                     exclude_workers=exclude_workers,
                 )
+                # Extract-and-validate runs in-loop so a write that
+                # fails syntax check counts as an attempt and triggers
+                # the next retry rather than a terminal "failed" task.
+                if task.extract_to and workspace_dir:
+                    self._extract_and_write(task, workspace_dir)
                 task.status = "completed"
                 last_exc = None
                 break
@@ -321,6 +339,23 @@ class Orchestrator:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(body, encoding="utf-8")
         task.extracted_path = str(target)
+        # Syntax-validate when the file looks like Python — catches the
+        # common failure mode where the model emits almost-valid code
+        # with a stray bracket or import line, which Codex would catch
+        # via py_compile and we'd previously discover only at run time.
+        # ast.parse is in-process and ~1ms; cheap enough to always run.
+        # Validation failure raises so the orchestrator retries this
+        # subtask on a different worker (model-quality issue is often
+        # stochastic — a re-roll succeeds where the first didn't).
+        if target.suffix == ".py":
+            import ast
+            try:
+                ast.parse(body)
+            except SyntaxError as exc:
+                raise ValueError(
+                    f"extract_to wrote {target.name} but it has a "
+                    f"SyntaxError on line {exc.lineno}: {exc.msg}"
+                ) from exc
 
     @staticmethod
     def _workspace_preamble(workspace_dir: str | None) -> str:
@@ -404,29 +439,13 @@ class Orchestrator:
                 full_prompt += f"{task.context}\n\n"
             full_prompt += f"Goal: {goal}\n\nYour task: {task.prompt}"
 
-            # Execute
-            await self._execute_with_retry(task, full_prompt)
-            # If the task asked for code extraction, parse the response
-            # for the first fenced code block and write it to the
-            # workspace. Lets a no-tools chat-fast coder produce code
-            # without going through the (often-slow) tool loop. Errors
-            # bubble up into the task result rather than into the
-            # broader orchestration so one extraction failure doesn't
-            # blow up the rest of the run.
-            if (
-                task.status == "completed"
-                and task.extract_to
-                and workspace_dir
-            ):
-                try:
-                    self._extract_and_write(task, workspace_dir)
-                except Exception as exc:
-                    log.warning(
-                        "extract_to write failed for task %d (%s): %s",
-                        i, task.role, exc,
-                    )
-                    task.result = f"{task.result}\n\n[extract_to failed: {exc}]"
-                    task.status = "failed"
+            # Execute (extract-and-validate happens INSIDE the retry
+            # loop when extract_to is set, so a syntax-error in the
+            # written file triggers another attempt instead of leaving
+            # broken code on disk).
+            await self._execute_with_retry(
+                task, full_prompt, workspace_dir=workspace_dir,
+            )
             log.info(
                 "Task %d (%s): %s in %.1fs (attempts=%d)",
                 i, task.role, task.status, task.elapsed, task.attempts,
@@ -458,7 +477,9 @@ class Orchestrator:
             full_prompt = (
                 f"{workspace_preamble}Goal: {goal}\n\nYour task: {task.prompt}"
             )
-            await self._execute_with_retry(task, full_prompt)
+            await self._execute_with_retry(
+                task, full_prompt, workspace_dir=workspace_dir,
+            )
 
         await asyncio.gather(*[_exec(i, t) for i, t in enumerate(tasks)])
 
