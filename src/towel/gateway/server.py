@@ -6602,6 +6602,22 @@ class GatewayServer:
                     )
                     if needs_retry:
                         alt = self._pick_alternate_chat_worker(exclude={worker.id})
+                        # Single-worker fallback: when no alternate is
+                        # available AND the primary returned empty (not
+                        # crashed), retry once on the SAME worker. On an
+                        # intermittently-flaky model the empty response
+                        # is non-deterministic — a second attempt often
+                        # produces real text. Empty responses are fast
+                        # (~1s), so doubling cost is acceptable when the
+                        # alternative is the diagnostic placeholder.
+                        # Skip when primary raised (timeout/error) since
+                        # the same worker would just fail again.
+                        if (
+                            alt is None
+                            and not primary_failed
+                            and not use_agent_path
+                        ):
+                            alt = worker
                         if alt is None and primary_failed:
                             # No alt and primary raised — re-raise the
                             # primary exception so the caller's 500
@@ -6726,12 +6742,27 @@ class GatewayServer:
                                         "system prompt or worker quality.",
                                         session_id, worker.id, alt.id,
                                     )
-                                    response.metadata = (
-                                        response.metadata or {}
-                                    ) | {
-                                        "dual_empty_text": True,
-                                        "alt_worker": alt.id,
-                                    }
+                                    # Distinguish "two different workers
+                                    # both empty" from "same worker tried
+                                    # twice both empty" — operators
+                                    # debugging a degraded fleet care about
+                                    # the difference. The same-worker case
+                                    # is the single-worker fallback retry,
+                                    # not a fleet-wide tool-loop pattern.
+                                    if alt.id == worker.id:
+                                        response.metadata = (
+                                            response.metadata or {}
+                                        ) | {
+                                            "empty_text_fallback": True,
+                                            "same_worker_retry_empty": True,
+                                        }
+                                    else:
+                                        response.metadata = (
+                                            response.metadata or {}
+                                        ) | {
+                                            "dual_empty_text": True,
+                                            "alt_worker": alt.id,
+                                        }
                 elif worker:
                     response = await self._step_remote_inference(
                         session_id, session, worker
