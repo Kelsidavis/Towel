@@ -2379,13 +2379,22 @@ class GatewayServer:
         # in the chat template, so writing it in the system
         # prompt can paradoxically prime the model to emit one.
         # Stick to plain English describing the behavior we want.
-        identity = (
-            identity
-            + "\n\nAnswer in plain prose. Do not invoke any tools, "
-            "do not emit function-call or tool-invocation blocks — "
-            "this turn has no tool channel available, so any such "
-            "output is silently dropped."
-        )
+        #
+        # Skip the directive when the caller's identity_override
+        # already addresses tools — saves the appended overhead
+        # and lets callers opt out by writing "no tools" into
+        # their own system prompt. Without this, every override
+        # carried the directive appended, which (a) wasted prompt
+        # tokens and (b) could prime the model badly when the
+        # caller's prompt deliberately set a non-default tone.
+        if "tool" not in (identity_override or "").lower():
+            identity = (
+                identity
+                + "\n\nAnswer in plain prose. Do not invoke any tools, "
+                "do not emit function-call or tool-invocation blocks — "
+                "this turn has no tool channel available, so any such "
+                "output is silently dropped."
+            )
         # Inject coordinator memory into the worker's system prompt
         # (see _conv_dict_with_memory for the rationale — workers have
         # empty local memory stores so any /api/ask question that
