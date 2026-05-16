@@ -4906,6 +4906,52 @@ class TestSimpleAskAPI:
         assert body.get("dual_empty_text") is True, body
         assert body.get("alt_worker") == "dual-alt", body
 
+    def test_single_worker_empty_text_surfaces_in_response(self, gateway, client):
+        """When there's only one worker and it returns empty text,
+        `dual_empty_text` doesn't fire (no alt to retry on) and the
+        response previously gave just the diagnostic placeholder with
+        no flag — operators couldn't tell whether the worker actually
+        tried or whether something else happened. Surface
+        `empty_text_fallback` in this case so the caller sees the
+        signal."""
+        from unittest.mock import AsyncMock
+
+        from towel.agent.conversation import Message, Role
+        from towel.gateway.workers import WorkerInfo
+
+        solo = WorkerInfo(id="solo", ws=AsyncMock(), capabilities={})
+        gateway._workers._workers["solo"] = solo
+
+        async def fake_route(message, session_id):
+            return solo, "chat"
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            msg = Message(
+                role=Role.ASSISTANT,
+                content="(empty text placeholder)",
+                metadata={
+                    "remote_worker": worker.id,
+                    "empty_text_fallback": True,
+                },
+            )
+            session.conversation.messages.append(msg)
+            return msg
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        # No alternate worker — _pick_alternate_chat_worker returns None.
+        gateway._pick_alternate_chat_worker = lambda exclude: None  # type: ignore[method-assign]
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "hi", "session_id": "solo-empty"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body.get("empty_text_fallback") is True, body
+        # Distinct from dual_empty_text — only one worker tried.
+        assert "dual_empty_text" not in body
+
 
 class TestApiSessions:
     def test_api_sessions_empty(self, client):

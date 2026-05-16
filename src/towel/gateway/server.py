@@ -6835,6 +6835,18 @@ class GatewayServer:
                     body["dual_empty_text"] = True
                     if meta.get("alt_worker"):
                         body["alt_worker"] = meta["alt_worker"]
+                # Single-worker empty-text: the worker returned the
+                # diagnostic placeholder and there was no alternate
+                # to retry on (single-worker fleet, or all alternates
+                # excluded/stuck). Without this flag the caller sees a
+                # generic "couldn't respond" message and can't tell
+                # whether towel even tried hard. Distinct from
+                # dual_empty_text which requires two attempts.
+                elif (
+                    meta.get("empty_text_fallback")
+                    and not meta.get("fallback_from_worker")
+                ):
+                    body["empty_text_fallback"] = True
                 # Surface the verifier pass so the caller can tell
                 # the answer went through two-worker collaboration.
                 if meta.get("verified_by"):
