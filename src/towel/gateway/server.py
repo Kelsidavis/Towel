@@ -7174,11 +7174,30 @@ class GatewayServer:
                         {"error": f"tasks[{i}].with_tools must be a boolean"},
                         status_code=400,
                     )
+                extract_to_raw = raw.get("extract_to")
+                extract_to_val: str | None = None
+                if extract_to_raw is not None:
+                    if not isinstance(extract_to_raw, str) or not extract_to_raw.strip():
+                        return JSONResponse(
+                            {"error": (
+                                f"tasks[{i}].extract_to must be a non-empty string"
+                            )},
+                            status_code=400,
+                        )
+                    if ".." in extract_to_raw.split("/"):
+                        return JSONResponse(
+                            {"error": (
+                                f"tasks[{i}].extract_to must not contain '..'"
+                            )},
+                            status_code=400,
+                        )
+                    extract_to_val = extract_to_raw.strip()
                 tasks.append(AgentTask(
                     role=role,
                     prompt=prompt.strip(),
                     depends_on=deps,
                     with_tools=with_tools_raw,
+                    extract_to=extract_to_val,
                 ))
 
             parallel = bool(body.get("parallel", False))
@@ -7264,6 +7283,8 @@ class GatewayServer:
                         "prompt": t.prompt,
                         "depends_on": t.depends_on,
                         "with_tools": t.with_tools,
+                        "extract_to": t.extract_to,
+                        "extracted_path": t.extracted_path,
                         "status": t.status,
                         "elapsed_ms": round(t.elapsed * 1000.0, 1),
                         "attempts": t.attempts,

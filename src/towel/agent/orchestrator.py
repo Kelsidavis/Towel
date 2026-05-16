@@ -85,6 +85,15 @@ class AgentTask:
     # can call write_file/read_file/edit_file. Defaults False so simple
     # text-only roles (writer, default) stay on the faster path.
     with_tools: bool = False
+    # When set, the orchestrator extracts the first fenced code block
+    # from the subtask's response and writes it to this workspace-
+    # relative path. Lets a chat-fast (no-tools) coder produce code
+    # without needing the slow tool loop — the worker emits a fenced
+    # block, the coordinator writes the file. Lives in `AgentTask`
+    # rather than on the subtask prompt so callers can use the same
+    # response.
+    extract_to: str | None = None
+    extracted_path: str | None = None
     # How many times this subtask retried before completing or failing.
     # Surfaced so operators reading the response body can see when the
     # cluster needed multiple workers to satisfy a request.
@@ -272,6 +281,48 @@ class Orchestrator:
         task.elapsed = time.perf_counter() - task_start
 
     @staticmethod
+    def _extract_and_write(task: AgentTask, workspace_dir: str) -> None:
+        """Pull the first fenced code block out of `task.result` and
+        write it to `workspace_dir / task.extract_to`.
+
+        Handles three common shapes the model produces:
+          ```python\n...```      — language tag we strip
+          ```\n...```            — no language tag
+          {code with no fences}  — falls through, writes the whole
+                                   stripped result if no fence found
+
+        On a successful write `task.extracted_path` is populated with
+        the absolute path so callers downstream can read it back.
+        """
+        import re
+        from pathlib import Path
+        if task.extract_to is None:
+            return
+        text = task.result or ""
+        # Match fenced blocks; tolerate language tags and trailing
+        # whitespace. DOTALL so newlines in the body are kept.
+        match = re.search(
+            r"```(?:[a-zA-Z0-9_-]+)?\s*\n(.*?)```",
+            text,
+            re.DOTALL,
+        )
+        body = match.group(1) if match else text.strip()
+        if not body.endswith("\n"):
+            body += "\n"
+        # Reject path traversal — task.extract_to should land inside
+        # the workspace.
+        target = (Path(workspace_dir) / task.extract_to).resolve()
+        ws_root = Path(workspace_dir).resolve()
+        if ws_root not in target.parents and target != ws_root:
+            raise ValueError(
+                f"extract_to path {task.extract_to!r} resolves outside "
+                f"workspace {workspace_dir}"
+            )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8")
+        task.extracted_path = str(target)
+
+    @staticmethod
     def _workspace_preamble(workspace_dir: str | None) -> str:
         """Prefix subtask prompts with a workspace-directive when set.
 
@@ -355,6 +406,27 @@ class Orchestrator:
 
             # Execute
             await self._execute_with_retry(task, full_prompt)
+            # If the task asked for code extraction, parse the response
+            # for the first fenced code block and write it to the
+            # workspace. Lets a no-tools chat-fast coder produce code
+            # without going through the (often-slow) tool loop. Errors
+            # bubble up into the task result rather than into the
+            # broader orchestration so one extraction failure doesn't
+            # blow up the rest of the run.
+            if (
+                task.status == "completed"
+                and task.extract_to
+                and workspace_dir
+            ):
+                try:
+                    self._extract_and_write(task, workspace_dir)
+                except Exception as exc:
+                    log.warning(
+                        "extract_to write failed for task %d (%s): %s",
+                        i, task.role, exc,
+                    )
+                    task.result = f"{task.result}\n\n[extract_to failed: {exc}]"
+                    task.status = "failed"
             log.info(
                 "Task %d (%s): %s in %.1fs (attempts=%d)",
                 i, task.role, task.status, task.elapsed, task.attempts,

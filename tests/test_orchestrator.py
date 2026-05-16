@@ -424,6 +424,91 @@ class TestOrchestratorWithDispatcher:
         assert not result.success
         assert result.synthesis == ""
 
+    def test_extract_to_writes_fenced_code_block(self, tmp_path):
+        """Lets a no-tools chat-fast coder produce code without going
+        through the slow tool loop. Models often wrap code in ```python
+        fences; the orchestrator extracts the first block and writes
+        it to the workspace path the caller specified."""
+        from towel.config import TowelConfig
+
+        class _Echo:
+            async def dispatch_role_task(  # noqa: PLR0913
+                self, role, role_system, prompt, *,
+                session_id, max_tokens, temperature, with_tools,
+                task_type, exclude_workers,
+            ):
+                return (
+                    "Here is the function:\n\n```python\n"
+                    "def hello():\n    return 'hi'\n```\n\nDone."
+                )
+
+        orch = Orchestrator(TowelConfig(), dispatcher=_Echo())
+        tasks = [
+            AgentTask(role="coder", prompt="write hello", extract_to="hello.py"),
+        ]
+        ws = str(tmp_path / "ws")
+        result = asyncio.run(orch.run("g", tasks, workspace_dir=ws))
+        assert result.success
+        # Extracted body landed on disk.
+        target = tmp_path / "ws" / "hello.py"
+        assert target.exists()
+        body = target.read_text(encoding="utf-8")
+        assert "def hello()" in body
+        assert "return 'hi'" in body
+        # Python fence stripped — no triple-backticks in body.
+        assert "```" not in body
+        assert tasks[0].extracted_path == str(target.resolve())
+
+    def test_extract_to_no_fence_writes_whole_response(self, tmp_path):
+        """When the model doesn't use fences, write the whole stripped
+        body anyway — a code-shaped response without backticks is
+        still useful."""
+        from towel.config import TowelConfig
+
+        class _Plain:
+            async def dispatch_role_task(  # noqa: PLR0913
+                self, role, role_system, prompt, *,
+                session_id, max_tokens, temperature, with_tools,
+                task_type, exclude_workers,
+            ):
+                return "def f(): return 1\n"
+
+        orch = Orchestrator(TowelConfig(), dispatcher=_Plain())
+        tasks = [
+            AgentTask(role="coder", prompt="x", extract_to="f.py"),
+        ]
+        ws = str(tmp_path / "ws")
+        result = asyncio.run(orch.run("g", tasks, workspace_dir=ws))
+        assert result.success
+        assert (tmp_path / "ws" / "f.py").read_text(encoding="utf-8") == "def f(): return 1\n"
+
+    def test_extract_to_rejects_path_traversal(self, tmp_path):
+        """A model-suggested `extract_to` shouldn't be able to write
+        outside the workspace. Path resolution + ancestor check."""
+        from towel.config import TowelConfig
+
+        class _Echo:
+            async def dispatch_role_task(  # noqa: PLR0913
+                self, role, role_system, prompt, *,
+                session_id, max_tokens, temperature, with_tools,
+                task_type, exclude_workers,
+            ):
+                return "```python\nx = 1\n```"
+
+        orch = Orchestrator(TowelConfig(), dispatcher=_Echo())
+        tasks = [
+            AgentTask(role="coder", prompt="x", extract_to="../escape.py"),
+        ]
+        ws = str(tmp_path / "ws")
+        (tmp_path / "ws").mkdir()
+        asyncio.run(orch.run("g", tasks, workspace_dir=ws))
+        # Task marked failed because the extract path escaped.
+        assert tasks[0].status == "failed"
+        assert "escape" not in (tmp_path / "escape.py").exists().__str__() or \
+            not (tmp_path / "escape.py").exists()
+        # And the original error surfaces in the task result.
+        assert "outside workspace" in tasks[0].result
+
     def test_retry_max_attempts_floor_is_one(self):
         """max_attempts<=0 should clamp to 1 — orchestrator must always
         try at least once per subtask, never zero-attempts."""
