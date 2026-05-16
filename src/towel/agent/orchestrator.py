@@ -350,12 +350,47 @@ class Orchestrator:
         if target.suffix == ".py":
             import ast
             try:
-                ast.parse(body)
+                tree = ast.parse(body)
             except SyntaxError as exc:
                 raise ValueError(
                     f"extract_to wrote {target.name} but it has a "
                     f"SyntaxError on line {exc.lineno}: {exc.msg}"
                 ) from exc
+            # ast.parse accepts a bare identifier ("write_file") as
+            # valid Python — it's a no-op expression statement. Live
+            # observation: a coder subtask returned the literal text
+            # `write_file` (the tool name) and that passed parsing,
+            # producing an 11-byte file. Require at least one
+            # substantive top-level construct so empty-or-degenerate
+            # bodies trigger a retry. `import` covers stubs that just
+            # re-export; `def`/`class`/`Assign`/`AnnAssign` cover the
+            # real cases.
+            has_substance = any(
+                isinstance(
+                    node,
+                    (
+                        ast.FunctionDef,
+                        ast.AsyncFunctionDef,
+                        ast.ClassDef,
+                        ast.Assign,
+                        ast.AnnAssign,
+                        ast.Import,
+                        ast.ImportFrom,
+                        ast.If,
+                        ast.For,
+                        ast.While,
+                        ast.Try,
+                        ast.With,
+                    ),
+                )
+                for node in tree.body
+            )
+            if not has_substance:
+                raise ValueError(
+                    f"extract_to wrote {target.name} but it has no "
+                    "substantive code (no def/class/assignment/import) — "
+                    f"got {body[:80]!r}"
+                )
 
     @staticmethod
     def _workspace_preamble(workspace_dir: str | None) -> str:

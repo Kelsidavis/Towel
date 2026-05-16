@@ -542,6 +542,37 @@ class TestOrchestratorWithDispatcher:
         assert "SyntaxError" in tasks[0].result
         assert tasks[0].attempts == 2
 
+    def test_extract_to_rejects_bare_identifier_no_substance(self, tmp_path):
+        """ast.parse accepts a single identifier as valid Python — but
+        a file containing just `write_file` is not real code. Live
+        observation: a coder subtask returned the literal tool-name
+        text, parsed cleanly, wrote 11 bytes to disk. The substance
+        check catches that."""
+        from towel.config import TowelConfig
+
+        attempts = {"n": 0}
+
+        class _Flaky:
+            async def dispatch_role_task(  # noqa: PLR0913
+                self, role, role_system, prompt, *,
+                session_id, max_tokens, temperature, with_tools,
+                task_type, exclude_workers,
+            ):
+                attempts["n"] += 1
+                if attempts["n"] == 1:
+                    return "write_file"  # bare identifier
+                return "```python\ndef ok():\n    return 'fine'\n```"
+
+        orch = Orchestrator(TowelConfig(), dispatcher=_Flaky(), max_attempts=3)
+        tasks = [AgentTask(role="coder", prompt="x", extract_to="m.py")]
+        ws = str(tmp_path / "ws")
+        result = asyncio.run(orch.run("g", tasks, workspace_dir=ws))
+        assert result.success
+        assert tasks[0].attempts == 2
+        body = (tmp_path / "ws" / "m.py").read_text(encoding="utf-8")
+        assert "def ok" in body
+        assert "write_file" not in body
+
     def test_extract_to_rejects_path_traversal(self, tmp_path):
         """A model-suggested `extract_to` shouldn't be able to write
         outside the workspace. Path resolution + ancestor check."""
