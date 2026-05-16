@@ -856,6 +856,19 @@ class AgentRuntime:
             template_kwargs: dict[str, Any] = {
                 "tokenize": False,
                 "add_generation_prompt": True,
+                # Qwen3-thinking variants render a long `<|channel>thought\n …`
+                # chain-of-thought block before the visible answer when this
+                # kwarg defaults to True (the model card default). With small
+                # max_tokens caps the visible response is just the channel
+                # marker; with large caps the model wedges in the reasoning
+                # block without producing a final answer in time. Most chat
+                # templates ignore unknown kwargs, so explicitly opting OUT
+                # here is safe across models that don't support thinking.
+                # Callers that genuinely want reasoning output can flip
+                # `enable_thinking` back to True at the runtime level — they
+                # know they want it; the default user-facing chat path does
+                # not.
+                "enable_thinking": False,
             }
             if use_native_tools:
                 native_tools = self._tools_for_chat_template()
