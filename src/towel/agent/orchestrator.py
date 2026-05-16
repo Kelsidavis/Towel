@@ -27,6 +27,22 @@ from towel.config import TowelConfig
 log = logging.getLogger("towel.agent.orchestrator")
 
 
+class WorkerDispatchError(RuntimeError):
+    """Raised by `RoleDispatcher.dispatch_role_task` on failure.
+
+    Carries the worker id (if a worker was picked) so the orchestrator
+    can exclude it on the next retry attempt. Without this, retries
+    against a flaky-but-pickable worker bounce back to the same worker
+    every time — the dispatcher's session affinity is fresh per
+    subtask but the task_type routing still steers to the same
+    prefer_quality/prefer_fast pick.
+    """
+
+    def __init__(self, message: str, *, worker_id: str | None = None) -> None:
+        super().__init__(message)
+        self.worker_id = worker_id
+
+
 class RoleDispatcher(Protocol):
     """Protocol the Orchestrator uses to dispatch a single role task.
 
@@ -49,6 +65,7 @@ class RoleDispatcher(Protocol):
         temperature: float,
         with_tools: bool,
         task_type: str | None,
+        exclude_workers: set[str] | None,
     ) -> str:
         ...
 
@@ -205,19 +222,38 @@ class Orchestrator:
         Updates `task` in place — populates result/status/elapsed/attempts.
         Captures the last error message as the result on terminal failure
         so the caller and downstream synthesis still see what went wrong.
+
+        When a `WorkerDispatchError` carries a worker_id, that worker is
+        excluded from the next attempt's dispatch — so the cluster's
+        prefer_quality routing doesn't bounce back to the exact worker
+        that just timed out. Other RuntimeErrors (no worker available,
+        etc.) don't exclude anything since there's no worker to blame.
         """
         task_start = time.perf_counter()
         task.status = "running"
         last_exc: Exception | None = None
+        exclude_workers: set[str] = set()
         for attempt in range(self.max_attempts):
             task.attempts = attempt + 1
             try:
                 task.result = await self._run_agent(
-                    task.role, full_prompt, with_tools=task.with_tools,
+                    task.role, full_prompt,
+                    with_tools=task.with_tools,
+                    exclude_workers=exclude_workers,
                 )
                 task.status = "completed"
                 last_exc = None
                 break
+            except WorkerDispatchError as e:
+                last_exc = e
+                if e.worker_id:
+                    exclude_workers.add(e.worker_id)
+                log.warning(
+                    "Task (%s, attempt %d/%d) failed on %s: %s",
+                    task.role, attempt + 1, self.max_attempts,
+                    e.worker_id or "no-worker", e,
+                )
+                await asyncio.sleep(0)
             except Exception as e:
                 last_exc = e
                 log.warning(
@@ -358,7 +394,9 @@ class Orchestrator:
         return result
 
     async def _run_agent(
-        self, role: str, prompt: str, *, with_tools: bool = False,
+        self, role: str, prompt: str, *,
+        with_tools: bool = False,
+        exclude_workers: set[str] | None = None,
     ) -> str:
         """Run a single agent step with role-specific system prompt.
 
@@ -383,6 +421,7 @@ class Orchestrator:
                 temperature=0.4,
                 with_tools=with_tools,
                 task_type=ROLE_TASK_TYPES.get(role),
+                exclude_workers=exclude_workers,
             )
 
         # Local fallback: spin up a coordinator-side AgentRuntime with

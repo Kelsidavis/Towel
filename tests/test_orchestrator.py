@@ -114,6 +114,7 @@ class _RecordingDispatcher:
         temperature: float,
         with_tools: bool,
         task_type: str | None,
+        exclude_workers: set[str] | None,
     ) -> str:
         self.calls.append({
             "role": role,
@@ -124,6 +125,7 @@ class _RecordingDispatcher:
             "temperature": temperature,
             "with_tools": with_tools,
             "task_type": task_type,
+            "exclude_workers": set(exclude_workers) if exclude_workers else set(),
         })
         return f"[{role} result for: {prompt[:40]}]"
 
@@ -264,15 +266,22 @@ class TestOrchestratorWithDispatcher:
         marks the task completed and records the attempt count.
         This is the codex-style "primary worker emitted empty text →
         alt worker answered" pattern."""
+        from towel.agent.orchestrator import WorkerDispatchError
         from towel.config import TowelConfig
 
         attempts = {"count": 0}
+        seen_excludes: list[set[str]] = []
 
         class _FlakyDispatcher:
             async def dispatch_role_task(self, *args, **kwargs) -> str:  # noqa: ARG002
                 attempts["count"] += 1
+                seen_excludes.append(
+                    set(kwargs.get("exclude_workers") or ())
+                )
                 if attempts["count"] == 1:
-                    raise RuntimeError("primary returned empty")
+                    raise WorkerDispatchError(
+                        "primary returned empty", worker_id="primary",
+                    )
                 return "real answer on retry"
 
         orch = Orchestrator(TowelConfig(), dispatcher=_FlakyDispatcher())
@@ -282,6 +291,10 @@ class TestOrchestratorWithDispatcher:
         assert tasks[0].status == "completed"
         assert tasks[0].result == "real answer on retry"
         assert tasks[0].attempts == 2
+        # First attempt had no exclude_workers; second attempt
+        # excludes the worker that just failed.
+        assert seen_excludes[0] == set()
+        assert seen_excludes[1] == {"primary"}
 
     def test_retry_gives_up_after_max_attempts(self):
         from towel.config import TowelConfig
@@ -357,6 +370,7 @@ class TestOrchestratorWithDispatcher:
             async def dispatch_role_task(  # noqa: PLR0913
                 self, role, role_system, prompt, *,
                 session_id, max_tokens, temperature, with_tools, task_type,
+                exclude_workers,
             ):
                 self.calls.append(role)
                 if role == "architect":
@@ -393,6 +407,7 @@ class TestOrchestratorWithDispatcher:
             async def dispatch_role_task(  # noqa: PLR0913
                 self, role, role_system, prompt, *,
                 session_id, max_tokens, temperature, with_tools, task_type,
+                exclude_workers,
             ):
                 if role == "architect":
                     raise RuntimeError("nope")

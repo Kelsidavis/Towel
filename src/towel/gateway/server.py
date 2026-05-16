@@ -2103,6 +2103,7 @@ class GatewayServer:
     async def _route_by_role(
         self, message: str, session_id: str,
         *, task_type_override: str | None = None,
+        exclude_workers: set[str] | None = None,
     ) -> tuple[WorkerInfo | None, str]:
         """Route a message to the best worker based on task type.
 
@@ -2146,6 +2147,7 @@ class GatewayServer:
             session_id,
             intent=intent,
             task_type=task_type,
+            exclude=exclude_workers,
         )
 
         if decision.worker is not None:
@@ -2174,6 +2176,7 @@ class GatewayServer:
         temperature: float = 0.4,
         with_tools: bool = False,
         task_type: str | None = None,
+        exclude_workers: set[str] | None = None,
     ) -> str:
         """Dispatch a single orchestrator subtask to the best-fit worker.
 
@@ -2221,9 +2224,13 @@ class GatewayServer:
             )
         session.conversation.add(_Role.USER, prompt)
 
+        from towel.agent.orchestrator import WorkerDispatchError
+        worker = None
         try:
             worker, _intent = await self._route_by_role(
-                prompt, session_id, task_type_override=task_type,
+                prompt, session_id,
+                task_type_override=task_type,
+                exclude_workers=exclude_workers,
             )
             if worker is None:
                 # Coordinator-local fallback isn't useful for
@@ -2231,8 +2238,9 @@ class GatewayServer:
                 # fleet. Raise so the orchestrator can mark this subtask
                 # failed and the operator sees a clear "no worker"
                 # signal in the result summary.
-                raise RuntimeError(
-                    f"no worker available for role={role} (session={session_id})"
+                raise WorkerDispatchError(
+                    f"no worker available for role={role} (session={session_id})",
+                    worker_id=None,
                 )
 
             if with_tools:
@@ -2268,10 +2276,18 @@ class GatewayServer:
                 )
             text = getattr(response, "content", "") or ""
             if not text:
-                raise RuntimeError(
-                    f"worker {worker.id} returned empty response for role={role}"
+                raise WorkerDispatchError(
+                    f"worker {worker.id} returned empty response for role={role}",
+                    worker_id=worker.id,
                 )
             return text
+        except WorkerDispatchError:
+            # Already carries the worker_id; let it propagate.
+            raise
+        except Exception as exc:
+            # Wrap so the orchestrator can exclude the worker on retry.
+            wid = worker.id if worker is not None else None
+            raise WorkerDispatchError(str(exc), worker_id=wid) from exc
         finally:
             # Orchestrator subtasks are one-shot — each uses a fresh
             # uuid-suffixed session_id (see Orchestrator._run_agent),
