@@ -521,6 +521,31 @@ def _probe_fleet_endpoints(c: Check, host: str, http_port: int) -> None:
                 "calls instead of chat — consider pinning chat sessions "
                 "away from it or disabling it for chat intent"
             )
+        # Total empty-text responses per worker — counts every empty
+        # response, including single-worker cases where no retry was
+        # possible. The retries tally above misses those because the
+        # retry path requires an alternate worker. Surfaces "k-Precision
+        # returns empty 100% of the time" on a one-worker fleet that
+        # would otherwise look idle on the retry tally alone.
+        counts = (data.get("log_status") or {}).get(
+            "empty_text_counts_by_worker"
+        ) or {}
+        broken = {wid: n for wid, n in counts.items() if n >= 3}
+        if broken:
+            # Filter out workers already flagged in the retry tally
+            # above to avoid double-warning operators.
+            extra = {wid: n for wid, n in broken.items() if wid not in flaky}
+            if extra:
+                top = sorted(extra.items(), key=lambda kv: -kv[1])
+                summary = ", ".join(f"{wid}={n}" for wid, n in top)
+                c.warn(
+                    f"Empty-text responses by worker (no alt retry): {summary}"
+                )
+                c.suggestions.append(
+                    "A worker producing empty text with no retry possible "
+                    "is usually a model/llama-server problem on that host "
+                    "— check the worker's log and consider a fresh restart"
+                )
         # Quality-degraded count: dispatches forced onto an
         # under-spec worker because no better-fit candidate was
         # available. Threshold ≥5 distinguishes a recurring fleet/
