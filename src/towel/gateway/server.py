@@ -2280,6 +2280,20 @@ class GatewayServer:
                     f"worker {worker.id} returned empty response for role={role}",
                     worker_id=worker.id,
                 )
+            # Empty-text fallback: the chat-fast path substitutes the
+            # diagnostic placeholder into `content` when the worker
+            # produced no parseable text. Treat that as failure so the
+            # orchestrator's retry / exclude_workers logic kicks in
+            # instead of returning a placeholder string that
+            # downstream code (e.g. extract_to) would then try to
+            # write to disk as if it were real content.
+            meta = getattr(response, "metadata", None) or {}
+            if meta.get("empty_text_fallback") or meta.get("dual_empty_text"):
+                raise WorkerDispatchError(
+                    f"worker {worker.id} returned empty-text fallback for "
+                    f"role={role}",
+                    worker_id=worker.id,
+                )
             return text
         except WorkerDispatchError:
             # Already carries the worker_id; let it propagate.
