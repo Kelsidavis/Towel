@@ -5,6 +5,7 @@ Checks environment, configuration, model availability, skills, and gateway.
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import shutil
@@ -16,6 +17,7 @@ from rich.console import Console
 
 from towel.config import TOWEL_HOME, TowelConfig
 
+log = logging.getLogger("towel.cli.doctor")
 console = Console()
 
 
@@ -290,6 +292,52 @@ def check_skills(config: TowelConfig) -> Check:
         c.warn(f"Skill load error: {err.path.name}: {err.error}")
 
     return c
+
+
+def _probe_missing_persisted_workers(c: Check, host: str, http_port: int) -> None:
+    """Warn when persisted workers aren't currently connected.
+
+    Each worker that ever registered leaves an entry in
+    ``$TOWEL_HOME/worker_state.json``. When a previously-registered
+    worker isn't in the live /workers list, the operator probably
+    has a launcher crash, network partition, or failed self-upgrade.
+    Without this surface, the doctor would say "Workers: 1" with no
+    indication that the OTHER expected worker is missing.
+
+    Skips workers explicitly disabled in the persisted state —
+    absence there is intentional. Errors are swallowed: this is a
+    nice-to-have observability bonus, not a hard check.
+    """
+    import httpx
+
+    try:
+        from towel.persistence.worker_state import WorkerStateStore
+        store = WorkerStateStore()
+        if not store.path.exists():
+            return
+        persisted = store.load() or {}
+    except Exception as exc:
+        log.debug("doctor: persisted worker state read failed: %s", exc)
+        return
+    expected = {
+        wid for wid, s in persisted.items() if s.get("enabled", True)
+    }
+    if not expected:
+        return
+
+    try:
+        data = httpx.get(f"http://{host}:{http_port}/workers", timeout=2).json()
+    except Exception as exc:
+        log.debug("doctor: /workers probe failed during missing check: %s", exc)
+        return
+    connected = {w.get("id") for w in (data.get("workers") or []) if w.get("id")}
+    missing = sorted(expected - connected)
+    if missing:
+        c.warn(f"Persisted workers not connected: {', '.join(missing)}")
+        c.suggestions.append(
+            "Check the worker host(s) — process may have crashed (often "
+            "during a failed self-upgrade) or the launcher needs a restart"
+        )
 
 
 def _probe_fleet_endpoints(c: Check, host: str, http_port: int) -> None:
@@ -586,6 +634,7 @@ def check_gateway(config: TowelConfig) -> Check:
                 "drain the stuck worker, or restart it"
             )
         _probe_fleet_endpoints(c, host, http_port)
+        _probe_missing_persisted_workers(c, host, http_port)
         return c
     except Exception:
         pass

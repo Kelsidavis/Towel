@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock, patch
 
-from towel.cli.doctor import Check, _probe_fleet_endpoints
+from towel.cli.doctor import (
+    Check,
+    _probe_fleet_endpoints,
+    _probe_missing_persisted_workers,
+)
 
 
 def _mock_response(payload: dict) -> MagicMock:
@@ -586,3 +591,99 @@ class TestProbeFleetEndpoints:
         assert "120.5ms" in joined_details
         # The 2 failed migrations earn a yellow warn, not silent success.
         assert "2 handoff(s) failed" in joined_warnings
+
+
+class TestProbeMissingPersistedWorkers:
+    """Doctor flags persisted-but-not-connected workers so operators
+    quickly see "SparklesMint should be here but isn't" instead of
+    just "Workers: 1" on a partial fleet."""
+
+    def test_warns_when_persisted_worker_not_connected(self, tmp_path, monkeypatch):
+        from towel.persistence import worker_state
+        state_path = tmp_path / "worker_state.json"
+        state_path.write_text(
+            json.dumps({
+                "live-host": {"enabled": True, "draining": False},
+                "missing-host": {"enabled": True, "draining": False},
+            }),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            worker_state, "DEFAULT_WORKER_STATE_PATH", state_path
+        )
+
+        def fake_get(url, **kwargs):  # noqa: ARG001
+            # Only `live-host` is currently connected.
+            return _mock_response({"workers": [{"id": "live-host"}]})
+
+        with patch("httpx.get", side_effect=fake_get):
+            c = Check("Gateway")
+            _probe_missing_persisted_workers(c, "localhost", 18743)
+
+        joined = " | ".join(c.warnings)
+        assert "missing-host" in joined
+        assert "live-host" not in joined  # only the missing one is flagged
+        # Actionable suggestion accompanies the warn.
+        assert any("worker host" in s for s in c.suggestions)
+
+    def test_silent_when_all_persisted_workers_present(self, tmp_path, monkeypatch):
+        from towel.persistence import worker_state
+        state_path = tmp_path / "worker_state.json"
+        state_path.write_text(
+            json.dumps({
+                "host-a": {"enabled": True, "draining": False},
+                "host-b": {"enabled": True, "draining": False},
+            }),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            worker_state, "DEFAULT_WORKER_STATE_PATH", state_path
+        )
+
+        def fake_get(url, **kwargs):  # noqa: ARG001
+            return _mock_response({
+                "workers": [{"id": "host-a"}, {"id": "host-b"}],
+            })
+
+        with patch("httpx.get", side_effect=fake_get):
+            c = Check("Gateway")
+            _probe_missing_persisted_workers(c, "localhost", 18743)
+        assert c.warnings == []
+
+    def test_disabled_persisted_workers_not_flagged_missing(self, tmp_path, monkeypatch):
+        """An operator-disabled worker is intentionally excluded —
+        its absence shouldn't trigger a 'missing' warning."""
+        from towel.persistence import worker_state
+        state_path = tmp_path / "worker_state.json"
+        state_path.write_text(
+            json.dumps({
+                "host-a": {"enabled": True, "draining": False},
+                "host-disabled": {"enabled": False, "draining": False},
+            }),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            worker_state, "DEFAULT_WORKER_STATE_PATH", state_path
+        )
+
+        def fake_get(url, **kwargs):  # noqa: ARG001
+            return _mock_response({"workers": [{"id": "host-a"}]})
+
+        with patch("httpx.get", side_effect=fake_get):
+            c = Check("Gateway")
+            _probe_missing_persisted_workers(c, "localhost", 18743)
+        assert c.warnings == []
+
+    def test_no_persisted_state_is_silent(self, tmp_path, monkeypatch):
+        from towel.persistence import worker_state
+        monkeypatch.setattr(
+            worker_state, "DEFAULT_WORKER_STATE_PATH", tmp_path / "absent.json"
+        )
+
+        def fake_get(url, **kwargs):  # noqa: ARG001
+            return _mock_response({"workers": []})
+
+        with patch("httpx.get", side_effect=fake_get):
+            c = Check("Gateway")
+            _probe_missing_persisted_workers(c, "localhost", 18743)
+        assert c.warnings == []
