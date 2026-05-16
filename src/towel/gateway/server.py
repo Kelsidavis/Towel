@@ -2363,20 +2363,28 @@ class GatewayServer:
         # Append a chat-mode-specific anti-tool-call directive.
         # Live observation: 22% of chat dispatches in the running
         # cluster were retry_empty_text — the small Gemma-4-E2B
-        # worker (trained heavily on tool-use traces) emits
-        # <tool_call> blocks for "what's 2+2?" because that's
-        # what the chat template encourages. ``infer`` mode does
-        # NOT advertise tools to the worker (no tools list in
-        # the payload), so any emitted tool call is silently
-        # dropped by the parser and the coordinator sees empty
-        # text. Tell the model explicitly to respond with prose
-        # — this is cheap, idempotent, and saves the 21s round-
-        # trip the empty-text retry costs on every flaky request.
+        # worker (trained heavily on tool-use traces) emits tool
+        # call blocks for "what's 2+2?" because that's what the
+        # chat template encourages. ``infer`` mode does NOT
+        # advertise tools to the worker (no tools list in the
+        # payload), so any emitted tool call is silently dropped
+        # by the parser and the coordinator sees empty text. Tell
+        # the model explicitly to respond with prose — cheap,
+        # idempotent, saves the 21s round-trip the empty-text
+        # retry costs on every flaky request.
+        #
+        # IMPORTANT: phrase the directive WITHOUT including the
+        # literal "<tool_call>" string. Qwen3-family tokenizers
+        # encode that exact substring as a special-token marker
+        # in the chat template, so writing it in the system
+        # prompt can paradoxically prime the model to emit one.
+        # Stick to plain English describing the behavior we want.
         identity = (
             identity
-            + "\n\nRespond with plain text only. Do not emit "
-            "<tool_call>, function-call, or tool-use blocks — "
-            "those are not available in this turn."
+            + "\n\nAnswer in plain prose. Do not invoke any tools, "
+            "do not emit function-call or tool-invocation blocks — "
+            "this turn has no tool channel available, so any such "
+            "output is silently dropped."
         )
         # Inject coordinator memory into the worker's system prompt
         # (see _conv_dict_with_memory for the rationale — workers have

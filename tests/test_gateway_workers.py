@@ -506,8 +506,13 @@ class TestRemoteExecution:
         # The system prompt that flew on the wire carries the
         # anti-tool-call directive.
         system_prompt = captured_payload["raw"]["request"]["system"]
-        assert "plain text only" in system_prompt
-        assert "tool_call" in system_prompt or "function-call" in system_prompt
+        assert "plain prose" in system_prompt
+        assert "tool" in system_prompt.lower()
+        # The literal `<tool_call>` substring must NOT appear: Qwen3-
+        # family tokenizers parse it as a special-token marker, so
+        # putting it in a system prompt can paradoxically prime the
+        # model to emit one. Phrase the directive in plain English.
+        assert "<tool_call>" not in system_prompt
 
     async def test_quick_remote_infer_timeout_surfaces_useful_error(self, gateway):
         """`asyncio.TimeoutError` stringifies to "" — without an explicit
