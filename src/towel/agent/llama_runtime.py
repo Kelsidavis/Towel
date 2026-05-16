@@ -322,6 +322,14 @@ class LlamaRuntime:
             ),
             "messages": self._build_messages(conversation),
             "model": self.config.model.name,
+            # Suppress the thinking channel by default for the tool-loop
+            # path too — generate_from_request/stream_from_request both
+            # read this field to flip `enable_thinking=False` on the
+            # chat-template kwargs sent to llama-server. Without this,
+            # Qwen3-thinking workers emit `<|channel>thought\n …` chains
+            # that wedge generation past chunk_timeout even on simple
+            # one-line prompts.
+            "reasoning_effort": "none",
         }
         if use_native:
             native_tools = tools_as_openai_functions(self.skills.tool_definitions())
