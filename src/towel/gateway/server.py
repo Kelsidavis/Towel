@@ -3154,11 +3154,22 @@ class GatewayServer:
         loop_detected = False
 
         for _ in range(MAX_TOOL_ITERATIONS):
+            # Stream tokens so chunk_timeout (300s no-event) doesn't
+            # fire mid-generation. Live observation: with stream=False
+            # the worker accumulates the full response server-side and
+            # only sends ONE job_done event when complete; a 27B model
+            # producing 2K tokens of tool-call JSON took 350s+ to
+            # finish prefill+generation, which trips the 300s
+            # chunk_timeout before any event arrives. Streaming keeps
+            # the per-event budget alive while the worker is still
+            # producing tokens, but `_remote_generate` already
+            # accumulates the full text and returns it — the tool
+            # loop reads `result["text"]` exactly the same way.
             result = await self._remote_generate(
                 session_id,
                 session.conversation,
                 worker,
-                stream=False,
+                stream=True,
             )
             text = result.get("text", "")
             metadata = result.get("metadata", {})
