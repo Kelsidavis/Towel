@@ -4075,6 +4075,18 @@ class TestSimpleAskAPI:
             )
             assert resp.status_code == 400, f"accepted verify={bad!r}"
 
+    def test_ask_use_agent_path_must_be_bool(self, client):
+        """Same strict-bool guard for use_agent_path — silent coercion
+        of "yes" / 1 / "true" would re-route an interactive chat
+        request through the heavier tool-loop path without the caller
+        realizing it changed."""
+        for bad in ("yes", 1, "true", "false", [True]):
+            resp = client.post(
+                "/api/ask",
+                json={"message": "hi", "session_id": "uap-bad", "use_agent_path": bad},
+            )
+            assert resp.status_code == 400, f"accepted use_agent_path={bad!r}"
+
     def test_ask_verify_returns_corrected_answer(self, gateway, client):
         """End-to-end: when verify=true and a second worker is
         available, the verifier's correction replaces the primary's

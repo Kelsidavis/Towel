@@ -6357,6 +6357,25 @@ class GatewayServer:
                     {"error": "verify must be true or false"}, status_code=400,
                 )
             verify = bool(verify_raw)
+            # `use_agent_path`: route this chat request through the
+            # tool-loop / `type:"run"` worker handler instead of the
+            # default chat-fast `type:"infer"` path. Slower but
+            # exercises the worker's full agent loop, which on some
+            # broken-worker configurations is the only path producing
+            # real output. Live-observed regression: post-upgrade the
+            # `infer` handler returned empty text for every chat
+            # request while `run` (used by idle tasks + orchestrator
+            # subtasks) kept working. Setting this flag is a manual
+            # escape hatch for that case until the worker env is
+            # fixed. Mutually exclusive with ensemble (which has its
+            # own fan-out path).
+            use_agent_path_raw = body.get("use_agent_path", False)
+            if not isinstance(use_agent_path_raw, bool):
+                return JSONResponse(
+                    {"error": "use_agent_path must be true or false"},
+                    status_code=400,
+                )
+            use_agent_path = bool(use_agent_path_raw)
             # Opt-in ensemble: fan the same prompt to every idle
             # worker in parallel, then arbitrate. Different shape from
             # verify: verify is sequential (draft → review), ensemble
@@ -6536,12 +6555,25 @@ class GatewayServer:
                     # failure: "worker X didn't give us a useful
                     # answer" — and a second worker is right there.
                     try:
-                        response = await self._quick_remote_infer(
-                            session_id, session, worker,
-                            max_tokens=api_ask_max_tokens,
-                            temperature=api_ask_temperature,
-                            identity_override=identity_override,
-                        )
+                        if use_agent_path:
+                            # Operator-requested escape hatch from the
+                            # chat-fast `infer` handler. Route through
+                            # the agent-loop `run` handler instead —
+                            # slower but exercises a different worker
+                            # code path that's still functional when
+                            # `infer` is broken. See body validation
+                            # above for the regression that motivates
+                            # this.
+                            response = await self._step_remote_inference(
+                                session_id, session, worker,
+                            )
+                        else:
+                            response = await self._quick_remote_infer(
+                                session_id, session, worker,
+                                max_tokens=api_ask_max_tokens,
+                                temperature=api_ask_temperature,
+                                identity_override=identity_override,
+                            )
                         primary_failed = False
                         primary_exc: Exception | None = None
                     except Exception as exc:
