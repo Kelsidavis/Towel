@@ -359,6 +359,20 @@ class LlamaRuntime:
         }
         if "reasoning_effort" in request:
             payload["reasoning_effort"] = request["reasoning_effort"]
+        # Qwen3-thinking variants render `<|channel>thought\n…` then long
+        # chain-of-thought before producing a final answer; with a tight
+        # max_tokens cap the visible output is just the channel marker and
+        # the caller sees an empty / template-token response. The chat
+        # template understands `enable_thinking=False` to suppress the
+        # thinking channel entirely. llama-server forwards
+        # `chat_template_kwargs` into the jinja render, so passing it
+        # here is the right place to flip it. Honored when the caller
+        # signalled non-thinking via `reasoning_effort=none` — that's
+        # what the coordinator already sends for the chat-fast path.
+        if request.get("reasoning_effort") == "none":
+            ctk = payload.get("chat_template_kwargs") or {}
+            ctk.setdefault("enable_thinking", False)
+            payload["chat_template_kwargs"] = ctk
         if request.get("tools"):
             payload["tools"] = request["tools"]
 
@@ -447,6 +461,14 @@ class LlamaRuntime:
         }
         if "reasoning_effort" in request:
             payload["reasoning_effort"] = request["reasoning_effort"]
+        # Mirror the non-streaming branch: with reasoning_effort=none,
+        # tell the chat template to skip the thinking channel so
+        # Qwen3-thinking models stop emitting `<|channel>thought\n …`
+        # as the visible response.
+        if request.get("reasoning_effort") == "none":
+            ctk = payload.get("chat_template_kwargs") or {}
+            ctk.setdefault("enable_thinking", False)
+            payload["chat_template_kwargs"] = ctk
         if request.get("tools"):
             payload["tools"] = request["tools"]
 
