@@ -926,7 +926,7 @@ class Dispatcher:
     def record_retry(
         self,
         session_id: str,
-        retry_worker: "WorkerInfo",
+        retry_worker: WorkerInfo,
         original_worker_id: str,
         intent: str,
         cause: str = "empty_text",

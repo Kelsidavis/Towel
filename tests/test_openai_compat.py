@@ -1035,10 +1035,8 @@ class TestCollaborationOnOpenAICompat:
         path. The response must carry `towel.ensemble_skipped: true`
         so OpenAI-aware clients can render the same degraded-state
         badge they would on /api/ask."""
-        from unittest.mock import MagicMock
 
         from towel.agent.conversation import Message, Role
-        from towel.agent.runtime import GenerationResult
 
         store = ConversationStore(store_dir=tmp_path)
         config = TowelConfig()

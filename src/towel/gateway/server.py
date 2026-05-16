@@ -1964,7 +1964,7 @@ class GatewayServer:
             # benefits.
             _tool_calls, remaining_text = parse_tool_calls(result.text)
             return (remaining_text or "").strip()
-        except asyncio.TimeoutError:
+        except TimeoutError:
             log.warning(
                 "Ensemble synthesis timed out after %.0fs; "
                 "falling back to deterministic pick",
@@ -3514,7 +3514,7 @@ class GatewayServer:
             while True:
                 try:
                     msg = await asyncio.wait_for(queue.get(), timeout=chunk_timeout)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     await ws.send(
                         json.dumps(
                             {
@@ -3618,7 +3618,7 @@ class GatewayServer:
             while True:
                 try:
                     msg = await asyncio.wait_for(queue.get(), timeout=chunk_timeout)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     raise RuntimeError(
                         f"timeout waiting for next stream event from "
                         f"{worker.id} after {chunk_timeout:.0f}s"

@@ -26,7 +26,7 @@ def _safe_int(value: Any, default: int = 0) -> int:
     return default
 
 
-def resources_from_worker_caps(caps: dict[str, Any]) -> "NodeResources":
+def resources_from_worker_caps(caps: dict[str, Any]) -> NodeResources:
     """Build a NodeResources from a worker's full capabilities dict.
 
     Workers report VRAM at the top level of ``caps`` (``total_vram_mb``)
