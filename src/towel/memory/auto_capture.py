@@ -33,6 +33,7 @@ import logging
 import re
 from dataclasses import dataclass
 
+from towel.memory.guard import reject_reason
 from towel.memory.store import MemoryStore
 
 log = logging.getLogger("towel.memory.auto_capture")
@@ -199,6 +200,10 @@ _PATTERNS: list[tuple[re.Pattern[str], str, str, str, str]] = [
 ]
 
 
+# "to share ...", "to take down ...", "to delete ..." — an infinitive
+# clause captured after "I want" is a goal/action, not a preference.
+_INFINITIVE_RE = re.compile(r"^to\s+[a-z]", re.IGNORECASE)
+
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -224,6 +229,13 @@ def extract(text: str) -> list[Capture]:
                 continue
             value = m.group("value").strip().rstrip(".,!?;:")
             if not value:
+                continue
+            # "I want to <verb> ..." is an intent/action, not a stable
+            # preference. The want-branch of the preference pattern
+            # otherwise stores the whole infinitive clause ("to share
+            # with the chinese government") as a standing preference.
+            if label == "preference" and _INFINITIVE_RE.match(value):
+                log.debug("Skipping infinitive preference capture: %r", value)
                 continue
             # All named groups are exposed to templates — patterns that
             # capture both a facet ("editor") and a value ("neovim")
@@ -272,6 +284,9 @@ def apply_tool_result(
     for cap in extract(result_text):
         if cap.source_pattern not in _TOOL_RESULT_LABELS:
             continue
+        if reject_reason(cap.key, cap.content) is not None:
+            log.debug("Guard refused tool-result capture: %s", cap.key)
+            continue
         if store.recall(cap.key) is not None:
             continue
         store.remember(
@@ -304,6 +319,9 @@ def apply(
         return []
     written: list[Capture] = []
     for cap in captures:
+        if reject_reason(cap.key, cap.content) is not None:
+            log.debug("Guard refused auto-capture: %s", cap.key)
+            continue
         existing = store.recall(cap.key)
         if existing is not None and not overwrite:
             continue

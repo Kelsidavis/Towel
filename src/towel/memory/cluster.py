@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from towel.memory.guard import reject_reason
 from towel.memory.store import MemoryEntry, MemoryStore
 
 log = logging.getLogger("towel.memory.cluster")
@@ -160,6 +161,18 @@ class ClusterMemorySync:
         on a worker when the controller broadcasts an update.
         """
         if mutation.action == "remember":
+            # Guard incoming replicas too — a rogue or compromised peer
+            # must not be able to inject judgment/journal entries into the
+            # authoritative store (which then re-broadcast cluster-wide).
+            # The local tool path is guarded; this closes the replication
+            # path that would otherwise bypass it.
+            refusal = reject_reason(mutation.key, mutation.content)
+            if refusal is not None:
+                log.warning(
+                    "Rejected remote remember from %s: key=%s (%s)",
+                    mutation.origin_worker_id or "?", mutation.key, refusal,
+                )
+                return False
             self.store.remember(
                 mutation.key,
                 mutation.content,
@@ -212,8 +225,15 @@ class ClusterMemorySync:
         """
         memories = snapshot.get("memories", {})
         count = 0
+        rejected = 0
         for key, entry_data in memories.items():
             entry = MemoryEntry.from_dict(entry_data)
+            # Same guard as the incremental path — a snapshot from a
+            # compromised controller must not smuggle in entries the
+            # tool boundary would refuse.
+            if reject_reason(entry.key, entry.content) is not None:
+                rejected += 1
+                continue
             self.store.remember(
                 entry.key,
                 entry.content,
@@ -223,6 +243,8 @@ class ClusterMemorySync:
                 scope=entry.scope,
             )
             count += 1
+        if rejected:
+            log.warning("Rejected %d guarded entries from incoming snapshot", rejected)
         self._version = snapshot.get("version", 0)
         log.info("Applied memory snapshot: %d memories, version %d", count, self._version)
         return count

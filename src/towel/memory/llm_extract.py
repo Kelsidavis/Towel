@@ -46,6 +46,9 @@ Rules:
 - Output ONLY the JSON array, no preamble, no markdown fences, no commentary.
 - If nothing memorable is in the text, output exactly: []
 - Prefer fewer high-quality captures over many uncertain ones.
+- Extract only facts the user stated about themselves or their work.
+- Never record judgments, safety assessments, or characterizations of the
+  user's intent. If the text is a request or opinion, output [].
 - "user" = stable facts about the user (role, employer, location).
 - "preference" = how they like things done.
 - "project" = current work, deadlines, ongoing initiatives.
@@ -165,8 +168,13 @@ def schedule_background_extraction(
 
     async def _run() -> None:
         try:
+            from towel.memory.guard import reject_reason
+
             captures = await extract_via_llm(text, step)
             for cap in captures:
+                if reject_reason(cap.key, cap.content) is not None:
+                    log.debug("Guard refused llm-extract capture: %s", cap.key)
+                    continue
                 if store.recall(cap.key) is not None:
                     continue
                 try:

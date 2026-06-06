@@ -61,6 +61,16 @@ class WebhookTriggerSkill(Skill):
         ]
 
     async def execute(self, tool_name: str, arguments: dict[str, Any]) -> Any:
+        # SSRF guard: refuse outbound posts to internal/loopback/metadata
+        # destinations before any request is made.
+        from towel.netguard import check_url
+
+        target = arguments.get("url") or arguments.get("webhook_url")
+        if target is not None:
+            blocked = check_url(target)
+            if blocked is not None:
+                return blocked
+
         match tool_name:
             case "webhook_send":
                 return await self._send(
