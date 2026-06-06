@@ -315,6 +315,38 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   </div>
 </div>
 
+<div id="settings-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.66);z-index:1112;display:none;align-items:center;justify-content:center">
+  <div style="width:min(600px,92vw);max-height:84vh;overflow:auto;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:18px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <strong>SETTINGS</strong>
+      <button class="tb-btn" id="settings-close-btn">close</button>
+    </div>
+    <div style="font-size:0.8em;color:var(--text-dim);margin-bottom:14px">
+      Security and behavior for this Towel deployment. Full backend/model setup is in the
+      <a href="/setup" target="_blank" style="color:var(--green)">setup wizard</a>.
+    </div>
+    <div style="border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:12px">
+      <div style="font-weight:600;margin-bottom:4px">Security &mdash; tool gating</div>
+      <div style="font-size:0.82em;color:var(--text-dim);margin-bottom:10px">
+        Controls whether the model may use dangerous tools (shell, outbound HTTP/webhooks,
+        secret reads, persistence, SSH). Every tool call is always recorded to the audit log;
+        this decides what is allowed to <em>run</em>. Use <strong>Enforce</strong> for
+        abliterated or otherwise untrusted models.
+      </div>
+      <label for="settings-tool-policy" style="display:block;margin-bottom:4px;font-size:0.85em">Tool policy</label>
+      <select id="settings-tool-policy" style="width:100%;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font:inherit">
+        <option value="enforce">Enforce &mdash; block dangerous tools (recommended for untrusted models)</option>
+        <option value="audit">Audit only &mdash; log everything, allow all tools</option>
+      </select>
+      <div id="settings-tool-policy-help" style="font-size:0.8em;color:var(--text-dim);margin-top:8px"></div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center">
+      <span id="settings-status" style="font-size:0.82em;color:var(--text-dim);margin-right:auto"></span>
+      <button class="tb-btn" id="settings-save-btn">save</button>
+    </div>
+  </div>
+</div>
+
 <div id="memory-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.54);z-index:1100;display:none;align-items:center;justify-content:center">
   <div id="memory-panel" style="width:min(900px,96vw);max-height:88vh;overflow:hidden;background:var(--bg);border:1px solid var(--border);border-radius:8px;display:flex;flex-direction:column">
     <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border)">
@@ -472,6 +504,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       <button class="tb-btn" id="tb-fleet" title="Open worker and route controls">fleet</button>
       <button class="tb-btn" id="tb-memory" title="View persistent memory: stats, recent captures, search">memory</button>
       <button class="tb-btn" id="tb-replay" title="Replay any saved conversation step-by-step with play/pause/scrub">replay</button>
+      <button class="tb-btn" id="tb-settings" title="Settings: security tool-gating policy and more">settings</button>
       <button class="tb-btn" id="tb-export" title="Export as markdown">export</button>
       <button class="tb-btn" id="tb-delete" title="Delete conversation">delete</button>
     </div>
@@ -480,7 +513,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     <div id="welcome">
       <h2>TOWEL</h2>
       <p class="motto">Tool Oriented Worker Execution Link · Don't Panic.</p>
-      <p class="hint">Your local AI assistant, powered by MLX.<br>Type a message to begin.</p>
+      <p class="hint">Your local-first AI assistant.<br>Type a message to begin.</p>
     </div>
   </div>
   <div id="input-area">
@@ -1238,7 +1271,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   function showWelcome() {
     messagesEl.innerHTML = `<div id="welcome">
       <h2>TOWEL</h2><p class="motto">Don't Panic.</p>
-      <p class="hint">Your local AI assistant, powered by MLX.<br>Type a message to begin.</p></div>`;
+      <p class="hint">Your local-first AI assistant.<br>Type a message to begin.</p></div>`;
   }
 
   // ── Markdown renderer ──
@@ -2194,6 +2227,79 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   function closeMemoryPanel() { memoryOverlay.style.display = 'none'; }
 
   tbMemory.addEventListener('click', openMemoryPanel);
+
+  // --- Settings panel (security tool-gating policy) ----------------------
+  const settingsOverlay = document.getElementById('settings-overlay');
+  const settingsPolicyEl = document.getElementById('settings-tool-policy');
+  const settingsPolicyHelp = document.getElementById('settings-tool-policy-help');
+  const settingsStatusEl = document.getElementById('settings-status');
+  // Keep the rest of the saved config so a policy-only save still passes
+  // the wizard's backend validation and preserves backend/model/identity.
+  let settingsLoadedConfig = {};
+
+  function updateSettingsPolicyHelp() {
+    const v = settingsPolicyEl.value;
+    settingsPolicyHelp.innerHTML = (v === 'enforce')
+      ? 'Blocks tools in the <strong>exec, exfil, secret, persist, lateral</strong> risk tiers. '
+        + 'Memory and low-risk tools still run. Fine-tune allow/deny lists in config.toml.'
+      : '<strong>No enforcement.</strong> All tools run; calls are logged to '
+        + '<code>~/.towel/audit/tool-calls.jsonl</code>. A rogue model is recorded but not stopped.';
+  }
+
+  async function openSettingsPanel() {
+    settingsStatusEl.textContent = '';
+    try {
+      const resp = await fetch(apiBase + '/api/setup/state');
+      const data = await resp.json();
+      settingsLoadedConfig = (data && data.config) || {};
+      const pol = (settingsLoadedConfig.security && settingsLoadedConfig.security.tool_policy) || 'audit';
+      settingsPolicyEl.value = (pol === 'enforce') ? 'enforce' : 'audit';
+    } catch (err) {
+      settingsPolicyEl.value = 'audit';
+      settingsStatusEl.textContent = 'could not load current settings';
+    }
+    updateSettingsPolicyHelp();
+    settingsOverlay.style.display = 'flex';
+  }
+  function closeSettingsPanel() { settingsOverlay.style.display = 'none'; }
+
+  async function saveSettings() {
+    const c = settingsLoadedConfig || {};
+    const form = {
+      backend: c.backend || 'mlx',
+      identity: c.identity || '',
+      ollama_url: c.ollama_url || '',
+      llama_url: c.llama_url || '',
+      claude_model: c.claude_model || '',
+      model_name: (c.model && c.model.name) || '',
+      tool_policy: settingsPolicyEl.value || 'audit',
+    };
+    settingsStatusEl.textContent = 'saving…';
+    try {
+      const resp = await fetch(apiBase + '/api/setup/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      const data = await resp.json();
+      if (data && data.ok === false) {
+        settingsStatusEl.textContent = 'error: ' + (data.error || 'save failed');
+        return;
+      }
+      settingsStatusEl.textContent = 'saved — restart the coordinator (fleet ▸ restart) to apply';
+    } catch (err) {
+      settingsStatusEl.textContent = 'error: ' + err;
+    }
+  }
+
+  document.getElementById('tb-settings').addEventListener('click', openSettingsPanel);
+  document.getElementById('settings-close-btn').addEventListener('click', closeSettingsPanel);
+  document.getElementById('settings-save-btn').addEventListener('click', saveSettings);
+  settingsPolicyEl.addEventListener('change', updateSettingsPolicyHelp);
+  settingsOverlay.addEventListener('click', function(e) {
+    if (e.target === settingsOverlay) closeSettingsPanel();
+  });
+
   const memoryNewBtn = document.getElementById('memory-new-btn');
   if (memoryNewBtn) memoryNewBtn.addEventListener('click', openCreate);
   memoryCloseBtn.addEventListener('click', closeMemoryPanel);
