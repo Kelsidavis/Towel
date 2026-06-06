@@ -170,6 +170,7 @@ class LlamaRuntime:
             binary_path=caps.llama_server_path,
             model_path=model_path,
             port=port,
+            extra_args=["--fit", "off", "-c", "32768"],
         )
         server.start()
         await server.wait_healthy()

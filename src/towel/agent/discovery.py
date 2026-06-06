@@ -22,6 +22,7 @@ log = logging.getLogger("towel.agent.discovery")
 GGUF_SEARCH_DIRS = [
     Path.home() / ".towel" / "models",
     Path.home() / "models",
+    Path("/media"),
     Path("/mnt"),
     Path.home() / "Downloads",
     Path.home() / "downloads",
@@ -79,48 +80,88 @@ class SystemCapabilities:
             return None
         usable_vram_gb = (self.total_vram_mb - 2048) / 1024.0
         fitting = [m for m in self.gguf_models if m.size_gb <= usable_vram_gb]
+        gpt_oss = [m for m in fitting if "gpt-oss" in m.name.lower()]
+        if gpt_oss:
+            return max(gpt_oss, key=lambda m: m.size_gb)
+        fitting = [
+            m
+            for m in fitting
+            if "qwen3.5" not in m.name.lower() and "qwen3.6" not in m.name.lower()
+        ]
         if fitting:
             return max(fitting, key=lambda m: m.size_gb)
         # Nothing fits cleanly — return smallest as a fallback (partial offload)
         return min(self.gguf_models, key=lambda m: m.size_gb)
 
 
-def detect_gpus() -> list[GPUInfo]:
+def _detect_nvidia_gpus() -> list[GPUInfo]:
     """Detect NVIDIA GPUs via nvidia-smi."""
     nvidia_smi = shutil.which("nvidia-smi")
     if not nvidia_smi:
         return []
-
     try:
         result = subprocess.run(
-            [
-                nvidia_smi,
-                "--query-gpu=index,name,memory.total",
-                "--format=csv,noheader,nounits",
-            ],
+            [nvidia_smi, "--query-gpu=index,name,memory.total", "--format=csv,noheader,nounits"],
             capture_output=True,
             text=True,
             timeout=10,
         )
         if result.returncode != 0:
-            log.warning("nvidia-smi failed: %s", result.stderr.strip())
             return []
-
         gpus = []
         for line in result.stdout.strip().splitlines():
             parts = [p.strip() for p in line.split(",")]
             if len(parts) >= 3:
-                gpus.append(
-                    GPUInfo(
-                        index=int(parts[0]),
-                        name=parts[1],
-                        vram_mb=int(parts[2]),
-                    )
-                )
+                gpus.append(GPUInfo(index=int(parts[0]), name=parts[1], vram_mb=int(parts[2])))
         return gpus
     except (subprocess.TimeoutExpired, FileNotFoundError, ValueError) as exc:
-        log.warning("GPU detection failed: %s", exc)
+        log.warning("NVIDIA GPU detection failed: %s", exc)
         return []
+
+
+def _detect_vulkan_gpus() -> list[GPUInfo]:
+    """Detect Vulkan-capable GPUs (covers AMD, Intel, and NVIDIA on non-CUDA builds)."""
+    # llama-server --list-devices emits lines like:
+    #   Vulkan0: AMD Radeon RX 7900 XT (RADV NAVI31) (20480 MiB, 19058 MiB free)
+    llama_server = shutil.which("llama-server")
+    if not llama_server:
+        return []
+    try:
+        result = subprocess.run(
+            [llama_server, "--list-devices"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env={**os.environ, "LD_LIBRARY_PATH": str(Path.home() / ".local" / "lib")},
+        )
+        gpus = []
+        for line in (result.stdout + result.stderr).splitlines():
+            line = line.strip()
+            if not line.startswith("Vulkan"):
+                continue
+            # Extract MiB total: first number before " MiB"
+            import re
+            m = re.search(r"\((\d+)\s+MiB", line)
+            if not m:
+                continue
+            vram_mb = int(m.group(1))
+            # Extract name between ": " and " ("
+            name_m = re.match(r"Vulkan(\d+):\s+(.+?)\s+\(", line)
+            idx = int(name_m.group(1)) if name_m else len(gpus)
+            name = name_m.group(2) if name_m else "Vulkan GPU"
+            gpus.append(GPUInfo(index=idx, name=name, vram_mb=vram_mb))
+        return gpus
+    except (subprocess.TimeoutExpired, FileNotFoundError, ValueError) as exc:
+        log.warning("Vulkan GPU detection failed: %s", exc)
+        return []
+
+
+def detect_gpus() -> list[GPUInfo]:
+    """Detect GPUs — tries NVIDIA first, falls back to Vulkan (AMD/Intel)."""
+    gpus = _detect_nvidia_gpus()
+    if gpus:
+        return gpus
+    return _detect_vulkan_gpus()
 
 
 def find_llama_server() -> str | None:
@@ -150,8 +191,9 @@ def scan_gguf_models(extra_dirs: list[str] | None = None) -> list[GGUFModel]:
     for base_dir in search_dirs:
         if not base_dir.exists():
             continue
-        # Search up to 3 levels deep to avoid traversing entire filesystems
-        for depth_pattern in ["*.gguf", "*/*.gguf", "*/*/*.gguf"]:
+        # Search a few levels deep to catch mounted model directories without
+        # traversing entire filesystems.
+        for depth_pattern in ["*.gguf", "*/*.gguf", "*/*/*.gguf", "*/*/*/*.gguf"]:
             for match in glob.glob(str(base_dir / depth_pattern)):
                 real = os.path.realpath(match)
                 if real in seen:
