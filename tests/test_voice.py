@@ -93,24 +93,44 @@ class TestVoiceOutput:
         result = check_tts_deps()
         assert result is None or "speech output" in result
 
-    def test_speak_text_uses_popen(self, monkeypatch):
+    def test_speak_text_macos_uses_say(self, monkeypatch):
         from towel.cli import voice as voice_mod
 
         procs = []
         monkeypatch.setattr(voice_mod.platform, "system", lambda: "Darwin")
         monkeypatch.setattr(voice_mod.shutil, "which", lambda _: "/usr/bin/say")
-
-        def fake_popen(cmd):
-            proc = _FakeProc()
-            procs.append(cmd)
-            return proc
-
-        monkeypatch.setattr(voice_mod.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(voice_mod.subprocess, "Popen", lambda cmd: (procs.append(cmd), _FakeProc())[1])
 
         err = voice_mod.speak_text(" hello   there ", voice="Samantha", rate=180)
 
         assert err is None
         assert procs == [["say", "-v", "Samantha", "-r", "180", "hello there"]]
+
+    def test_speak_text_linux_uses_espeak_ng(self, monkeypatch):
+        from towel.cli import voice as voice_mod
+
+        procs = []
+        monkeypatch.setattr(voice_mod.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(voice_mod.shutil, "which", lambda b: "/usr/bin/espeak-ng" if b == "espeak-ng" else None)
+        monkeypatch.setattr(voice_mod.subprocess, "Popen", lambda cmd: (procs.append(cmd), _FakeProc())[1])
+
+        err = voice_mod.speak_text("hello there", voice="en-us", rate=160)
+
+        assert err is None
+        assert procs == [["espeak-ng", "-s", "160", "-v", "en-us", "hello there"]]
+
+    def test_speak_text_linux_falls_back_to_espeak(self, monkeypatch):
+        from towel.cli import voice as voice_mod
+
+        procs = []
+        monkeypatch.setattr(voice_mod.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(voice_mod.shutil, "which", lambda b: "/usr/bin/espeak" if b == "espeak" else None)
+        monkeypatch.setattr(voice_mod.subprocess, "Popen", lambda cmd: (procs.append(cmd), _FakeProc())[1])
+
+        err = voice_mod.speak_text("hello")
+
+        assert err is None
+        assert procs[0][0] == "espeak"
 
     def test_speak_text_ctrl_c_terminates_proc(self, monkeypatch):
         from towel.cli import voice as voice_mod
@@ -138,15 +158,27 @@ class TestVoiceOutput:
 
         assert spoken and "##" not in spoken[0] and "**" not in spoken[0] and "`" not in spoken[0]
 
-    def test_speak_text_reports_missing_tts(self, monkeypatch):
+    def test_speak_text_reports_missing_tts_on_unsupported_platform(self, monkeypatch):
         from towel.cli import voice as voice_mod
 
-        monkeypatch.setattr(voice_mod.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(voice_mod.platform, "system", lambda: "SunOS")
+        monkeypatch.setattr(voice_mod.shutil, "which", lambda _: None)
 
         err = voice_mod.speak_text("hello")
 
         assert err is not None
         assert "speech output" in err
+
+    def test_speak_text_reports_missing_espeak_on_linux(self, monkeypatch):
+        from towel.cli import voice as voice_mod
+
+        monkeypatch.setattr(voice_mod.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(voice_mod.shutil, "which", lambda _: None)
+
+        err = voice_mod.speak_text("hello")
+
+        assert err is not None
+        assert "espeak-ng" in err
 
 
 class TestVoiceCLI:

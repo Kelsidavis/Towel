@@ -141,27 +141,61 @@ def strip_for_speech(text: str) -> str:
     return " ".join(text.split())
 
 
+def _tts_engine() -> tuple[str, str] | None:
+    """Return (engine_name, binary_path) for the first available TTS engine."""
+    system = platform.system()
+    if system == "Darwin":
+        path = shutil.which("say")
+        if path:
+            return ("say", path)
+    elif system == "Linux":
+        for binary in ("espeak-ng", "espeak"):
+            path = shutil.which(binary)
+            if path:
+                return (binary, path)
+    return None
+
+
 def check_tts_deps() -> str | None:
-    """Check if local speech output is available."""
-    if platform.system() == "Darwin" and shutil.which("say"):
+    """Check if local speech output is available. Returns error message or None."""
+    if _tts_engine():
         return None
-    return "speech output requires macOS 'say' on this build"
+    system = platform.system()
+    if system == "Darwin":
+        return "speech output requires macOS 'say'"
+    if system == "Linux":
+        return "speech output requires espeak-ng: sudo apt install espeak-ng"
+    return f"speech output not supported on {system}"
+
+
+def _build_tts_cmd(engine: str, text: str, voice: str | None, rate: int | None) -> list[str]:
+    """Build the TTS subprocess command for the given engine."""
+    if engine == "say":
+        cmd = ["say"]
+        if voice:
+            cmd.extend(["-v", voice])
+        if rate:
+            cmd.extend(["-r", str(rate)])  # words per minute
+    else:  # espeak-ng / espeak
+        cmd = [engine]
+        if rate:
+            cmd.extend(["-s", str(rate)])  # words per minute
+        if voice:
+            cmd.extend(["-v", voice])
+    cmd.append(text)
+    return cmd
 
 
 def speak_text(text: str, *, voice: str | None = None, rate: int | None = None) -> str | None:
     """Speak text with the local OS TTS engine. Ctrl+C skips to next turn."""
-    err = check_tts_deps()
-    if err:
-        return err
+    engine_info = _tts_engine()
+    if engine_info is None:
+        return check_tts_deps()
+    engine, _path = engine_info
     clean = strip_for_speech(text)
     if not clean:
         return None
-    cmd = ["say"]
-    if voice:
-        cmd.extend(["-v", voice])
-    if rate:
-        cmd.extend(["-r", str(rate)])
-    cmd.append(clean)
+    cmd = _build_tts_cmd(engine, clean, voice, rate)
     try:
         proc = subprocess.Popen(cmd)
         try:
