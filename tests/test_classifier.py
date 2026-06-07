@@ -105,6 +105,22 @@ class TestExistingTaskTypes:
     def test_test_run_keyword(self):
         assert classify_task_type("run the test suite please") == TaskType.TEST_RUN
 
+    def test_polite_action_requests_do_not_route_as_chat(self):
+        cases = {
+            "can you run the tests?": TaskType.TEST_RUN,
+            "could you add tests for the parser": TaskType.TEST_GEN,
+            "would you fix the dispatcher bug": TaskType.REFACTOR,
+            "please update the README": TaskType.GENERATE,
+            "can you create a file for this": TaskType.GENERATE,
+        }
+        for msg, expected in cases.items():
+            assert classify_task_type(msg) == expected, msg
+            assert classify_message_intent(msg) != "chat", msg
+
+    def test_polite_help_request_stays_chat(self):
+        assert classify_task_type("can you help") == TaskType.CHAT
+        assert classify_message_intent("can you help") == "chat"
+
     def test_git_keyword(self):
         assert classify_task_type("git commit and push the changes") == TaskType.GIT_OPS
 

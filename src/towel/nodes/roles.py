@@ -134,6 +134,37 @@ _LARGE_MODEL_GB = 4.0      # 4 GB+ on disk = likely 7B+ params
 _SMALL_MODEL_GB = 2.0      # <2 GB on disk = likely ≤3B params
 
 
+_POLITE_REQUEST_PREFIXES = (
+    "can you ",
+    "could you ",
+    "would you ",
+    "will you ",
+    "please ",
+    "pls ",
+)
+
+
+def _strip_polite_request_prefix(text: str) -> str:
+    """Remove conversational wrappers that hide the actual task verb.
+
+    Without this, short prompts like "can you add tests?" hit the
+    trivial yes/no chat heuristic before task matching, so the request
+    routes to the no-tool prose path and the model can only say "sure".
+    """
+    stripped = text.strip().lower()
+    changed = True
+    while changed:
+        changed = False
+        for prefix in _POLITE_REQUEST_PREFIXES:
+            if stripped.startswith(prefix):
+                stripped = stripped[len(prefix):].strip()
+                changed = True
+                break
+    if stripped.endswith(" please"):
+        stripped = stripped[:-7].strip()
+    return stripped
+
+
 def assign_roles(capabilities: dict[str, Any]) -> list[NodeRole]:
     """Assign roles to a node based on its reported capabilities.
 
@@ -497,6 +528,12 @@ def classify_message_intent(text: str) -> str | None:
     Catches the easy cases without burning an inference call.
     """
     stripped = text.strip().lower()
+    task_text = _strip_polite_request_prefix(stripped)
+    if task_text != stripped:
+        task_type = classify_task_type(task_text)
+        if task_type is not None and task_type != TaskType.CHAT:
+            reqs = TASK_REQUIREMENTS.get(task_type, {})
+            return "tool" if reqs.get("needs_tools") else "task"
 
     # Obvious greetings / acknowledgements
     if len(stripped) < 25:
@@ -558,6 +595,11 @@ def classify_task_type(text: str) -> TaskType | None:
     classification is needed. Cheap — no inference cost.
     """
     stripped = text.strip().lower()
+    task_text = _strip_polite_request_prefix(stripped)
+    if task_text != stripped:
+        task_type = classify_task_type(task_text)
+        if task_type is not None and task_type != TaskType.CHAT:
+            return task_type
 
     # Chat — greetings, short acks
     if len(stripped) < 25:
@@ -679,7 +721,7 @@ def classify_task_type(text: str) -> TaskType | None:
             return TaskType.CODE_REVIEW
 
     # Refactor
-    for sig in ("refactor", "clean up", "restructure", "reorganize"):
+    for sig in ("refactor", "fix ", "clean up", "restructure", "reorganize"):
         if sig in stripped:
             return TaskType.REFACTOR
 
@@ -704,8 +746,11 @@ def classify_task_type(text: str) -> TaskType | None:
             return TaskType.PLAN
 
     # Draft / docs
+    doc_edit_starts = ("update ", "modify ", "change ", "add ", "create ", "write ")
     for sig in ("write a doc", "draft ", "write docs", "document ", "readme", "spec "):
         if sig in stripped:
+            if sig == "readme" and stripped.startswith(doc_edit_starts):
+                continue
             return TaskType.DRAFT
 
     # Translate
@@ -719,7 +764,10 @@ def classify_task_type(text: str) -> TaskType | None:
             return TaskType.ANALYZE
 
     # Generate (broad — code generation)
-    for sig in ("write ", "create ", "implement ", "add ", "generate ", "make a ", "build a "):
+    for sig in (
+        "write ", "create ", "implement ", "add ", "generate ",
+        "update ", "modify ", "change ", "make a ", "build a ",
+    ):
         if stripped.startswith(sig):
             return TaskType.GENERATE
 
