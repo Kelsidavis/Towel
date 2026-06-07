@@ -18,6 +18,8 @@ class ModelConfig(BaseModel):
     name: str = "Eldadalbajob/Huihui-Qwen3-Next-80B-A3B-Instruct-abliterated-mlx-3Bit"
     max_tokens: int = 4096
     context_window: int = 262144
+    auto_context: bool = True
+    min_context_window: int = 32768
     temperature: float = 0.7
     top_p: float = 0.95
     turboquant: bool = True

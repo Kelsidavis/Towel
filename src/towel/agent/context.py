@@ -98,6 +98,48 @@ def estimate_output_reserve(
     return max(256, min(configured_max_tokens, reserve))
 
 
+def select_context_window(
+    system_content: str,
+    messages: list[dict[str, str]],
+    configured_context_window: int,
+    min_context_window: int,
+    max_output_tokens: int,
+    token_counter: Callable[[str], int] | None = None,
+) -> int:
+    """Pick the smallest context tier that can hold the current prompt.
+
+    ``configured_context_window`` is treated as the ceiling. The runtime can keep
+    a large maximum configured for paste-heavy turns, while ordinary short turns
+    use a smaller effective budget for fitting/compaction decisions.
+    """
+    max_window = max(1, int(configured_context_window or 1))
+    min_window = max(1, min(int(min_context_window or max_window), max_window))
+    output_reserve = max(0, int(max_output_tokens or 0))
+
+    count = token_counter or count_tokens_fallback
+    template_overhead_per_msg = 4
+    prompt_tokens = count(system_content) + template_overhead_per_msg
+    prompt_tokens += sum(
+        count(m.get("content", "")) + template_overhead_per_msg for m in messages
+    )
+    # Leave breathing room for chat-template overhead, tool wrappers, and a bit of
+    # follow-up context before jumping to the next tier.
+    needed = prompt_tokens + output_reserve + 2048
+
+    tiers = (8192, 16384, 32768, 65536, 131072, 262144)
+    candidates = [t for t in tiers if min_window <= t <= max_window]
+    if min_window not in candidates:
+        candidates.insert(0, min_window)
+    if max_window not in candidates:
+        candidates.append(max_window)
+    candidates = sorted(set(candidates))
+
+    for tier in candidates:
+        if needed <= tier:
+            return tier
+    return max_window
+
+
 def _latest_user_index(messages: list[dict[str, str]]) -> int | None:
     for i in range(len(messages) - 1, -1, -1):
         if messages[i]["role"] == "user":

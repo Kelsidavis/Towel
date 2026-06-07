@@ -6,6 +6,7 @@ from towel.agent.context import (
     estimate_output_reserve,
     fit_messages,
     maybe_compact_conversation,
+    select_context_window,
 )
 from towel.agent.conversation import Conversation, Role
 
@@ -59,6 +60,41 @@ class TestOutputReserve:
             token_counter=word_counter,
         )
         assert reserve == 700
+
+
+class TestSelectContextWindow:
+    def test_short_turn_uses_minimum_window(self):
+        chosen = select_context_window(
+            system_content="system",
+            messages=[_msg("user", "hi")],
+            configured_context_window=262144,
+            min_context_window=32768,
+            max_output_tokens=512,
+            token_counter=word_counter,
+        )
+        assert chosen == 32768
+
+    def test_expands_to_smallest_fitting_tier(self):
+        chosen = select_context_window(
+            system_content="system",
+            messages=[_msg("user", "word " * 40000)],
+            configured_context_window=262144,
+            min_context_window=32768,
+            max_output_tokens=4096,
+            token_counter=word_counter,
+        )
+        assert chosen == 65536
+
+    def test_never_exceeds_configured_ceiling(self):
+        chosen = select_context_window(
+            system_content="system",
+            messages=[_msg("user", "word " * 200000)],
+            configured_context_window=65536,
+            min_context_window=32768,
+            max_output_tokens=4096,
+            token_counter=word_counter,
+        )
+        assert chosen == 65536
 
 
 class TestFitMessages:

@@ -15,7 +15,11 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
-from towel.agent.context import estimate_output_reserve, maybe_compact_conversation
+from towel.agent.context import (
+    estimate_output_reserve,
+    maybe_compact_conversation,
+    select_context_window,
+)
 from towel.agent.conversation import Conversation, Message, Role
 from towel.agent.events import AgentEvent
 from towel.agent.instance_lock import acquire_runtime_lock
@@ -305,13 +309,23 @@ class ClaudeCodeRuntime:
         query = conversation.latest_user_query()
         from towel.agent.capture import run_capture_hooks
         run_capture_hooks(query, memory=self.memory, config=self.config, runtime=self)
+        system_content = self._build_system_prompt(
+            include_tools_section=not self._native_tools_supported,
+            query=query,
+        )
+        effective_context_window = self.config.model.context_window
+        if getattr(self.config.model, "auto_context", True):
+            effective_context_window = select_context_window(
+                system_content,
+                existing_messages,
+                configured_context_window=self.config.model.context_window,
+                min_context_window=getattr(self.config.model, "min_context_window", 32768),
+                max_output_tokens=output_reserve,
+            )
         maybe_compact_conversation(
             conversation,
-            system_content=self._build_system_prompt(
-                include_tools_section=not self._native_tools_supported,
-                query=query,
-            ),
-            context_window=self.config.model.context_window,
+            system_content=system_content,
+            context_window=effective_context_window,
             max_output_tokens=output_reserve,
         )
         messages: list[dict[str, str]] = []

@@ -11,7 +11,12 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
-from towel.agent.context import estimate_output_reserve, fit_messages, maybe_compact_conversation
+from towel.agent.context import (
+    estimate_output_reserve,
+    fit_messages,
+    maybe_compact_conversation,
+    select_context_window,
+)
 from towel.agent.conversation import Conversation, Message, Role
 from towel.agent.events import AgentEvent
 from towel.agent.instance_lock import acquire_runtime_lock
@@ -23,6 +28,10 @@ from towel.skills.registry import SkillRegistry
 log = logging.getLogger("towel.agent")
 
 MAX_TOOL_ITERATIONS = 999
+EMPTY_TEXT_FALLBACK = (
+    "I wasn't able to put together a response that turn — try rephrasing "
+    "or asking again."
+)
 
 # Loop-detection threshold for the agent's tool-call loop. When the
 # same (name, args) fingerprint appears in this many consecutive
@@ -414,10 +423,15 @@ class AgentRuntime:
 
             if not tool_calls:
                 # No tool calls — return the final text response
+                text = result.text
+                metadata: dict[str, Any] = {"tps": last_tps, "tokens": total_tokens}
+                if not text.strip():
+                    text = EMPTY_TEXT_FALLBACK
+                    metadata["empty_text_fallback"] = True
                 return Message(
                     role=Role.ASSISTANT,
-                    content=result.text,
-                    metadata={"tps": last_tps, "tokens": total_tokens},
+                    content=text,
+                    metadata=metadata,
                 )
 
             # Add the assistant's message (with tool calls stripped) to conversation
@@ -536,10 +550,15 @@ class AgentRuntime:
             tool_calls, remaining_text = parse_tool_calls(full_text)
 
             if not tool_calls:
-                conversation.add(Role.ASSISTANT, full_text)
+                text = full_text
+                metadata: dict[str, Any] = {"tps": tps, "tokens": total_tokens}
+                if not text.strip():
+                    text = EMPTY_TEXT_FALLBACK
+                    metadata["empty_text_fallback"] = True
+                conversation.add(Role.ASSISTANT, text)
                 yield AgentEvent.complete(
-                    full_text,
-                    metadata={"tps": tps, "tokens": total_tokens},
+                    text,
+                    metadata=metadata,
                 )
                 return
 
@@ -808,10 +827,20 @@ class AgentRuntime:
             configured_max_tokens=self.config.model.max_tokens,
             token_counter=self._token_count,
         )
+        effective_context_window = self.config.model.context_window
+        if getattr(self.config.model, "auto_context", True):
+            effective_context_window = select_context_window(
+                system_content,
+                all_messages,
+                configured_context_window=self.config.model.context_window,
+                min_context_window=getattr(self.config.model, "min_context_window", 32768),
+                max_output_tokens=output_reserve,
+                token_counter=self._token_count,
+            )
         maybe_compact_conversation(
             conversation,
             system_content=system_content,
-            context_window=self.config.model.context_window,
+            context_window=effective_context_window,
             max_output_tokens=output_reserve,
             token_counter=self._token_count,
         )
@@ -823,7 +852,7 @@ class AgentRuntime:
         fitted_messages, budget = fit_messages(
             system_content=system_content,
             messages=all_messages,
-            context_window=self.config.model.context_window,
+            context_window=effective_context_window,
             max_output_tokens=output_reserve,
             token_counter=self._token_count,
             pinned_indices=pinned_indices if pinned_indices else None,

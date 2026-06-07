@@ -15,7 +15,11 @@ from typing import Any
 
 import httpx
 
-from towel.agent.context import estimate_output_reserve, maybe_compact_conversation
+from towel.agent.context import (
+    estimate_output_reserve,
+    maybe_compact_conversation,
+    select_context_window,
+)
 from towel.agent.conversation import Conversation, Message, Role
 from towel.agent.events import AgentEvent
 from towel.agent.runtime import format_tool_feedback, tool_result_is_error
@@ -235,10 +239,19 @@ class OllamaRuntime:
             existing_messages,
             configured_max_tokens=self.config.model.max_tokens,
         )
+        effective_context_window = self.config.model.context_window
+        if getattr(self.config.model, "auto_context", True):
+            effective_context_window = select_context_window(
+                system_content,
+                existing_messages,
+                configured_context_window=self.config.model.context_window,
+                min_context_window=getattr(self.config.model, "min_context_window", 32768),
+                max_output_tokens=output_reserve,
+            )
         maybe_compact_conversation(
             conversation,
             system_content=system_content,
-            context_window=self.config.model.context_window,
+            context_window=effective_context_window,
             max_output_tokens=output_reserve,
         )
         messages: list[dict[str, str]] = []

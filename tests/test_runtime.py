@@ -2,10 +2,13 @@
 
 from towel.agent.runtime import (
     AgentRuntime,
+    EMPTY_TEXT_FALLBACK,
+    GenerationResult,
     format_tool_feedback,
     mlx_tokenizer_config,
     tool_result_is_error,
 )
+from towel.agent.conversation import Conversation, Role
 from towel.config import TowelConfig
 from towel.skills.base import Skill, ToolDefinition
 from towel.skills.registry import SkillRegistry
@@ -132,6 +135,28 @@ class TestSystemPrompt:
         assert "prefer emitting just the tool call" in system
         assert "one corrected retry" in system
 
+    def test_auto_context_uses_minimum_for_short_turn(self, monkeypatch):
+        config = TowelConfig(identity="You are Towel.")
+        config.model.context_window = 262144
+        config.model.min_context_window = 32768
+        config.model.auto_context = True
+        runtime = AgentRuntime(config)
+        conv = __import__("towel.agent.conversation", fromlist=["Conversation"]).Conversation()
+        conv.add(__import__("towel.agent.conversation", fromlist=["Role"]).Role.USER, "hi")
+
+        captured = {}
+
+        def fake_fit(*, context_window, **kwargs):
+            captured["context_window"] = context_window
+            return kwargs["messages"], __import__(
+                "towel.agent.context", fromlist=["ContextBudget"]
+            ).ContextBudget(context_window=context_window, max_output_tokens=512)
+
+        monkeypatch.setattr("towel.agent.runtime.fit_messages", fake_fit)
+        runtime._build_prompt(conv)
+
+        assert captured["context_window"] == 32768
+
 
 class _ReadFileSkill(Skill):
     @property
@@ -230,6 +255,49 @@ class TestNativeToolsChannel:
 
         runtime._tokenizer = RaisesTokenizer()
         assert runtime._detect_native_tools_support() is False
+
+
+class TestEmptyTextFallback:
+    def test_step_replaces_empty_final_text(self):
+        import asyncio
+
+        config = TowelConfig(identity="You are Towel.")
+        runtime = AgentRuntime(config)
+
+        async def fake_generate(_conversation):
+            return GenerationResult(text="", total_tokens=0)
+
+        runtime.generate = fake_generate
+        conv = Conversation()
+        conv.add(Role.USER, "hello")
+
+        msg = asyncio.run(runtime.step(conv))
+
+        assert msg.content == EMPTY_TEXT_FALLBACK
+        assert msg.metadata["empty_text_fallback"] is True
+
+    def test_step_streaming_replaces_empty_final_text(self):
+        import asyncio
+
+        config = TowelConfig(identity="You are Towel.")
+        runtime = AgentRuntime(config)
+
+        async def fake_stream(_conversation):
+            if False:
+                yield ""
+
+        runtime.stream = fake_stream
+        conv = Conversation()
+        conv.add(Role.USER, "hello")
+
+        async def collect():
+            return [event async for event in runtime.step_streaming(conv)]
+
+        events = asyncio.run(collect())
+
+        assert events[-1].type.value == "response_complete"
+        assert events[-1].data["content"] == EMPTY_TEXT_FALLBACK
+        assert conv.messages[-1].content == EMPTY_TEXT_FALLBACK
 
 
 class TestRegistrySuggestions:
