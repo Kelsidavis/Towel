@@ -12,6 +12,9 @@ Usage:
 from __future__ import annotations
 
 import logging
+import platform
+import shutil
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -115,3 +118,31 @@ def transcribe_bytes(wav_bytes: bytes) -> str:
         return transcribe_audio(tmp)
     finally:
         Path(tmp).unlink(missing_ok=True)
+
+
+def check_tts_deps() -> str | None:
+    """Check if local speech output is available."""
+    if platform.system() == "Darwin" and shutil.which("say"):
+        return None
+    return "speech output requires macOS 'say' on this build"
+
+
+def speak_text(text: str, *, voice: str | None = None, rate: int | None = None) -> str | None:
+    """Speak text with the local OS TTS engine. Returns error string or None."""
+    err = check_tts_deps()
+    if err:
+        return err
+    clean = " ".join((text or "").split())
+    if not clean:
+        return None
+    cmd = ["say"]
+    if voice:
+        cmd.extend(["-v", voice])
+    if rate:
+        cmd.extend(["-r", str(rate)])
+    cmd.append(clean)
+    try:
+        subprocess.run(cmd, check=True)
+    except Exception as exc:
+        return f"Speech output failed: {exc}"
+    return None

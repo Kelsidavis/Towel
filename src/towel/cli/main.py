@@ -4814,7 +4814,7 @@ def summarize(target: str | None, bullets: bool, length: str, raw: bool) -> None
     asyncio.run(_run())
 
 
-def _oneshot(config, prompt: str, raw: bool = False) -> None:
+def _oneshot(config, prompt: str, raw: bool = False) -> str:
     """Run a one-shot prompt through the agent."""
     from towel.agent.conversation import Conversation, Role
     from towel.agent.events import EventType
@@ -4831,20 +4831,27 @@ def _oneshot(config, prompt: str, raw: bool = False) -> None:
 
     async def _run():
         if not await _load_model_with_friendly_error(agent_rt):
-            return
+            return ""
         if raw:
             resp = await agent_rt.step(conv)
             print(resp.content)
+            return resp.content
         else:
+            chunks: list[str] = []
             async for event in agent_rt.step_streaming(conv):
                 if event.type == EventType.TOKEN:
-                    print(event.data["content"], end="", flush=True)
+                    chunk = event.data["content"]
+                    chunks.append(chunk)
+                    print(chunk, end="", flush=True)
                 elif event.type == EventType.RESPONSE_COMPLETE:
+                    if not chunks:
+                        chunks.append(event.data.get("content", ""))
                     print()
+            return "".join(chunks)
 
     import asyncio as _aio
 
-    _aio.run(_run())
+    return _aio.run(_run())
 
 
 @cli.command()
@@ -5379,6 +5386,9 @@ def completions(shell: str) -> None:
 
 @cli.command()
 @click.option("--chat", "-c", is_flag=True, help="Continuous voice chat mode")
+@click.option("--speak/--no-speak", default=False, help="Speak Towel's replies aloud")
+@click.option("--voice-name", default=None, help="macOS voice name for speech output")
+@click.option("--rate", default=None, type=int, help="Speech rate for spoken replies")
 @click.option(
     "--file",
     "-f",
@@ -5388,7 +5398,14 @@ def completions(shell: str) -> None:
     help="Transcribe an audio file",
 )
 @click.option("--duration", "-d", default=10.0, help="Max recording duration in seconds")
-def voice(chat: bool, audio_file: str | None, duration: float) -> None:
+def voice(
+    chat: bool,
+    speak: bool,
+    voice_name: str | None,
+    rate: int | None,
+    audio_file: str | None,
+    duration: float,
+) -> None:
     """Talk to Towel with your voice.
 
     \b
@@ -5398,15 +5415,28 @@ def voice(chat: bool, audio_file: str | None, duration: float) -> None:
     Examples:
         towel voice                    Record and transcribe once
         towel voice --chat             Continuous voice conversation
+        towel voice --chat --speak     Continuous voice conversation with spoken replies
         towel voice -f recording.wav   Transcribe a file
         towel voice -d 30              Record up to 30 seconds
     """
-    from towel.cli.voice import check_voice_deps, record_audio, transcribe_audio, transcribe_bytes
+    from towel.cli.voice import (
+        check_tts_deps,
+        check_voice_deps,
+        record_audio,
+        speak_text,
+        transcribe_audio,
+        transcribe_bytes,
+    )
 
     err = check_voice_deps()
     if err:
         console.print(f"[red]{err}[/red]")
         return
+    if speak:
+        tts_err = check_tts_deps()
+        if tts_err:
+            console.print(f"[red]{tts_err}[/red]")
+            return
 
     if audio_file:
         text = transcribe_audio(audio_file)
@@ -5442,7 +5472,11 @@ def voice(chat: bool, audio_file: str | None, duration: float) -> None:
 
             # Send to agent
             console.print("[bold green]towel>[/bold green] ", end="")
-            _oneshot(config, text)
+            reply = _oneshot(config, text)
+            if speak and reply:
+                speech_err = speak_text(reply, voice=voice_name, rate=rate)
+                if speech_err:
+                    console.print(f"[yellow]{speech_err}[/yellow]")
             console.print()
     else:
         wav = record_audio(duration)
