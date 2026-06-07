@@ -257,6 +257,13 @@ class GatewayServer:
         memory_store = getattr(self.agent, "memory", None)
         if isinstance(memory_store, MemoryStore):
             self._cluster_memory = ClusterMemorySync(memory_store, is_controller=True)
+            # Route the memory tool through the cluster sync so agent-driven
+            # remember/forget replicate to peers (incremental mutation +
+            # broadcast forget), not just via the next full snapshot.
+            skills = getattr(self.agent, "skills", None)
+            memory_skill = skills.get_skill("memory") if skills else None
+            if memory_skill is not None and hasattr(memory_skill, "attach_sync"):
+                memory_skill.attach_sync(self._cluster_memory)
 
     async def start(self) -> None:
         """Start the gateway (WebSocket + HTTP), advertise via mDNS."""

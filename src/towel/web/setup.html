@@ -166,6 +166,23 @@
   </section>
 
   <section>
+    <h2>4. Security &mdash; tool gating</h2>
+    <p class="help">
+      Controls whether the model may use dangerous tools (shell, outbound
+      HTTP/webhooks, secret reads, persistence, SSH). Every tool call is
+      always recorded to the audit log; this setting decides what is
+      allowed to <em>run</em>. Use <strong>Enforce</strong> when running
+      abliterated or otherwise untrusted models.
+    </p>
+    <label for="tool-policy">Tool policy</label>
+    <select id="tool-policy">
+      <option value="enforce">Enforce &mdash; block dangerous tools (recommended for untrusted models)</option>
+      <option value="audit">Audit only &mdash; log everything, allow all tools</option>
+    </select>
+    <div class="help" id="tool-policy-help" style="margin-top:8px;"></div>
+  </section>
+
+  <section>
     <div class="actions">
       <button id="save-btn">Save configuration</button>
       <button id="cancel-btn" class="secondary">Cancel</button>
@@ -278,7 +295,21 @@ function loadConfigIntoForm(config) {
   } else {
     $('ollama-model').value = '';
   }
+  const policy = (config.security && config.security.tool_policy) || 'audit';
+  $('tool-policy').value = (policy === 'enforce') ? 'enforce' : 'audit';
+  updateToolPolicyHelp();
   state.selected = config.backend || firstAvailableBackend() || 'mlx';
+}
+
+function updateToolPolicyHelp() {
+  const v = $('tool-policy').value;
+  $('tool-policy-help').innerHTML = (v === 'enforce')
+    ? 'Blocks tools in the <strong>exec, exfil, secret, persist, lateral</strong> '
+      + 'risk tiers. Memory and low-risk tools still run. Allow specific tools '
+      + 'via <code>TOWEL_ALLOW_TOOLS</code> or edit <code>blocked_risks</code> in config.toml.'
+    : '<strong>No enforcement.</strong> All tools run; calls are logged to '
+      + '<code>~/.towel/audit/tool-calls.jsonl</code> for review. A rogue model is '
+      + 'recorded but not stopped.';
 }
 
 function firstAvailableBackend() {
@@ -296,6 +327,7 @@ function gatherForm() {
     ollama_url: $('ollama-url').value || '',
     llama_url: $('llama-url').value || '',
     claude_model: $('claude-model').value || '',
+    tool_policy: $('tool-policy').value || 'audit',
     model_name: '',
   };
   if (backend === 'mlx') out.model_name = $('mlx-model').value;
@@ -359,6 +391,7 @@ async function init() {
 
 $('save-btn').onclick = save;
 $('cancel-btn').onclick = () => window.close();
+$('tool-policy').onchange = updateToolPolicyHelp;
 init();
 </script>
 </body>

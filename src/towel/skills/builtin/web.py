@@ -41,6 +41,12 @@ class WebFetchSkill(Skill):
             return f"Unknown tool: {tool_name}"
 
         url = arguments["url"]
+        # SSRF guard before fetching a model-supplied URL.
+        from towel.netguard import check_url
+
+        blocked = check_url(url)
+        if blocked is not None:
+            return blocked
         method = arguments.get("method", "GET").upper()
 
         headers = {

@@ -54,6 +54,32 @@ class ChannelDefaults(BaseModel):
     enabled: list[str] = Field(default_factory=lambda: ["cli", "webchat"])
 
 
+class SecurityConfig(BaseModel):
+    """Tool-gating policy — protects against a rogue/misaligned model.
+
+    Towel hands the model a broad tool surface (shell, HTTP, secrets,
+    persistence, SSH). This policy is the enforcement point that decides
+    whether a tool may run at all. See ``towel.policy``.
+
+    * ``audit``  — log every tool call but allow all (full visibility,
+      no enforcement). Safe default for trusted/aligned models.
+    * ``enforce`` — refuse tools whose risk tier is in ``blocked_risks``
+      unless named in ``allow_tools``. Recommended when running
+      abliterated or otherwise untrusted models.
+
+    Environment variables (``TOWEL_TOOL_POLICY`` etc.) override these
+    when set, so an operator can lock a deployment down without editing
+    config. Empty/unset env falls back to what's saved here.
+    """
+
+    tool_policy: str = "audit"  # "audit" | "enforce"
+    blocked_risks: list[str] = Field(
+        default_factory=lambda: ["exec", "exfil", "secret", "persist", "lateral"]
+    )
+    allow_tools: list[str] = Field(default_factory=list)
+    deny_tools: list[str] = Field(default_factory=list)
+
+
 # Built-in agent profiles
 DEFAULT_AGENTS: dict[str, dict[str, Any]] = {
     "coder": {
@@ -92,6 +118,7 @@ class TowelConfig(BaseModel):
     model: ModelConfig = Field(default_factory=ModelConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     channels: ChannelDefaults = Field(default_factory=ChannelDefaults)
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
     skills_dirs: list[str] = Field(default_factory=lambda: ["~/.towel/skills", "./skills"])
     identity: str = "You are Towel, a helpful local AI assistant. Don't Panic."
     agents: dict[str, AgentProfile] = Field(default_factory=dict)

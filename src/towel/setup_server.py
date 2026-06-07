@@ -208,6 +208,13 @@ def _apply_form_to_config(config: TowelConfig, form: dict[str, Any]) -> tuple[bo
     # config.model.name alone. For mlx/ollama, persist the user's choice.
     if backend in {"mlx", "ollama"} and model_name:
         config.model.name = model_name
+
+    # Security: tool-gating policy. Only the mode is exposed in the
+    # wizard ("audit" vs "enforce"); the blocked-tier and allow/deny
+    # lists keep their saved/default values unless edited in config.toml.
+    tool_policy = (form.get("tool_policy") or "").strip().lower()
+    if tool_policy in {"audit", "enforce"}:
+        config.security.tool_policy = tool_policy
     return True, None
 
 

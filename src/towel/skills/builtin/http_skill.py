@@ -63,6 +63,15 @@ class HttpSkill(Skill):
         ]
 
     async def execute(self, tool_name: str, arguments: dict[str, Any]) -> Any:
+        # SSRF guard for both request variants before any connection.
+        from towel.netguard import check_url
+
+        url = arguments.get("url")
+        if url is not None:
+            blocked = check_url(url)
+            if blocked is not None:
+                return blocked
+
         match tool_name:
             case "http_request":
                 return await self._request(
