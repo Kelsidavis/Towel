@@ -1447,7 +1447,11 @@ class MemoryStore:
             return ""
 
         lines = [
-            "\n\n## Your Memory\nYou have the following persistent memories from past sessions:\n"
+            "\n\n## Persistent Memory\n"
+            "These are facts remembered from past sessions. Entries under "
+            "`User` describe the human user you are talking to, not the "
+            "assistant. If the user asks for their name or says \"my name\", "
+            "answer from `user_name` when present.\n"
         ]
         by_type: dict[str, list[MemoryEntry]] = {}
         for e in entries:

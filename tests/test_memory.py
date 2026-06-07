@@ -85,16 +85,18 @@ class TestMemoryStore:
         assert store.to_prompt_block() == ""
 
     def test_to_prompt_block_with_entries(self, store):
-        store.remember("name", "Kelsi", memory_type="user")
+        store.remember("user_name", "Kelsi", memory_type="user")
         store.remember("style", "concise", memory_type="preference")
         store.remember("project", "Towel v0.2", memory_type="project")
 
         block = store.to_prompt_block()
-        assert "Your Memory" in block
+        assert "Persistent Memory" in block
         assert "Kelsi" in block
         assert "concise" in block
         assert "Towel v0.2" in block
         assert "remember" in block.lower()
+        assert "human user" in block
+        assert "user_name" in block
 
     def test_to_prompt_block_grouped_by_type(self, store):
         store.remember("a", "1", memory_type="user")
