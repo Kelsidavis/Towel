@@ -252,6 +252,14 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   justify-content:center; font-size:18px; transition:opacity .2s; flex-shrink:0; }
 #send-btn:hover { opacity:.85; }
 #send-btn:disabled { opacity:.3; cursor:not-allowed; }
+.voice-btn { background:var(--bg-input); color:var(--text-dim); border:1px solid var(--border);
+  border-radius:8px; width:42px; height:42px; cursor:pointer; display:flex;
+  align-items:center; justify-content:center; font-size:17px; transition:border-color .2s,color .2s,background .2s;
+  flex-shrink:0; font-family:var(--mono); }
+.voice-btn:hover { border-color:var(--green); color:var(--green); }
+.voice-btn.active { border-color:var(--green); color:var(--green); background:rgba(66,217,131,.08); }
+.voice-btn.listening { border-color:var(--red); color:var(--red); background:rgba(224,85,97,.08); }
+.voice-btn:disabled { opacity:.3; cursor:not-allowed; }
 #stop-btn { background:var(--red); color:#fff; border:none; border-radius:8px;
   width:42px; height:42px; cursor:pointer; display:none; align-items:center;
   justify-content:center; font-size:16px; transition:opacity .2s; flex-shrink:0; }
@@ -521,6 +529,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   <div id="input-area">
     <div id="input-row">
       <textarea id="user-input" placeholder="Message Towel..." rows="1" autofocus></textarea>
+      <button id="mic-btn" class="voice-btn" title="Voice input">mic</button>
+      <button id="speak-btn" class="voice-btn" title="Speak replies">spk</button>
       <button id="send-btn" title="Send (Enter)">&#8593;</button>
       <button id="stop-btn" title="Stop generation (Esc)">&#9632;</button>
     </div>
@@ -533,6 +543,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   const inputEl = document.getElementById('user-input');
   const sendBtn = document.getElementById('send-btn');
   const stopBtn = document.getElementById('stop-btn');
+  const micBtn = document.getElementById('mic-btn');
+  const speakBtn = document.getElementById('speak-btn');
   const statusDot = document.getElementById('status-dot');
   const statusText = document.getElementById('status-text');
   const convListEl = document.getElementById('conv-list');
@@ -572,6 +584,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   let ws = null, isStreaming = false;
   let currentAssistantEl = null, currentContentEl = null;
   let reconnectDelay = 1000, allConversations = [];
+  let recognition = null, isListening = false;
+  let speechEnabled = localStorage.getItem('towel-speech-enabled') === 'true';
   let fleetState = { workers: [], sessions: [], requirements: {}, pins: {}, workerStats: {}, coordinator: null };
 
   // ── Themes ──
@@ -1513,6 +1527,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
           el.textContent = `${msg.metadata.tps.toFixed(1)} tok/s · ${msg.metadata.tokens} tokens`;
           currentAssistantEl?.querySelector('.body')?.appendChild(el);
         }
+        speakReply(stripToolCallMarkup(msg.content || streamingRawText || ''));
         isStreaming=false; currentAssistantEl=null; currentContentEl=null;
         updateUI(); scrollToBottom(); loadConversationList(); break;
       }
@@ -1563,6 +1578,73 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     el.textContent=text.length>300?text.slice(0,300)+'...':text; messagesEl.appendChild(el);
   }
 
+  // ── Voice ──
+  function updateVoiceUI() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    micBtn.disabled = isStreaming || !SpeechRecognition;
+    micBtn.classList.toggle('listening', isListening);
+    micBtn.title = SpeechRecognition
+      ? (isListening ? 'Stop voice input' : 'Voice input')
+      : 'Voice input is not supported by this browser';
+    speakBtn.classList.toggle('active', speechEnabled);
+    speakBtn.title = speechEnabled ? 'Stop speaking replies' : 'Speak replies';
+  }
+
+  function ensureRecognition() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return null;
+    if (recognition) return recognition;
+    recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = navigator.language || 'en-US';
+    let finalText = '';
+    recognition.onstart = function() { isListening = true; updateVoiceUI(); };
+    recognition.onresult = function(event) {
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) finalText += transcript;
+        else interim += transcript;
+      }
+      inputEl.value = (finalText || interim).trim();
+      autoResize();
+    };
+    recognition.onerror = function(event) {
+      isListening = false; updateVoiceUI();
+      if (event.error) inputEl.placeholder = `Voice input: ${event.error}`;
+    };
+    recognition.onend = function() {
+      isListening = false; updateVoiceUI();
+      const text = inputEl.value.trim();
+      finalText = '';
+      if (text && !isStreaming) sendMessage();
+    };
+    return recognition;
+  }
+
+  function toggleMic() {
+    const rec = ensureRecognition();
+    if (!rec) return;
+    if (isListening) rec.stop();
+    else rec.start();
+  }
+
+  function toggleSpeech() {
+    speechEnabled = !speechEnabled;
+    localStorage.setItem('towel-speech-enabled', String(speechEnabled));
+    if (!speechEnabled && window.speechSynthesis) window.speechSynthesis.cancel();
+    updateVoiceUI();
+  }
+
+  function speakReply(text) {
+    if (!speechEnabled || !window.speechSynthesis || !text || !text.trim()) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = navigator.language || 'en-US';
+    window.speechSynthesis.speak(utterance);
+  }
+
   // ── Send ──
   function sendMessage() {
     const text=inputEl.value.trim();
@@ -1580,8 +1662,10 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   function updateUI() {
     const ok=ws&&ws.readyState===WebSocket.OPEN;
     sendBtn.disabled=isStreaming||!ok; inputEl.disabled=isStreaming;
+    micBtn.disabled=isStreaming||!(window.SpeechRecognition || window.webkitSpeechRecognition);
     sendBtn.style.display=isStreaming?'none':'flex';
     stopBtn.classList.toggle('visible',isStreaming);
+    updateVoiceUI();
     if(!isStreaming)inputEl.focus();
   }
   function scrollToBottom(){messagesEl.scrollTop=messagesEl.scrollHeight;}
@@ -2051,6 +2135,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   // ── Bind ──
   sendBtn.addEventListener('click',sendMessage);
   stopBtn.addEventListener('click',stopGeneration);
+  micBtn.addEventListener('click',toggleMic);
+  speakBtn.addEventListener('click',toggleSpeech);
   themeBtn.addEventListener('click',cycleTheme);
   clearAllBtn.addEventListener('click',clearAllConversations);
   tbFleet.addEventListener('click',openFleetPanel);
@@ -3064,7 +3150,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   });
 
   // ── Init ──
-  saveSession(); connect(); updateUI();
+  saveSession(); connect(); updateVoiceUI(); updateUI();
 })();
 </script>
 </body>
