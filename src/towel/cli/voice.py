@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import platform
+import re
 import shutil
 import subprocess
 import tempfile
@@ -23,6 +24,8 @@ from rich.console import Console
 
 log = logging.getLogger("towel.cli.voice")
 console = Console()
+
+DEFAULT_WHISPER_MODEL = "mlx-community/whisper-small"
 
 
 def check_voice_deps() -> str | None:
@@ -44,23 +47,22 @@ def record_audio(duration: float = 10.0, sample_rate: int = 16000) -> bytes | st
         import numpy as np
         import sounddevice as sd
 
-        console.print(f"[green]Listening...[/green] (up to {duration:.0f}s, press Ctrl+C to stop)")
+        console.print(f"[green]Listening...[/green] (up to {duration:.0f}s, press Ctrl+C to stop early)")
 
+        # Start non-blocking so KeyboardInterrupt during wait() preserves captured audio.
+        audio = sd.rec(
+            int(duration * sample_rate),
+            samplerate=sample_rate,
+            channels=1,
+            dtype="int16",
+        )
         try:
-            audio = sd.rec(
-                int(duration * sample_rate),
-                samplerate=sample_rate,
-                channels=1,
-                dtype="int16",
-                blocking=True,
-            )
+            sd.wait()
         except KeyboardInterrupt:
             sd.stop()
-            _frames = sd.get_status().input_underflow
             console.print("[dim]Stopped.[/dim]")
-            audio = sd.rec(0, samplerate=sample_rate, channels=1, dtype="int16")
 
-        # Trim silence from end
+        # Trim trailing silence
         threshold = np.max(np.abs(audio)) * 0.01
         nonsilent = np.where(np.abs(audio.flatten()) > threshold)[0]
         if len(nonsilent) > 0:
@@ -81,7 +83,7 @@ def record_audio(duration: float = 10.0, sample_rate: int = 16000) -> bytes | st
         return f"Recording failed: {e}"
 
 
-def transcribe_audio(audio_path: str) -> str:
+def transcribe_audio(audio_path: str, *, model: str = DEFAULT_WHISPER_MODEL) -> str:
     """Transcribe an audio file using mlx-whisper."""
     try:
         import mlx_whisper
@@ -89,10 +91,7 @@ def transcribe_audio(audio_path: str) -> str:
         console.print("[dim]Transcribing...[/dim]")
         start = time.perf_counter()
 
-        result = mlx_whisper.transcribe(
-            audio_path,
-            path_or_hf_repo="mlx-community/whisper-small",
-        )
+        result = mlx_whisper.transcribe(audio_path, path_or_hf_repo=model)
 
         elapsed = time.perf_counter() - start
         text = result.get("text", "").strip()
@@ -109,15 +108,37 @@ def transcribe_audio(audio_path: str) -> str:
         return f"Transcription failed: {e}"
 
 
-def transcribe_bytes(wav_bytes: bytes) -> str:
+def transcribe_bytes(wav_bytes: bytes, *, model: str = DEFAULT_WHISPER_MODEL) -> str:
     """Transcribe WAV bytes by writing to a temp file."""
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         f.write(wav_bytes)
         tmp = f.name
     try:
-        return transcribe_audio(tmp)
+        return transcribe_audio(tmp, model=model)
     finally:
         Path(tmp).unlink(missing_ok=True)
+
+
+def strip_for_speech(text: str) -> str:
+    """Remove markdown formatting that sounds bad when spoken by TTS."""
+    # Fenced code blocks → "code block"
+    text = re.sub(r"```[^`]*```", "code block", text, flags=re.DOTALL)
+    # Inline code → bare text
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+    # Headers
+    text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
+    # Bold / italic
+    text = re.sub(r"\*{1,3}([^*\n]+)\*{1,3}", r"\1", text)
+    text = re.sub(r"_{1,3}([^_\n]+)_{1,3}", r"\1", text)
+    # List markers
+    text = re.sub(r"^\s*[-*+]\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*\d+\.\s+", "", text, flags=re.MULTILINE)
+    # URLs
+    text = re.sub(r"https?://\S+", "link", text)
+    # Consolidate whitespace
+    text = re.sub(r"\n{2,}", ". ", text)
+    text = re.sub(r"\n", " ", text)
+    return " ".join(text.split())
 
 
 def check_tts_deps() -> str | None:
@@ -128,11 +149,11 @@ def check_tts_deps() -> str | None:
 
 
 def speak_text(text: str, *, voice: str | None = None, rate: int | None = None) -> str | None:
-    """Speak text with the local OS TTS engine. Returns error string or None."""
+    """Speak text with the local OS TTS engine. Ctrl+C skips to next turn."""
     err = check_tts_deps()
     if err:
         return err
-    clean = " ".join((text or "").split())
+    clean = strip_for_speech(text)
     if not clean:
         return None
     cmd = ["say"]
@@ -142,7 +163,12 @@ def speak_text(text: str, *, voice: str | None = None, rate: int | None = None) 
         cmd.extend(["-r", str(rate)])
     cmd.append(clean)
     try:
-        subprocess.run(cmd, check=True)
+        proc = subprocess.Popen(cmd)
+        try:
+            proc.wait()
+        except KeyboardInterrupt:
+            proc.terminate()
+            proc.wait()
     except Exception as exc:
         return f"Speech output failed: {exc}"
     return None

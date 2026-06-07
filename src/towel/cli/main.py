@@ -5398,6 +5398,12 @@ def completions(shell: str) -> None:
     help="Transcribe an audio file",
 )
 @click.option("--duration", "-d", default=10.0, help="Max recording duration in seconds")
+@click.option(
+    "--model",
+    "-m",
+    default=None,
+    help="Whisper model repo (default: mlx-community/whisper-small)",
+)
 def voice(
     chat: bool,
     speak: bool,
@@ -5405,6 +5411,7 @@ def voice(
     rate: int | None,
     audio_file: str | None,
     duration: float,
+    model: str | None,
 ) -> None:
     """Talk to Towel with your voice.
 
@@ -5413,13 +5420,15 @@ def voice(
 
     \b
     Examples:
-        towel voice                    Record and transcribe once
-        towel voice --chat             Continuous voice conversation
-        towel voice --chat --speak     Continuous voice conversation with spoken replies
-        towel voice -f recording.wav   Transcribe a file
-        towel voice -d 30              Record up to 30 seconds
+        towel voice                          Record and transcribe once
+        towel voice --chat                   Continuous voice conversation
+        towel voice --chat --speak           Voice conversation with spoken replies
+        towel voice -f recording.wav         Transcribe a file
+        towel voice -d 30                    Record up to 30 seconds
+        towel voice -m mlx-community/whisper-large-v3  Use a larger model
     """
     from towel.cli.voice import (
+        DEFAULT_WHISPER_MODEL,
         check_tts_deps,
         check_voice_deps,
         record_audio,
@@ -5427,6 +5436,8 @@ def voice(
         transcribe_audio,
         transcribe_bytes,
     )
+
+    whisper_model = model or DEFAULT_WHISPER_MODEL
 
     err = check_voice_deps()
     if err:
@@ -5439,7 +5450,7 @@ def voice(
             return
 
     if audio_file:
-        text = transcribe_audio(audio_file)
+        text = transcribe_audio(audio_file, model=whisper_model)
         console.print(f"[cyan]{text}[/cyan]")
         return
 
@@ -5447,7 +5458,7 @@ def voice(
         console.print(
             Panel(
                 "[bold green]Voice Chat[/bold green] — speak and get AI responses.\n"
-                "[dim]Press Ctrl+C to stop recording. Say 'exit' or 'quit' to end.[/dim]",
+                "[dim]Press Ctrl+C to stop recording early. Say 'exit' or 'quit' to end.[/dim]",
                 border_style="green",
             )
         )
@@ -5460,7 +5471,7 @@ def voice(
                 console.print(f"[red]{wav}[/red]")
                 break
 
-            text = transcribe_bytes(wav)
+            text = transcribe_bytes(wav, model=whisper_model)
             console.print(f"\n[bold cyan]you>[/bold cyan] {text}")
 
             if text.lower().strip() in ("exit", "quit", "bye", "stop"):
