@@ -75,7 +75,11 @@ class NodeTracker:
         # alone is missing top-level fields like total_vram_mb.
         from towel.nodes.capability import resources_from_worker_caps
 
-        if capabilities.get("resources") or capabilities.get("total_vram_mb") or capabilities.get("gpus"):
+        if (
+            capabilities.get("resources")
+            or capabilities.get("total_vram_mb")
+            or capabilities.get("gpus")
+        ):
             node.resources = resources_from_worker_caps(capabilities)
 
         # Update context window if it changed (model swap, etc)

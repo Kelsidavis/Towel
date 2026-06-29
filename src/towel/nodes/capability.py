@@ -21,7 +21,7 @@ def _safe_int(value: Any, default: int = 0) -> int:
     if isinstance(value, bool):
         # bool is a subtype of int; preserve `or 0` historical behaviour.
         return int(value)
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return int(value)
     return default
 
@@ -51,7 +51,7 @@ def resources_from_worker_caps(caps: dict[str, Any]) -> NodeResources:
         resources_data = {"hostname": caps["hostname"]}
     if "vram_total_mb" not in resources_data:
         top_vram = caps.get("total_vram_mb")
-        if not isinstance(top_vram, (int, float)):
+        if not isinstance(top_vram, int | float):
             # Includes None (the .get default) and any garbage value
             # a worker happens to report. Fall through to the per-GPU
             # sum below.

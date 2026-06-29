@@ -3795,10 +3795,14 @@ class GatewayServer:
                 or getattr(self.config.model, "name", "")
             )
             config_name = getattr(self.config.model, "name", "")
-            backend = getattr(self.config, "backend", "") or getattr(self.config, "_backend", None) or (
-                "claude" if "claude" in config_name.lower() else
-                "ollama" if "ollama" in config_name.lower() else
-                "mlx"
+            backend = (
+                getattr(self.config, "backend", "")
+                or getattr(self.config, "_backend", None)
+                or (
+                    "claude" if "claude" in config_name.lower() else
+                    "ollama" if "ollama" in config_name.lower() else
+                    "mlx"
+                )
             )
             try:
                 from towel import __version__ as _coord_version
@@ -4381,7 +4385,7 @@ class GatewayServer:
             if min_total_ms is not None:
                 entries = [
                     e for e in entries
-                    if isinstance(e.get("total_ms"), (int, float))
+                    if isinstance(e.get("total_ms"), int | float)
                     and e["total_ms"] >= min_total_ms
                 ]
 
@@ -4407,7 +4411,7 @@ class GatewayServer:
                 try:
                     import time as _time
                     oldest_ts = full_history[0].timestamp
-                    if isinstance(oldest_ts, (int, float)):
+                    if isinstance(oldest_ts, int | float):
                         age_s = _time.time() - oldest_ts
                         log_status["oldest_age_seconds"] = max(0, int(age_s))
                 except Exception:
@@ -4464,7 +4468,7 @@ class GatewayServer:
             # alongside the worker's elapsed time.
             log_status["timeout_count"] = sum(
                 1 for d in full_history
-                if isinstance(d.total_ms, (int, float))
+                if isinstance(d.total_ms, int | float)
                 and d.total_ms >= wi_timeout_ms - 1000
             )
             return JSONResponse(
@@ -4841,7 +4845,7 @@ class GatewayServer:
                 for name in names:
                     inventory.setdefault(name, []).append(worker.id)
                 cap = caps.get("max_param_b_est")
-                if isinstance(cap, (int, float)) and cap > max_param_b:
+                if isinstance(cap, int | float) and cap > max_param_b:
                     max_param_b = float(cap)
             entries = [
                 {"name": name, "workers": sorted(workers), "cached_count": len(workers)}
@@ -4936,7 +4940,7 @@ class GatewayServer:
                 disk_free_gb = live.get("disk_free_gb")
                 disk_fits: bool | None
                 if cached or est_download_gb is None or not isinstance(
-                    disk_free_gb, (int, float)
+                    disk_free_gb, int | float
                 ):
                     # Can't tell, or doesn't apply — leave as None so the
                     # client can treat "unknown" differently from a hard no.
@@ -5526,7 +5530,7 @@ class GatewayServer:
                 return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
 
             new_content = body.get("content")
-            if not isinstance(new_content, (str, type(None))):
+            if not isinstance(new_content, str | type(None)):
                 return JSONResponse({"error": "content must be a string"}, status_code=400)
             # Explicit empty/whitespace content is rejected. POST already
             # requires non-empty content; allowing PATCH to clobber to ""
@@ -5786,7 +5790,12 @@ class GatewayServer:
             for field_name, value in (("enabled", enabled), ("draining", draining)):
                 if value is not None and not isinstance(value, bool):
                     return JSONResponse(
-                        {"error": f"{field_name} must be true or false (got {type(value).__name__})"},
+                        {
+                            "error": (
+                                f"{field_name} must be true or false "
+                                f"(got {type(value).__name__})"
+                            )
+                        },
                         status_code=400,
                     )
 
@@ -6929,7 +6938,7 @@ class GatewayServer:
                 reported_tokens_raw = meta.get("tokens", 0)
                 reported_tokens = (
                     int(reported_tokens_raw)
-                    if isinstance(reported_tokens_raw, (int, float))
+                    if isinstance(reported_tokens_raw, int | float)
                     else 0
                 )
                 if reported_tokens == 0 and response.content:
@@ -6941,7 +6950,7 @@ class GatewayServer:
                 # an otherwise-recoverable empty-text fallback. Coerce
                 # to 0 at the boundary.
                 tps_raw = meta.get("tps")
-                tps_val = float(tps_raw) if isinstance(tps_raw, (int, float)) else 0.0
+                tps_val = float(tps_raw) if isinstance(tps_raw, int | float) else 0.0
                 body: dict[str, Any] = {
                     "response": response.content,
                     "session": session_id,
@@ -6949,9 +6958,9 @@ class GatewayServer:
                     "tps": round(tps_val, 1),
                     "worker": meta.get("remote_worker", "coordinator"),
                 }
-                if isinstance(meta.get("ttft_ms"), (int, float)):
+                if isinstance(meta.get("ttft_ms"), int | float):
                     body["ttft_ms"] = round(meta["ttft_ms"], 1)
-                if isinstance(meta.get("total_ms"), (int, float)):
+                if isinstance(meta.get("total_ms"), int | float):
                     body["total_ms"] = round(meta["total_ms"], 1)
                 # End-to-end wall-clock time for the whole request,
                 # including any retry hops and the coordinator's own

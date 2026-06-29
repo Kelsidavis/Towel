@@ -126,7 +126,10 @@ def build_openai_routes(
         # that expect a structured 400.
         if not isinstance(body, dict):
             return JSONResponse(
-                {"error": {"message": "body must be a JSON object", "type": "invalid_request_error"}},
+                {"error": {
+                    "message": "body must be a JSON object",
+                    "type": "invalid_request_error",
+                }},
                 status_code=400,
             )
 
@@ -138,7 +141,10 @@ def build_openai_routes(
         # contract uses a boolean; reject non-bool inputs.
         if not isinstance(stream, bool):
             return JSONResponse(
-                {"error": {"message": "stream must be true or false", "type": "invalid_request_error"}},
+                {"error": {
+                    "message": "stream must be true or false",
+                    "type": "invalid_request_error",
+                }},
                 status_code=400,
             )
         model_name = body.get("model", config.model.name)
@@ -149,7 +155,10 @@ def build_openai_routes(
         # so this field is cosmetic — but cosmetic should still be valid.
         if not isinstance(model_name, str):
             return JSONResponse(
-                {"error": {"message": "model must be a string", "type": "invalid_request_error"}},
+                {"error": {
+                    "message": "model must be a string",
+                    "type": "invalid_request_error",
+                }},
                 status_code=400,
             )
         # Honor OpenAI-standard sampling params. max_tokens is clamped
@@ -165,7 +174,10 @@ def build_openai_routes(
             req_max_tokens = max(1, min(int(req_max_tokens), 4096))
         except (TypeError, ValueError):
             return JSONResponse(
-                {"error": {"message": "max_tokens must be an integer", "type": "invalid_request_error"}},
+                {"error": {
+                    "message": "max_tokens must be an integer",
+                    "type": "invalid_request_error",
+                }},
                 status_code=400,
             )
         try:
@@ -177,7 +189,10 @@ def build_openai_routes(
             req_temperature = max(0.0, min(req_temperature, 2.0))
         except (TypeError, ValueError):
             return JSONResponse(
-                {"error": {"message": "temperature must be a number", "type": "invalid_request_error"}},
+                {"error": {
+                    "message": "temperature must be a number",
+                    "type": "invalid_request_error",
+                }},
                 status_code=400,
             )
 
@@ -192,23 +207,35 @@ def build_openai_routes(
         verify_raw = body.get("verify", False)
         if not isinstance(verify_raw, bool):
             return JSONResponse(
-                {"error": {"message": "verify must be true or false", "type": "invalid_request_error"}},
+                {"error": {
+                    "message": "verify must be true or false",
+                    "type": "invalid_request_error",
+                }},
                 status_code=400,
             )
         ensemble_raw = body.get("ensemble", False)
         if not isinstance(ensemble_raw, bool):
             return JSONResponse(
-                {"error": {"message": "ensemble must be true or false", "type": "invalid_request_error"}},
+                {"error": {
+                    "message": "ensemble must be true or false",
+                    "type": "invalid_request_error",
+                }},
                 status_code=400,
             )
         if verify_raw and ensemble_raw:
             return JSONResponse(
-                {"error": {"message": "ensemble and verify are mutually exclusive", "type": "invalid_request_error"}},
+                {"error": {
+                    "message": "ensemble and verify are mutually exclusive",
+                    "type": "invalid_request_error",
+                }},
                 status_code=400,
             )
         if stream and (verify_raw or ensemble_raw):
             return JSONResponse(
-                {"error": {"message": "verify/ensemble require stream=false (synthesis can't be streamed)", "type": "invalid_request_error"}},
+                {"error": {
+                    "message": "verify/ensemble require stream=false (synthesis can't be streamed)",
+                    "type": "invalid_request_error",
+                }},
                 status_code=400,
             )
 
@@ -252,7 +279,10 @@ def build_openai_routes(
             isinstance(m, dict) for m in messages
         ):
             return JSONResponse(
-                {"error": {"message": "messages must be a list of objects", "type": "invalid_request_error"}},
+                {"error": {
+                    "message": "messages must be a list of objects",
+                    "type": "invalid_request_error",
+                }},
                 status_code=400,
             )
         # The OpenAI contract requires at least one message to carry
@@ -271,7 +301,13 @@ def build_openai_routes(
         )
         if any_multimodal:
             return JSONResponse(
-                {"error": {"message": "multimodal content (list parts) is not supported; pass a plain string", "type": "invalid_request_error"}},
+                {"error": {
+                    "message": (
+                        "multimodal content (list parts) is not supported; "
+                        "pass a plain string"
+                    ),
+                    "type": "invalid_request_error",
+                }},
                 status_code=400,
             )
         has_content = any(
@@ -280,7 +316,10 @@ def build_openai_routes(
         )
         if not has_content:
             return JSONResponse(
-                {"error": {"message": "at least one message must have non-empty content", "type": "invalid_request_error"}},
+                {"error": {
+                    "message": "at least one message must have non-empty content",
+                    "type": "invalid_request_error",
+                }},
                 status_code=400,
             )
         # Require at least one USER turn. A system-only conversation
@@ -298,7 +337,10 @@ def build_openai_routes(
         )
         if not has_user_content:
             return JSONResponse(
-                {"error": {"message": "messages must include at least one user turn with content", "type": "invalid_request_error"}},
+                {"error": {
+                    "message": "messages must include at least one user turn with content",
+                    "type": "invalid_request_error",
+                }},
                 status_code=400,
             )
 
@@ -509,7 +551,10 @@ def build_openai_routes(
                                                 intent="chat",
                                                 cause=(
                                                     f"primary_failed: {v1_primary_exc}"
-                                                    if v1_primary_failed and v1_primary_exc is not None
+                                                    if (
+                                                        v1_primary_failed
+                                                        and v1_primary_exc is not None
+                                                    )
                                                     else "empty_text"
                                                 ),
                                             )
@@ -687,7 +732,7 @@ def build_openai_routes(
                 completion_raw = meta.get("tokens", meta.get("output_tokens", 0))
                 completion_tokens = (
                     int(completion_raw)
-                    if isinstance(completion_raw, (int, float))
+                    if isinstance(completion_raw, int | float)
                     else 0
                 )
                 # Defensive: when the worker reports zero completion_tokens
@@ -707,7 +752,7 @@ def build_openai_routes(
                 prompt_raw = meta.get("prompt_tokens")
                 prompt_tokens = (
                     int(prompt_raw)
-                    if isinstance(prompt_raw, (int, float))
+                    if isinstance(prompt_raw, int | float)
                     else None
                 )
                 if prompt_tokens is None:

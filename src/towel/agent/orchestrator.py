@@ -369,18 +369,18 @@ class Orchestrator:
                 isinstance(
                     node,
                     (
-                        ast.FunctionDef,
-                        ast.AsyncFunctionDef,
-                        ast.ClassDef,
-                        ast.Assign,
-                        ast.AnnAssign,
-                        ast.Import,
-                        ast.ImportFrom,
-                        ast.If,
-                        ast.For,
-                        ast.While,
-                        ast.Try,
-                        ast.With,
+                        ast.FunctionDef
+                        | ast.AsyncFunctionDef
+                        | ast.ClassDef
+                        | ast.Assign
+                        | ast.AnnAssign
+                        | ast.Import
+                        | ast.ImportFrom
+                        | ast.If
+                        | ast.For
+                        | ast.While
+                        | ast.Try
+                        | ast.With
                     ),
                 )
                 for node in tree.body

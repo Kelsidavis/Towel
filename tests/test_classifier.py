@@ -29,7 +29,10 @@ class TestGreetings:
 
     def test_greeting_inside_long_text_doesnt_match(self):
         # "hi" inside a long message is not a greeting.
-        long = "hi there, can you walk me through the entire architecture of the dispatcher subsystem"
+        long = (
+            "hi there, can you walk me through the entire architecture "
+            "of the dispatcher subsystem"
+        )
         assert classify_task_type(long) != TaskType.CHAT
 
 

@@ -64,7 +64,7 @@ class ToolPolicy:
         self.deny_tools = deny_tools or set()
 
     @classmethod
-    def from_env(cls, config: object | None = None) -> "ToolPolicy":
+    def from_env(cls, config: object | None = None) -> ToolPolicy:
         """Build a policy from saved config, with env vars taking priority.
 
         ``config`` is an optional ``SecurityConfig``-shaped object (has

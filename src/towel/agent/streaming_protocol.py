@@ -78,10 +78,10 @@ def build_sse_routes(agent: Any, config: Any) -> list[Route]:
                     # at the boundary (same fix /api/ask got in
                     # 8473883).
                     tps_raw = meta.get('tps')
-                    tps_val = float(tps_raw) if isinstance(tps_raw, (int, float)) else 0.0
+                    tps_val = float(tps_raw) if isinstance(tps_raw, int | float) else 0.0
                     tokens_raw = meta.get('tokens')
                     tokens_val = (
-                        int(tokens_raw) if isinstance(tokens_raw, (int, float)) else 0
+                        int(tokens_raw) if isinstance(tokens_raw, int | float) else 0
                     )
                     payload = {
                         'type': 'done',
@@ -173,7 +173,7 @@ def build_sse_routes(agent: Any, config: Any) -> list[Route]:
                     # confuses clients that expect a number.
                     tokens_raw = meta.get('tokens')
                     tokens_val = (
-                        int(tokens_raw) if isinstance(tokens_raw, (int, float)) else 0
+                        int(tokens_raw) if isinstance(tokens_raw, int | float) else 0
                     )
                     payload = {
                         'type': 'done',

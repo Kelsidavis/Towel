@@ -140,7 +140,7 @@ class YamlSkill(Skill):
         lines: list[str] = []
         if isinstance(obj, dict):
             for k, v in obj.items():
-                if isinstance(v, (dict, list)):
+                if isinstance(v, dict | list):
                     lines.append(f"{indent}{k}:")
                     lines.append(self._render_yaml(v, depth + 1))
                 elif isinstance(v, bool):
@@ -151,7 +151,7 @@ class YamlSkill(Skill):
                     lines.append(f"{indent}{k}: {v}")
         elif isinstance(obj, list):
             for item in obj:
-                if isinstance(item, (dict, list)):
+                if isinstance(item, dict | list):
                     lines.append(f"{indent}-")
                     lines.append(self._render_yaml(item, depth + 1))
                 else:

@@ -47,10 +47,10 @@ def export_markdown(conv: Conversation, include_metadata: bool = False) -> str:
                     # float defensively (then skip the field on failure
                     # rather than emit garbage to the markdown).
                     tps_val = msg.metadata.get("tps")
-                    if isinstance(tps_val, (int, float)) and tps_val:
+                    if isinstance(tps_val, int | float) and tps_val:
                         meta_parts.append(f"{tps_val:.1f} tok/s")
                     tokens_val = msg.metadata.get("tokens")
-                    if isinstance(tokens_val, (int, float)) and tokens_val:
+                    if isinstance(tokens_val, int | float) and tokens_val:
                         meta_parts.append(f"{int(tokens_val)} tokens")
                     # Surface collaboration info so an exported
                     # transcript shows when multi-worker arbitration

@@ -30,7 +30,11 @@ class TestVoiceTranscribe:
         assert "failed" in result.lower() or "not installed" in result.lower()
 
     def test_transcribe_passes_model(self, monkeypatch):
-        import mlx_whisper
+        import pytest
+
+        # mlx_whisper is an optional dep not shipped in any install extra; skip
+        # rather than fail where it isn't present (CI runners included).
+        mlx_whisper = pytest.importorskip("mlx_whisper")
 
         from towel.cli import voice as voice_mod
 
@@ -99,7 +103,9 @@ class TestVoiceOutput:
         procs = []
         monkeypatch.setattr(voice_mod.platform, "system", lambda: "Darwin")
         monkeypatch.setattr(voice_mod.shutil, "which", lambda _: "/usr/bin/say")
-        monkeypatch.setattr(voice_mod.subprocess, "Popen", lambda cmd: (procs.append(cmd), _FakeProc())[1])
+        monkeypatch.setattr(
+            voice_mod.subprocess, "Popen", lambda cmd: (procs.append(cmd), _FakeProc())[1]
+        )
 
         err = voice_mod.speak_text(" hello   there ", voice="Samantha", rate=180)
 
@@ -111,8 +117,12 @@ class TestVoiceOutput:
 
         procs = []
         monkeypatch.setattr(voice_mod.platform, "system", lambda: "Linux")
-        monkeypatch.setattr(voice_mod.shutil, "which", lambda b: "/usr/bin/espeak-ng" if b == "espeak-ng" else None)
-        monkeypatch.setattr(voice_mod.subprocess, "Popen", lambda cmd: (procs.append(cmd), _FakeProc())[1])
+        monkeypatch.setattr(
+            voice_mod.shutil, "which", lambda b: "/usr/bin/espeak-ng" if b == "espeak-ng" else None
+        )
+        monkeypatch.setattr(
+            voice_mod.subprocess, "Popen", lambda cmd: (procs.append(cmd), _FakeProc())[1]
+        )
 
         err = voice_mod.speak_text("hello there", voice="en-us", rate=160)
 
@@ -124,8 +134,12 @@ class TestVoiceOutput:
 
         procs = []
         monkeypatch.setattr(voice_mod.platform, "system", lambda: "Linux")
-        monkeypatch.setattr(voice_mod.shutil, "which", lambda b: "/usr/bin/espeak" if b == "espeak" else None)
-        monkeypatch.setattr(voice_mod.subprocess, "Popen", lambda cmd: (procs.append(cmd), _FakeProc())[1])
+        monkeypatch.setattr(
+            voice_mod.shutil, "which", lambda b: "/usr/bin/espeak" if b == "espeak" else None
+        )
+        monkeypatch.setattr(
+            voice_mod.subprocess, "Popen", lambda cmd: (procs.append(cmd), _FakeProc())[1]
+        )
 
         err = voice_mod.speak_text("hello")
 
@@ -152,7 +166,9 @@ class TestVoiceOutput:
         spoken = []
         monkeypatch.setattr(voice_mod.platform, "system", lambda: "Darwin")
         monkeypatch.setattr(voice_mod.shutil, "which", lambda _: "/usr/bin/say")
-        monkeypatch.setattr(voice_mod.subprocess, "Popen", lambda cmd: (spoken.append(cmd[-1]), _FakeProc())[1])
+        monkeypatch.setattr(
+            voice_mod.subprocess, "Popen", lambda cmd: (spoken.append(cmd[-1]), _FakeProc())[1]
+        )
 
         voice_mod.speak_text("## Header\n**bold** and `code`")
 

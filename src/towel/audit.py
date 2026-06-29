@@ -92,7 +92,7 @@ def _redact(arguments: dict[str, Any]) -> dict[str, Any]:
         if any(h in kl for h in _SECRET_KEY_HINT):
             out[k] = "<redacted>"
             continue
-        s = v if isinstance(v, (int, float, bool)) or v is None else str(v)
+        s = v if isinstance(v, int | float | bool) or v is None else str(v)
         if isinstance(s, str) and len(s) > _MAX_VALUE_LEN:
             s = s[:_MAX_VALUE_LEN] + f"...<+{len(s) - _MAX_VALUE_LEN} chars>"
         out[k] = s

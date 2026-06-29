@@ -645,9 +645,9 @@ def default_worker_capabilities(
     # registering at all — and a worker with no max_param_b_est
     # is preferable to a worker that never connects.
     _vram_raw = caps.get("total_vram_mb") or 0
-    vram_mb = int(_vram_raw) if isinstance(_vram_raw, (int, float)) else 0
+    vram_mb = int(_vram_raw) if isinstance(_vram_raw, int | float) else 0
     _ram_raw = (caps.get("resources") or {}).get("ram_total_mb") or 0
-    ram_mb = int(_ram_raw) if isinstance(_ram_raw, (int, float)) else 0
+    ram_mb = int(_ram_raw) if isinstance(_ram_raw, int | float) else 0
     # Prefer VRAM where it exists; fall back to half of system RAM.
     usable_mb = vram_mb if vram_mb else (ram_mb // 2)
     if usable_mb:

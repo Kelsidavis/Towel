@@ -810,7 +810,7 @@ def status() -> None:
             tier = worker.get("quality_tier") or "?"
             fits = caps.get("max_param_b_est")
             tier_part = f" tier={tier}"
-            if isinstance(fits, (int, float)) and fits > 0:
+            if isinstance(fits, int | float) and fits > 0:
                 tier_part += f" (~{fits:.1f}B max)"
             worker_lines.append(
                 # Rich treats ``[…]`` as markup, so the state badge needs an
@@ -906,7 +906,7 @@ def workers(as_json: bool) -> None:
         tier = worker.get("quality_tier") or "?"
         fits = caps.get("max_param_b_est")
         tier_part = f" tier={tier}"
-        if isinstance(fits, (int, float)) and fits > 0:
+        if isinstance(fits, int | float) and fits > 0:
             tier_part += f"(~{fits:.1f}B)"
         cached_count = len(caps.get("available_models") or [])
         cache_part = f" cached={cached_count}" if cached_count else ""
@@ -3032,7 +3032,10 @@ def memory_extract(
             console.print(f"  [dim]skip[/dim] [{cap.memory_type}] {cap.key} (already present)")
             skipped += 1
             continue
-        console.print(f"  [green]{marker}[/green] [{cap.memory_type}] {cap.key} = {cap.content[:80]}")
+        console.print(
+            f"  [green]{marker}[/green] [{cap.memory_type}] "
+            f"{cap.key} = {cap.content[:80]}"
+        )
         if not dry_run:
             store.remember(
                 cap.key, cap.content,
@@ -3555,7 +3558,10 @@ def memory_stats() -> None:
             if e.recall_count > 0:
                 stats_for_pattern[1] += 1
         console.print("\n[bold]Auto-capture pattern health:[/bold]")
-        console.print(f"  [dim]{'pattern':18s}  {'captures':>8s}  {'recalled':>8s}  {'usefulness':>10s}[/dim]")
+        console.print(
+            f"  [dim]{'pattern':18s}  {'captures':>8s}  "
+            f"{'recalled':>8s}  {'usefulness':>10s}[/dim]"
+        )
         ranked = sorted(per_pattern.items(), key=lambda kv: -kv[1][0])
         for label, (cap, recalled) in ranked:
             pct = (recalled * 100 // cap) if cap else 0

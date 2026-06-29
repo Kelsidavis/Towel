@@ -319,7 +319,10 @@ def _check_llama_model(c: Check, config: TowelConfig) -> Check:
         c.warn(
             f"No llama-server running and no GGUF matching '{config.model.name}' on disk"
         )
-        c.ok(f"{len(models)} other GGUF(s) found — largest: {models[0].name} ({models[0].size_gb} GB)")
+        c.ok(
+            f"{len(models)} other GGUF(s) found — largest: "
+            f"{models[0].name} ({models[0].size_gb} GB)"
+        )
         c.suggestions.append(
             "Start llama-server, or set [model].name to a GGUF you have"
         )
@@ -494,7 +497,7 @@ def _probe_fleet_endpoints(c: Check, host: str, http_port: int) -> None:
             for w in workers:
                 live = (w.get("capabilities") or {}).get("live_resources") or {}
                 cp = live.get("cpu_pressure")
-                if isinstance(cp, (int, float)) and cp >= 0.8:
+                if isinstance(cp, int | float) and cp >= 0.8:
                     hot += 1
                 if w.get("busy"):
                     busy += 1
@@ -504,7 +507,7 @@ def _probe_fleet_endpoints(c: Check, host: str, http_port: int) -> None:
                 if tier in tier_counts:
                     tier_counts[tier] += 1
                 fits = (w.get("capabilities") or {}).get("max_param_b_est")
-                if isinstance(fits, (int, float)) and fits > 0:
+                if isinstance(fits, int | float) and fits > 0:
                     fits_values.append(float(fits))
             summary = f"Workers: {len(workers)} ({idle} idle, {busy} busy"
             if hot:

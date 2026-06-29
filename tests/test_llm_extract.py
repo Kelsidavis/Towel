@@ -51,7 +51,10 @@ class TestParseResponse:
         assert [c.key for c in out] == ["ok"]
 
     def test_drops_empty_string_fields(self):
-        raw = '[{"key": "", "content": "v", "type": "fact"}, {"key": "k", "content": "", "type": "fact"}]'
+        raw = (
+            '[{"key": "", "content": "v", "type": "fact"}, '
+            '{"key": "k", "content": "", "type": "fact"}]'
+        )
         assert parse_response(raw) == []
 
     def test_malformed_json_returns_empty(self):

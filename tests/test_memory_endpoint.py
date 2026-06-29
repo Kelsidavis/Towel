@@ -176,7 +176,11 @@ class TestMemoryEndpoint:
 
         resp = client.get("/memory/recalls?hours=-1")
         assert resp.status_code == 400
-        assert "0" in resp.json()["error"] or "≥" in resp.json()["error"] or "non-negative" in resp.json()["error"].lower()
+        assert (
+            "0" in resp.json()["error"]
+            or "≥" in resp.json()["error"]
+            or "non-negative" in resp.json()["error"].lower()
+        )
 
     def test_rejects_overlong_tag(self, store, memory):
         """Same SQLITE_MAX_LIKE_PATTERN_LENGTH guard the /memory `q`

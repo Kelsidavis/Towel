@@ -561,7 +561,7 @@ class TestClusterNodes:
         assert entry["busy_since"] is not None
         # busy_for_seconds is a float (newly-assigned, so near-zero
         # but never negative).
-        assert isinstance(entry["busy_for_seconds"], (int, float))
+        assert isinstance(entry["busy_for_seconds"], int | float)
         assert entry["busy_for_seconds"] >= 0
 
     def test_cluster_nodes_marks_unknown_workers(self, gateway, client):
@@ -2511,7 +2511,11 @@ class TestDispatchExplain:
             "/dispatch/explain?session_id=s&estimated_tokens=-1",
         )
         assert resp.status_code == 400
-        assert "≥" in resp.json()["error"] or "non-negative" in resp.json()["error"].lower() or "0" in resp.json()["error"]
+        assert (
+            "≥" in resp.json()["error"]
+            or "non-negative" in resp.json()["error"].lower()
+            or "0" in resp.json()["error"]
+        )
 
     def test_estimated_tokens_must_be_sane_size(self, client):
         """A 17-digit token estimate would trip the dispatcher's
@@ -2855,7 +2859,10 @@ class TestSimpleAskAPI:
         async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
             answers = {
                 "small": "Short answer.",
-                "large": "A more thorough, multi-sentence response that explains the topic in depth.",
+                "large": (
+                    "A more thorough, multi-sentence response that "
+                    "explains the topic in depth."
+                ),
             }
             return Message(
                 role=Role.ASSISTANT,
@@ -3241,7 +3248,7 @@ class TestSimpleAskAPI:
         # Every contribution carries the synthesis_ms timing.
         for c in body["ensemble_contributions"]:
             assert "synthesis_ms" in c
-            assert isinstance(c["synthesis_ms"], (int, float))
+            assert isinstance(c["synthesis_ms"], int | float)
             assert c["synthesis_ms"] >= 0
 
     def test_verify_pass_uses_code_aware_prompt_for_code_questions(
@@ -4115,7 +4122,10 @@ class TestSimpleAskAPI:
                 # Verifier returns a corrected answer (not "VERIFIED").
                 return Message(
                     role=Role.ASSISTANT,
-                    content="Corrected: list.append adds one item; list.extend adds each item from an iterable.",
+                    content=(
+                        "Corrected: list.append adds one item; "
+                        "list.extend adds each item from an iterable."
+                    ),
                     metadata={"remote_worker": worker.id, "tokens": 20, "tps": 5.0},
                 )
             # Primary returns a wrong/incomplete answer.
@@ -4425,7 +4435,11 @@ class TestSimpleAskAPI:
 
         resp = client.post(
             "/api/ask",
-            json={"message": "What is the capital of Germany?", "session_id": "v-long", "verify": True},
+            json={
+                "message": "What is the capital of Germany?",
+                "session_id": "v-long",
+                "verify": True,
+            },
         )
         assert resp.status_code == 200
         body = resp.json()

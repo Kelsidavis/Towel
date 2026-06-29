@@ -1,14 +1,14 @@
 """Tests for the MLX runtime helpers and prompt rules."""
 
+from towel.agent.conversation import Conversation, Role
 from towel.agent.runtime import (
-    AgentRuntime,
     EMPTY_TEXT_FALLBACK,
+    AgentRuntime,
     GenerationResult,
     format_tool_feedback,
     mlx_tokenizer_config,
     tool_result_is_error,
 )
-from towel.agent.conversation import Conversation, Role
 from towel.config import TowelConfig
 from towel.skills.base import Skill, ToolDefinition
 from towel.skills.registry import SkillRegistry

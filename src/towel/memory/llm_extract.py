@@ -37,11 +37,13 @@ log = logging.getLogger("towel.memory.llm_extract")
 
 # Use a literal placeholder + .replace() instead of .format() so the
 # JSON example with curly braces doesn't trip the format-string parser.
-_PROMPT_TEMPLATE = """\
+_PROMPT_TEMPLATE = (
+    """\
 You are an extraction assistant. Read the user's text below and \
 return memorable facts as a strict JSON array. Each item must be:
 
-  {"key": "<short-snake-case-id>", "content": "<the fact>", "type": "<user|preference|project|fact>"}
+  {"key": "<short-snake-case-id>", "content": "<the fact>", """
+    """"type": "<user|preference|project|fact>"}
 
 Rules:
 - Output ONLY the JSON array, no preamble, no markdown fences, no commentary.
@@ -59,6 +61,7 @@ USER TEXT:
 __TEXT__
 
 JSON ARRAY:"""
+)
 
 
 @dataclass(frozen=True)

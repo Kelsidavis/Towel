@@ -176,7 +176,7 @@ class MarkdownSkill(Skill):
         prefix = "#" * min(depth + 2, 6)
         if isinstance(obj, dict):
             for k, v in obj.items():
-                if isinstance(v, (dict, list)):
+                if isinstance(v, dict | list):
                     lines.append(f"{prefix} {k}\n")
                     lines.append(self._render_obj(v, depth + 1))
                 else:

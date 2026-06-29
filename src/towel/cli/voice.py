@@ -47,7 +47,10 @@ def record_audio(duration: float = 10.0, sample_rate: int = 16000) -> bytes | st
         import numpy as np
         import sounddevice as sd
 
-        console.print(f"[green]Listening...[/green] (up to {duration:.0f}s, press Ctrl+C to stop early)")
+        console.print(
+            f"[green]Listening...[/green] (up to {duration:.0f}s, "
+            f"press Ctrl+C to stop early)"
+        )
 
         # Start non-blocking so KeyboardInterrupt during wait() preserves captured audio.
         audio = sd.rec(

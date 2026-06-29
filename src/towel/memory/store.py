@@ -500,7 +500,8 @@ class MemoryStore:
             if row is None:
                 con.execute(
                     "INSERT INTO memories "
-                    "(key, content, memory_type, created_at, updated_at, source, embedding, tags, scope) "
+                    "(key, content, memory_type, created_at, updated_at, "
+                    "source, embedding, tags, scope) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         key, content, memory_type, now_iso, now_iso, source,
@@ -545,7 +546,10 @@ class MemoryStore:
                 con.execute(
                     "UPDATE memories SET content = ?, memory_type = ?, "
                     "updated_at = ?, embedding = ?, tags = ?, scope = ? WHERE key = ?",
-                    (content, memory_type, now_iso, embedding_blob, json.dumps(merged), stored_scope, key),
+                    (
+                        content, memory_type, now_iso, embedding_blob,
+                        json.dumps(merged), stored_scope, key,
+                    ),
                 )
                 created_at = datetime.fromisoformat(row["created_at"])
                 try:

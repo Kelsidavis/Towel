@@ -89,7 +89,7 @@ class JsonSkill(Skill):
     @staticmethod
     def _parse_json_input(data: str | dict | list) -> Any:
         """Parse JSON input — accept both strings and already-parsed objects."""
-        if isinstance(data, (dict, list, int, float, bool)):
+        if isinstance(data, dict | list | int | float | bool):
             return data
         return json.loads(data)
 

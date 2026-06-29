@@ -228,7 +228,7 @@ def assign_roles(capabilities: dict[str, Any]) -> list[NodeRole]:
         backend = ""
     has_tools = bool(capabilities.get("tools", False))
     context_window = capabilities.get("context_window", 0)
-    if not isinstance(context_window, (int, float)):
+    if not isinstance(context_window, int | float):
         context_window = 0
 
     # GPU info
@@ -239,7 +239,7 @@ def assign_roles(capabilities: dict[str, Any]) -> list[NodeRole]:
     # int) would crash on `.get()`. Filter at the iteration boundary.
     gpus = [g for g in gpus if isinstance(g, dict)]
     total_vram = capabilities.get("total_vram_mb", 0)
-    if not isinstance(total_vram, (int, float)):
+    if not isinstance(total_vram, int | float):
         total_vram = 0
     if not total_vram and gpus:
         total_vram = sum(g.get("vram_mb", 0) for g in gpus)
@@ -294,10 +294,10 @@ def assign_tasks(
 
     has_tools = bool(capabilities.get("tools", False))
     context_window = capabilities.get("context_window", 0)
-    if not isinstance(context_window, (int, float)):
+    if not isinstance(context_window, int | float):
         context_window = 0
     total_vram = capabilities.get("total_vram_mb", 0)
-    if not isinstance(total_vram, (int, float)):
+    if not isinstance(total_vram, int | float):
         total_vram = 0
     gpus = capabilities.get("gpus", [])
     if not isinstance(gpus, list):

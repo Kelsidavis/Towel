@@ -164,19 +164,37 @@ class TestLlamaNativeTools:
         assert "<tool_call>" not in native
         assert "Only call tools from the provided list" in native
 
-    def test_build_inference_request_includes_tools_by_default(self):
-        # llama-server always sends tools=[...] — newer versions render them via
-        # the chat template, older versions ignore them harmlessly.
+    def test_build_inference_request_includes_tools_for_tool_tasks(self):
+        # build_inference_request is task-aware: a tool-needing turn (fetch/
+        # shell/file ops) gets tools=[...], which newer llama-server renders via
+        # the chat template and older versions ignore harmlessly. See
+        # roles.task_needs_tools.
+        from towel.agent.conversation import Conversation, Role
+
         rt = self._runtime()
         assert rt._native_tools_supported is True
-        req = rt.build_inference_request(_empty_conversation())
+        conv = Conversation()
+        conv.add(Role.USER, "fetch https://example.com and show the title")
+        req = rt.build_inference_request(conv)
         assert "tools" in req
         assert req["tools"][0]["function"]["name"] == "read_file"
 
+    def test_build_inference_request_omits_tools_for_chat(self):
+        # A pure chat turn skips the (large) tool payload entirely — the model
+        # never calls a tool to say hello, so paying the prefill is wasteful.
+        rt = self._runtime()
+        assert rt._native_tools_supported is True
+        req = rt.build_inference_request(_empty_conversation())  # "hello" -> chat
+        assert "tools" not in req
+
     def test_build_inference_request_omits_tools_when_disabled(self):
+        from towel.agent.conversation import Conversation, Role
+
         rt = self._runtime()
         rt._native_tools_supported = False
-        req = rt.build_inference_request(_empty_conversation())
+        conv = Conversation()
+        conv.add(Role.USER, "fetch https://example.com and show the title")
+        req = rt.build_inference_request(conv)
         assert "tools" not in req
 
     def test_openai_normalizer_parses_string_arguments(self):
