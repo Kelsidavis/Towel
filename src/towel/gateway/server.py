@@ -3993,6 +3993,10 @@ class GatewayServer:
                 # task gating, surfaced so operators see "low/medium/high" at
                 # a glance without having to inspect capabilities by hand.
                 wd["quality_tier"] = worker_quality_tier(worker.capabilities or {})
+                # External/removable mounts this node exposes — surfaced so
+                # operators can see which worker owns which drive (and thus
+                # where a path-bearing request will be routed by data locality).
+                wd["mounts"] = list((worker.capabilities or {}).get("mounts", []) or [])
                 workers_data.append(wd)
 
             # Workers that have persisted state but aren't currently

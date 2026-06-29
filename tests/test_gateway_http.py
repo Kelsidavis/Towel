@@ -490,7 +490,24 @@ class TestWorkersEndpoint:
         assert data["workers"][0]["capabilities"]["backend"] == "mlx"
         assert data["workers"][0]["enabled"] is True
         assert data["workers"][0]["draining"] is False
+        assert data["workers"][0]["mounts"] == []  # none advertised
         assert data["pins"] == {}
+
+    def test_workers_list_surfaces_mounts(self, gateway, client):
+        gateway._workers.register(
+            "spark",
+            object(),
+            {
+                "backend": "llama",
+                "model": "repo/model-a",
+                "modes": ["llama_chat"],
+                "tools": True,
+                "mounts": ["/media/k/drive"],
+            },
+        )
+        data = client.get("/workers").json()
+        worker = next(w for w in data["workers"] if w["id"] == "spark")
+        assert worker["mounts"] == ["/media/k/drive"]
 
 
 class TestClusterNodes:
