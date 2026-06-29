@@ -29,7 +29,13 @@ from towel.agent.context import (
 )
 from towel.agent.conversation import Conversation, Message, Role
 from towel.agent.events import AgentEvent
-from towel.agent.runtime import format_tool_feedback, tool_result_is_error
+from towel.agent.runtime import (
+    AUTONOMY_NUDGE,
+    MAX_AUTONOMY_NUDGES,
+    format_tool_feedback,
+    looks_like_unfulfilled_intent,
+    tool_result_is_error,
+)
 from towel.agent.tool_parser import ToolCall, parse_tool_calls
 from towel.agent.tools_payload import tools_as_openai_functions
 from towel.config import TowelConfig
@@ -615,6 +621,7 @@ class LlamaRuntime:
             )
 
     async def step(self, conversation: Conversation) -> Message:
+        autonomy_nudges = 0
         for _iteration in range(MAX_TOOL_ITERATIONS):
             result = await self.generate(conversation)
             if result.tool_calls:
@@ -624,6 +631,19 @@ class LlamaRuntime:
                 tool_calls, remaining_text = parse_tool_calls(result.text)
 
             if not tool_calls:
+                # Autonomy: if the model narrated an action without calling a
+                # tool ("I'll run the build now…"), nudge it to actually act
+                # instead of ending the turn mid-goal — up to a small budget.
+                if (
+                    autonomy_nudges < MAX_AUTONOMY_NUDGES
+                    and looks_like_unfulfilled_intent(result.text)
+                ):
+                    autonomy_nudges += 1
+                    log.info("autonomy nudge %d: model narrated without acting",
+                             autonomy_nudges)
+                    conversation.add(Role.ASSISTANT, result.text)
+                    conversation.add(Role.USER, AUTONOMY_NUDGE)
+                    continue
                 return Message(
                     role=Role.ASSISTANT,
                     content=result.text,
@@ -662,6 +682,7 @@ class LlamaRuntime:
 
     async def step_streaming(self, conversation: Conversation) -> AsyncIterator[AgentEvent]:
         self._cancel_flag = False
+        autonomy_nudges = 0
 
         for _iteration in range(MAX_TOOL_ITERATIONS):
             full_text = ""
@@ -684,6 +705,18 @@ class LlamaRuntime:
                 tool_calls, remaining_text = parse_tool_calls(full_text)
 
             if not tool_calls:
+                # Autonomy: narrated-but-unperformed work → nudge to act rather
+                # than ending the turn (up to a small per-turn budget).
+                if (
+                    autonomy_nudges < MAX_AUTONOMY_NUDGES
+                    and looks_like_unfulfilled_intent(full_text)
+                ):
+                    autonomy_nudges += 1
+                    log.info("autonomy nudge %d: model narrated without acting",
+                             autonomy_nudges)
+                    conversation.add(Role.ASSISTANT, full_text)
+                    conversation.add(Role.USER, AUTONOMY_NUDGE)
+                    continue
                 conversation.add(Role.ASSISTANT, full_text)
                 yield AgentEvent.complete(
                     full_text,

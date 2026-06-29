@@ -464,6 +464,7 @@ class AgentRuntime:
         last_tps = 0.0
         loop_fingerprints: list[str] = []
         stuck_call_name: str | None = None
+        autonomy_nudges = 0
 
         for iteration in range(MAX_TOOL_ITERATIONS):
             result = await self.generate(conversation)
@@ -473,6 +474,18 @@ class AgentRuntime:
             tool_calls, remaining_text = parse_tool_calls(result.text)
 
             if not tool_calls:
+                # Autonomy: narrated-but-unperformed work → nudge to act rather
+                # than ending the turn mid-goal (up to a small per-turn budget).
+                if (
+                    autonomy_nudges < MAX_AUTONOMY_NUDGES
+                    and looks_like_unfulfilled_intent(result.text)
+                ):
+                    autonomy_nudges += 1
+                    log.info("autonomy nudge %d: model narrated without acting",
+                             autonomy_nudges)
+                    conversation.add(Role.ASSISTANT, result.text)
+                    conversation.add(Role.USER, AUTONOMY_NUDGE)
+                    continue
                 # No tool calls — return the final text response
                 text = result.text
                 metadata: dict[str, Any] = {"tps": last_tps, "tokens": total_tokens}
@@ -568,6 +581,7 @@ class AgentRuntime:
         total_tokens = 0
         loop_fingerprints: list[str] = []
         stuck_call_name: str | None = None
+        autonomy_nudges = 0
 
         for iteration in range(MAX_TOOL_ITERATIONS):
             # Stream tokens and accumulate the full response
@@ -601,6 +615,18 @@ class AgentRuntime:
             tool_calls, remaining_text = parse_tool_calls(full_text)
 
             if not tool_calls:
+                # Autonomy: narrated-but-unperformed work → nudge to act rather
+                # than ending the turn mid-goal (up to a small per-turn budget).
+                if (
+                    autonomy_nudges < MAX_AUTONOMY_NUDGES
+                    and looks_like_unfulfilled_intent(full_text)
+                ):
+                    autonomy_nudges += 1
+                    log.info("autonomy nudge %d: model narrated without acting",
+                             autonomy_nudges)
+                    conversation.add(Role.ASSISTANT, full_text)
+                    conversation.add(Role.USER, AUTONOMY_NUDGE)
+                    continue
                 text = full_text
                 metadata: dict[str, Any] = {"tps": tps, "tokens": total_tokens}
                 if not text.strip():
