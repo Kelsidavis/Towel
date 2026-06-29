@@ -3481,6 +3481,8 @@ class GatewayServer:
         # stay synchronised.
         last_call_fingerprints: list[str] = []
         loop_detected_call_name: str | None = None
+        autonomy_nudges = 0
+        tool_trace: list[dict[str, Any]] = []
 
         for _ in range(MAX_TOOL_ITERATIONS):
             result = await self._remote_generate(
@@ -3514,12 +3516,36 @@ class GatewayServer:
 
             tool_calls, remaining_text = parse_tool_calls(full_text)
             if not tool_calls:
-                session.conversation.add(Role.ASSISTANT, full_text)
+                # Autonomy: narrated-but-unperformed work → nudge to act rather
+                # than ending the turn mid-goal (parity with the non-streaming
+                # path), up to a small per-turn budget.
+                if (
+                    autonomy_nudges < MAX_AUTONOMY_NUDGES
+                    and looks_like_unfulfilled_intent(full_text)
+                ):
+                    autonomy_nudges += 1
+                    log.info(
+                        "autonomy nudge %d/%d on streaming session %s: model "
+                        "narrated without acting",
+                        autonomy_nudges, MAX_AUTONOMY_NUDGES, session_id,
+                    )
+                    session.conversation.add(Role.ASSISTANT, full_text)
+                    session.conversation.add(Role.USER, AUTONOMY_NUDGE)
+                    continue
+                # Recap tool work when the model returns no concluding text, so
+                # the user gets a real answer instead of a blank final event.
+                final_text = full_text
+                meta: dict[str, Any] = {
+                    "tokens": total_tokens, "remote_worker": worker.id,
+                }
+                if not final_text.strip() and tool_trace:
+                    final_text = summarize_tool_trace(tool_trace)
+                    meta["synthesized_summary"] = True
+                session.conversation.add(Role.ASSISTANT, final_text)
                 await ws.send(
                     json.dumps(
                         AgentEvent.complete(
-                            full_text,
-                            metadata={"tokens": total_tokens, "remote_worker": worker.id},
+                            final_text, metadata=meta,
                         ).to_ws_message(session_id)
                     )
                 )
@@ -3569,6 +3595,10 @@ class GatewayServer:
                     tool_name=tc.name,
                     status="error" if is_error else "ok",
                 )
+                tool_trace.append({
+                    "tool": tc.name,
+                    "status": "error" if is_error else "ok",
+                })
 
         # Decide which terminal message to emit based on why we exited
         # the loop. Loop-detected gets its own structured note; running
