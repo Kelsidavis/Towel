@@ -1343,12 +1343,15 @@ class GatewayServer:
             return conv_dict
         if not memory_block:
             return conv_dict
+        from datetime import UTC, datetime
         return {
             **conv_dict,
             "messages": [
                 {
+                    "id": uuid.uuid4().hex[:12],
                     "role": "system",
                     "content": memory_block,
+                    "timestamp": datetime.now(UTC).isoformat(),
                     "metadata": {"source": "coord_memory_injection"},
                 },
                 *conv_dict["messages"],

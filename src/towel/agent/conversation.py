@@ -44,14 +44,23 @@ class Message:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Message:
-        return cls(
-            id=data["id"],
-            role=Role(data["role"]),
-            content=data["content"],
-            timestamp=datetime.fromisoformat(data["timestamp"]),
-            metadata=data.get("metadata", {}),
-            pinned=data.get("pinned", False),
-        )
+        # Tolerant of partial dicts. Messages assembled on the wire rather than
+        # persisted — e.g. the coordinator's injected memory system message —
+        # may omit id/timestamp. Falling back to the dataclass defaults (a
+        # generated id, now()) instead of indexing keeps a missing field from
+        # raising KeyError inside the worker's job deserialization, which would
+        # crash _run_job and hang the request until the inference timeout.
+        kwargs: dict[str, Any] = {
+            "role": Role(data["role"]),
+            "content": data.get("content", ""),
+            "metadata": data.get("metadata", {}),
+            "pinned": data.get("pinned", False),
+        }
+        if data.get("id"):
+            kwargs["id"] = data["id"]
+        if data.get("timestamp"):
+            kwargs["timestamp"] = datetime.fromisoformat(data["timestamp"])
+        return cls(**kwargs)
 
 
 @dataclass
