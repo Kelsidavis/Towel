@@ -49,3 +49,17 @@ def test_complete_to_ws_message():
     assert msg["type"] == "response_complete"
     assert msg["content"] == "done"
     assert msg["metadata"]["tps"] == 10.0
+
+
+def test_token_ws_message_carries_text_under_content_key():
+    # Regression: _remote_generate accumulates streamed worker tokens from the
+    # ws-message dict. The text lives under "content" (NOT "text") — a consumer
+    # reading "text" silently accumulates nothing, which made non-streaming
+    # /v1 and /api/ask task responses come back empty. Pin the contract.
+    msg = AgentEvent.token("hi").to_ws_message("sess-1")
+    assert msg["type"] == "token"
+    assert msg["session"] == "sess-1"
+    assert msg.get("content") == "hi"
+    # The accumulation expression _remote_generate uses must recover the text.
+    recovered = msg.get("content") or msg.get("text") or msg.get("token") or ""
+    assert recovered == "hi"

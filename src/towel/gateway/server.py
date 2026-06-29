@@ -3119,9 +3119,18 @@ class GatewayServer:
                 msg_type = msg.get("type")
                 if msg_type == "job_event":
                     event = msg.get("event", {})
-                    # Accumulate token text for callers that need the full response
+                    # Accumulate token text for callers that need the full
+                    # response. AgentEvent.token serializes the text under
+                    # "content" (see events.AgentEvent.to_ws_message); reading
+                    # only "text" silently accumulated nothing, so the non-
+                    # streaming callers (_step_remote_inference -> /v1 and
+                    # /api/ask) returned empty content even though the worker
+                    # streamed a real answer. Mirror the _stream_remote_inference
+                    # key fallback.
                     if event.get("type") == "token":
-                        accumulated_text += event.get("text", "")
+                        accumulated_text += (
+                            event.get("content") or event.get("text") or event.get("token") or ""
+                        )
                     if client_ws is not None:
                         await client_ws.send(json.dumps(event))
                 elif msg_type == "job_done":
