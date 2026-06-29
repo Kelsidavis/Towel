@@ -28,10 +28,13 @@ from towel.agent.context import count_tokens_fallback
 from towel.agent.conversation import Role
 from towel.agent.events import AgentEvent
 from towel.agent.runtime import (
+    AUTONOMY_NUDGE,
+    MAX_AUTONOMY_NUDGES,
     MAX_TOOL_ITERATIONS,
     TOOL_LOOP_REPEAT_LIMIT,
     AgentRuntime,
     format_tool_feedback,
+    looks_like_unfulfilled_intent,
     tool_result_is_error,
 )
 from towel.agent.tool_parser import parse_tool_calls
@@ -3221,6 +3224,11 @@ class GatewayServer:
         # lockstep — bumping one place changes both.
         last_call_fingerprints: list[str] = []
         loop_detected = False
+        # Autonomy: count nudges we've sent this turn when the model narrates an
+        # action ("I'll run X…") without calling a tool, so it keeps working
+        # toward the goal instead of ending mid-task. Capped so a chronically
+        # narrating model can't loop forever.
+        autonomy_nudges = 0
 
         for _ in range(MAX_TOOL_ITERATIONS):
             # Stream tokens so chunk_timeout (300s no-event) doesn't
@@ -3247,6 +3255,24 @@ class GatewayServer:
 
             tool_calls, remaining_text = parse_tool_calls(text)
             if not tool_calls:
+                # Autonomy: the model produced prose with no tool call. If that
+                # prose reads as narrated-but-unperformed work ("I'll run the
+                # build now, stand by"), nudge it to actually act rather than
+                # ending the turn mid-goal — up to a small per-turn budget.
+                if (
+                    autonomy_nudges < MAX_AUTONOMY_NUDGES
+                    and looks_like_unfulfilled_intent(text)
+                ):
+                    autonomy_nudges += 1
+                    log.info(
+                        "autonomy nudge %d/%d on session %s: model narrated "
+                        "without acting; re-prompting to call a tool",
+                        autonomy_nudges, MAX_AUTONOMY_NUDGES, session_id,
+                    )
+                    session.conversation.add(Role.ASSISTANT, text)
+                    session.conversation.add(Role.USER, AUTONOMY_NUDGE)
+                    continue
+
                 from towel.agent.conversation import Message
 
                 # Stamp the dispatch decision with the final-iteration

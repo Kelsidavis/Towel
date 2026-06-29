@@ -156,6 +156,57 @@ def format_tool_feedback(tool_name: str, result: str, is_error: bool) -> str:
     )
 
 
+# How many times in one turn we'll nudge a model that narrates an action
+# ("I'll run the build now…") without actually emitting the tool call, before
+# giving up and returning its prose. Small models do this often; one or two
+# nudges usually converts the narration into a real tool call, while the cap
+# keeps a chronically-narrating model from looping forever.
+MAX_AUTONOMY_NUDGES = 2
+
+# Phrases that signal the model described work it *intends* to do rather than
+# work it *did*. Anchored to first-person future intent + an action verb (or an
+# explicit "stand by"/"please wait") so ordinary final answers — "let me know
+# if…", "you can run X" — don't trip it.
+_UNFULFILLED_INTENT_RE = re.compile(
+    r"\b(?:"
+    r"i['’]?ll\s+(?:now\s+|then\s+|go\s+ahead\s+and\s+)?"
+    r"(?:run|start|begin|create|write|build|check|fetch|download|install|"
+    r"generate|search|look|update|add|make|set\s+up|configure|implement|"
+    r"execute|continue|proceed|do)"
+    r"|i\s+will\s+(?:now\s+)?(?:run|start|begin|create|write|build|check|"
+    r"fetch|download|install|generate|search|update|add|make|configure|"
+    r"implement|execute|continue|proceed|do)"
+    r"|i['’]?m\s+going\s+to\b|i\s+am\s+going\s+to\b|i\s+am\s+now\b"
+    r"|let\s+me\s+(?:now\s+)?(?:run|start|begin|create|write|build|check|"
+    r"fetch|download|install|generate|search|update|add|make|configure|"
+    r"implement|execute|go\s+ahead|continue|proceed)"
+    r"|stand\s+by\b|please\s+wait\b|one\s+moment\b|proceeding\s+to\b"
+    r"|next,?\s+i['’]?ll\b"
+    r")",
+    re.IGNORECASE,
+)
+
+# Injected as a user turn when narration-without-action is detected, to convert
+# "I'll do X" into an actual tool call on the next generation.
+AUTONOMY_NUDGE = (
+    "You described an action but did not call any tool, so nothing actually "
+    "happened. If the task is not finished, emit the tool call now to do it — "
+    "do not say you will. If it is already finished, give the final result."
+)
+
+
+def looks_like_unfulfilled_intent(text: str) -> bool:
+    """True when a no-tool-call response reads as narrated-but-unperformed work.
+
+    Lets a tool-capable turn distinguish "I'll run the build now, stand by"
+    (narration — keep going) from a genuine final answer (done). Used to decide
+    whether to nudge the model to act instead of ending the turn mid-goal.
+    """
+    if not text or not text.strip():
+        return False
+    return bool(_UNFULFILLED_INTENT_RE.search(text))
+
+
 @dataclass
 class GenerationResult:
     """Result of a single generation step."""

@@ -6,6 +6,7 @@ from towel.agent.runtime import (
     AgentRuntime,
     GenerationResult,
     format_tool_feedback,
+    looks_like_unfulfilled_intent,
     mlx_tokenizer_config,
     tool_result_is_error,
 )
@@ -326,3 +327,31 @@ class TestRegistrySuggestions:
         skills.register(DummySkill())
 
         assert skills.suggest_tools("read_files") == ["read_file"]
+
+
+class TestUnfulfilledIntent:
+    """looks_like_unfulfilled_intent gates the autonomy nudge — it must fire on
+    narrated-but-unperformed work and stay quiet on genuine final answers."""
+
+    def test_fires_on_narrated_action(self):
+        for text in [
+            "I'll run the build now, stand by.",
+            "Let me start the downloader to fetch the papers.",
+            "I'm going to extract the text next.",
+            "I will now create the pipeline files.",
+            "Please wait while the initial run completes.",
+            "Next, I'll build the full pipeline.",
+        ]:
+            assert looks_like_unfulfilled_intent(text), text
+
+    def test_quiet_on_final_answers(self):
+        for text in [
+            "Done — I wrote the file and it contains WORKS.",
+            "The build succeeded with exit code 0.",
+            "Let me know if you'd like anything else.",
+            "You can run `make test` to verify.",
+            "Here are the three results you asked for: a, b, c.",
+            "",
+            "   ",
+        ]:
+            assert not looks_like_unfulfilled_intent(text), text
