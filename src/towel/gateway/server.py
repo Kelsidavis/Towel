@@ -2838,7 +2838,14 @@ class GatewayServer:
 
         The task runs as a normal agent job. If a real request comes in,
         _preempt_idle_task cancels it first.
+
+        Gated here (the single chokepoint both callers funnel through — the
+        on-register dispatch and the periodic _schedule_idle_work) so the
+        idle_tasks_enabled opt-out can't be bypassed. Off by default: on a
+        single-GPU box idle work starves interactive requests.
         """
+        if not getattr(self.config, "idle_tasks_enabled", False):
+            return
         has_tools = bool(worker.capabilities.get("tools", False))
         assigned = self._node_tasks.get(worker.id)
         task = self._idle_manager.next_task_for_worker(worker.id, has_tools, assigned)
