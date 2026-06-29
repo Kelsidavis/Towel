@@ -161,6 +161,15 @@ class TowelConfig(BaseModel):
     # auditing several months of activity may want to bump it.
     memory_recall_log_cap: int = 5000
 
+    # Background idle tasks (lint, type-check, email triage, …) that the
+    # coordinator dispatches to otherwise-idle workers. Great on a multi-GPU
+    # fleet where spare workers can stay productive; harmful on a single-GPU
+    # box where llama-server is --parallel 1 — an in-flight idle generation
+    # monopolises the GPU and a real chat turn can't start until it yields,
+    # which reads to the user as "stopped responding". Set False to keep the
+    # GPU reserved for interactive requests.
+    idle_tasks_enabled: bool = True
+
     # In-memory dispatch decision history (ring buffer). 50 was the
     # original default which only covers minutes on a busy
     # coordinator. 500 trades ~50KB for several hours of audit at
