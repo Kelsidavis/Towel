@@ -239,6 +239,7 @@ class LlamaRuntime:
         self,
         include_tools_section: bool = True,
         query: str | None = None,
+        tools_available: bool = True,
     ) -> str:
         """Build system prompt with identity, context, and tool instructions.
 
@@ -269,7 +270,7 @@ class LlamaRuntime:
             if memory_block:
                 system += memory_block
 
-        tools = self.skills.tool_definitions()
+        tools = self.skills.tool_definitions() if tools_available else []
         if tools:
             if include_tools_section:
                 tool_lines = []
@@ -355,29 +356,52 @@ class LlamaRuntime:
         return messages
 
     def build_inference_request(self, conversation: Conversation) -> dict[str, Any]:
-        """Build a worker-safe payload for this conversation."""
+        """Build a worker-safe payload for this conversation.
+
+        Two task-aware decisions keep the heavy 27B path snappy:
+
+        - **Tools**: the full builtin tool list is ~25k prompt tokens. We only
+          attach it when the classified task type actually needs tools — a pure
+          chat/explain/summarize turn never calls a tool, so paying that prefill
+          (≈100s cold on a 27B) is pure waste.
+        - **Thinking**: reasoning models burn minutes in their <think> phase. We
+          only let them think on task types where it pays off (code, analysis,
+          planning); everything else flips ``reasoning_effort=none`` so the
+          chat template suppresses the thinking channel.
+
+        See towel.nodes.roles.task_needs_tools / task_wants_thinking.
+        """
+        from towel.nodes.roles import (
+            classify_task_type,
+            task_needs_tools,
+            task_wants_thinking,
+        )
+
         use_native = self._native_tools_supported
         query = conversation.latest_user_query()
         from towel.agent.capture import run_capture_hooks
         run_capture_hooks(query, memory=self.memory, config=self.config, runtime=self)
+
+        task_type = classify_task_type(query)
+        wants_tools = task_needs_tools(task_type)
+        wants_thinking = task_wants_thinking(task_type)
+
         request: dict[str, Any] = {
             "mode": "llama_chat",
             "system": self._build_system_prompt(
                 include_tools_section=not use_native,
                 query=query,
+                tools_available=wants_tools,
             ),
             "messages": self._build_messages(conversation),
             "model": self.config.model.name,
-            # Suppress the thinking channel by default for the tool-loop
-            # path too — generate_from_request/stream_from_request both
-            # read this field to flip `enable_thinking=False` on the
-            # chat-template kwargs sent to llama-server. Without this,
-            # Qwen3-thinking workers emit `<|channel>thought\n …` chains
-            # that wedge generation past chunk_timeout even on simple
-            # one-line prompts.
-            "reasoning_effort": "none",
         }
-        if use_native:
+        # generate_from_request/stream_from_request flip `enable_thinking=False`
+        # on the chat-template kwargs when reasoning_effort is "none". Omit it
+        # for reasoning task types so the model is free to think where it helps.
+        if not wants_thinking:
+            request["reasoning_effort"] = "none"
+        if use_native and wants_tools:
             native_tools = tools_as_openai_functions(self.skills.tool_definitions())
             if native_tools:
                 request["tools"] = native_tools

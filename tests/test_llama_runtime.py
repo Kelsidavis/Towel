@@ -53,3 +53,57 @@ def test_auto_start_disables_llama_fit(monkeypatch):
     assert created["extra_args"] == ["--fit", "off", "-c", "32768"]
     assert created["started"] is True
     assert created["waited"] is True
+
+
+def _runtime_with_tools():
+    """A LlamaRuntime backed by the full builtin skill registry.
+
+    Exercises the tools-attached vs tools-omitted branches of
+    build_inference_request against a realistic tool set.
+    """
+    from towel.skills.builtin import register_builtins
+    from towel.skills.registry import SkillRegistry
+
+    reg = SkillRegistry()
+    register_builtins(reg)
+    return LlamaRuntime(TowelConfig(), skills=reg, llama_url="http://localhost:8080")
+
+
+def _request_for(rt, text):
+    from towel.agent.conversation import Conversation, Role
+
+    conv = Conversation(id="t")
+    conv.add(Role.USER, text)
+    return rt.build_inference_request(conv)
+
+
+def test_build_request_chat_omits_tools_and_thinking():
+    rt = _runtime_with_tools()
+    req = _request_for(rt, "hi there")
+    # Pure chat: no tool payload, thinking suppressed (reasoning_effort=none).
+    assert "tools" not in req
+    assert req.get("reasoning_effort") == "none"
+
+
+def test_build_request_explain_omits_tools_keeps_fast():
+    rt = _runtime_with_tools()
+    req = _request_for(rt, "Explain what a towel is for, one sentence.")
+    assert "tools" not in req
+    assert req.get("reasoning_effort") == "none"
+
+
+def test_build_request_tool_task_attaches_tools_no_thinking():
+    rt = _runtime_with_tools()
+    req = _request_for(rt, "fetch https://example.com and show the title")
+    # Tool-heavy task: tools attached, but no slow <think> phase.
+    assert req.get("tools")
+    assert req.get("reasoning_effort") == "none"
+
+
+def test_build_request_reasoning_task_thinks():
+    rt = _runtime_with_tools()
+    req = _request_for(rt, "Analyze the tradeoffs of mutexes versus channels.")
+    # Reasoning task: thinking enabled (no reasoning_effort=none), and it
+    # doesn't need tools so the big payload stays off.
+    assert "reasoning_effort" not in req
+    assert "tools" not in req

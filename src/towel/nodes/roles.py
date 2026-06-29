@@ -123,6 +123,47 @@ TASK_REQUIREMENTS: dict[TaskType, dict[str, Any]] = {
 }
 
 
+# Task types whose answers justify the reasoning model's <think> phase. On a
+# reasoning model (Qwen3, DeepSeek-R1, …) thinking can add minutes of latency,
+# so it's reserved for work where the deliberation pays off (code, analysis,
+# planning). Everything else — chat, explain, summarize, tool execution —
+# answers directly and stays snappy.
+REASONING_TASK_TYPES: frozenset[TaskType] = frozenset(
+    {
+        TaskType.CODE_REVIEW,
+        TaskType.REFACTOR,
+        TaskType.TEST_GEN,
+        TaskType.ANALYZE,
+        TaskType.GENERATE,
+        TaskType.PLAN,
+        TaskType.RESEARCH,
+    }
+)
+
+
+def task_wants_thinking(task_type: TaskType | None) -> bool:
+    """True when this task type benefits from the model's <think> reasoning phase.
+
+    Unknown / None defaults to False — the snappy path. A misclassified hard
+    task loses some reasoning depth; a misclassified easy one would otherwise
+    eat minutes of <think> for nothing, which is the worse failure.
+    """
+    return task_type in REASONING_TASK_TYPES
+
+
+def task_needs_tools(task_type: TaskType | None) -> bool:
+    """True when this task type should be offered the (large) tool list.
+
+    The full builtin tool payload is ~25k prompt tokens; attaching it to a pure
+    chat/explain/summarize turn is wasted prefill the model never uses. Unknown
+    / None defaults to True — better to pay the prompt cost than silently strip
+    tools from a task that genuinely needed them.
+    """
+    if task_type is None:
+        return True
+    return bool(TASK_REQUIREMENTS.get(task_type, {}).get("needs_tools", True))
+
+
 # ── Heuristic thresholds ───────────────────────────────────────────
 
 # VRAM thresholds (MB) for inference tier classification
