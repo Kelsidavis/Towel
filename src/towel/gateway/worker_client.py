@@ -366,9 +366,15 @@ class RemoteWorkerClient:
         """
         caps = dict(self.capabilities)
         caps["live_resources"] = _detect_live_resources()
+        # Re-probe mounts every tick so a drive plugged in (or removed) after
+        # the worker started becomes routable without a restart. Always sent —
+        # an empty list lets the coordinator drop a now-unmounted drive too.
+        mounts = _probe_mounts()
+        caps["mounts"] = mounts
         # Keep the running record current too, so a future caller reading
         # ``self.capabilities`` sees the latest snapshot.
         self.capabilities["live_resources"] = caps["live_resources"]
+        self.capabilities["mounts"] = mounts
         await ws.send(
             json.dumps(
                 {

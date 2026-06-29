@@ -584,3 +584,21 @@ class TestMountRouting:
             "cd /media/k/drive/anna && python3 run.py", tracker.mount_owners()
         )
         assert owners == {"spark"}
+
+    def test_heartbeat_refreshes_mounts(self):
+        tracker = NodeTracker()
+        tracker.register("spark", {"backend": "llama"})  # no drive yet
+        assert tracker.mount_owners() == {}
+        # Drive plugged in after startup → advertised on next heartbeat.
+        tracker.update_heartbeat("spark", {"mounts": ["/media/k/drive"]})
+        assert tracker.mount_owners() == {"/media/k/drive": {"spark"}}
+        # Unmounted → empty list clears it.
+        tracker.update_heartbeat("spark", {"mounts": []})
+        assert tracker.mount_owners() == {}
+
+    def test_heartbeat_without_mounts_key_preserves(self):
+        tracker = NodeTracker()
+        tracker.register("spark", {"backend": "llama", "mounts": ["/media/k/drive"]})
+        # A heartbeat that omits mounts (older worker) must not clobber them.
+        tracker.update_heartbeat("spark", {"context_window": 4096})
+        assert tracker.mount_owners() == {"/media/k/drive": {"spark"}}

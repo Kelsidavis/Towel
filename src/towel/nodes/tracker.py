@@ -100,6 +100,13 @@ class NodeTracker:
         if new_ctx and new_ctx != node.context_window:
             node.context_window = new_ctx
 
+        # Refresh advertised mounts so a drive plugged in / removed after the
+        # worker registered changes where path-bearing requests route. Absent
+        # key (pre-mounts worker) is left untouched; an explicit [] clears them.
+        new_mounts = capabilities.get("mounts")
+        if new_mounts is not None and list(new_mounts) != node.mounts:
+            node.mounts = list(new_mounts)
+
         node.updated_at = datetime.now(UTC)
         return True
 
