@@ -207,6 +207,20 @@ def looks_like_unfulfilled_intent(text: str) -> bool:
     return bool(_UNFULFILLED_INTENT_RE.search(text))
 
 
+def summarize_tool_trace(tool_trace: list[dict[str, Any]]) -> str:
+    """One-line recap of the tools run this turn, for when the model finishes
+    work but returns no concluding text — so the user sees what happened rather
+    than a blank reply. e.g. "Ran 3 tools: run_command (ok), write_file (ok)…".
+    """
+    if not tool_trace:
+        return ""
+    n = len(tool_trace)
+    parts = [f"{t.get('tool', '?')} ({t.get('status', '?')})" for t in tool_trace[:5]]
+    more = "" if n <= 5 else f", +{n - 5} more"
+    noun = "tool" if n == 1 else "tools"
+    return f"Ran {n} {noun}: " + ", ".join(parts) + more + "."
+
+
 @dataclass
 class GenerationResult:
     """Result of a single generation step."""

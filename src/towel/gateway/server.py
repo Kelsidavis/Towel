@@ -35,6 +35,7 @@ from towel.agent.runtime import (
     AgentRuntime,
     format_tool_feedback,
     looks_like_unfulfilled_intent,
+    summarize_tool_trace,
     tool_result_is_error,
 )
 from towel.agent.tool_parser import parse_tool_calls
@@ -3330,9 +3331,15 @@ class GatewayServer:
                     response_meta["total_ms"] = stamped_total
                 if tool_trace:
                     response_meta["tool_trace"] = tool_trace
+                # If the model ran tools but returned no concluding text, recap
+                # what it did so the user gets a real answer, not a blank reply.
+                final_text = text
+                if not final_text.strip() and tool_trace:
+                    final_text = summarize_tool_trace(tool_trace)
+                    response_meta["synthesized_summary"] = True
                 response = Message(
                     role=Role.ASSISTANT,
-                    content=text,
+                    content=final_text,
                     metadata=response_meta,
                 )
                 session.conversation.messages.append(response)

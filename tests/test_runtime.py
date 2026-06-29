@@ -8,6 +8,7 @@ from towel.agent.runtime import (
     format_tool_feedback,
     looks_like_unfulfilled_intent,
     mlx_tokenizer_config,
+    summarize_tool_trace,
     tool_result_is_error,
 )
 from towel.config import TowelConfig
@@ -355,3 +356,25 @@ class TestUnfulfilledIntent:
             "   ",
         ]:
             assert not looks_like_unfulfilled_intent(text), text
+
+
+class TestSummarizeToolTrace:
+    def test_empty_trace(self):
+        assert summarize_tool_trace([]) == ""
+
+    def test_single_tool(self):
+        s = summarize_tool_trace([{"tool": "run_command", "status": "ok"}])
+        assert s == "Ran 1 tool: run_command (ok)."
+
+    def test_multiple_tools(self):
+        s = summarize_tool_trace([
+            {"tool": "run_command", "status": "ok"},
+            {"tool": "write_file", "status": "ok"},
+            {"tool": "read_file", "status": "error"},
+        ])
+        assert s == "Ran 3 tools: run_command (ok), write_file (ok), read_file (error)."
+
+    def test_truncates_after_five(self):
+        trace = [{"tool": f"t{i}", "status": "ok"} for i in range(7)]
+        s = summarize_tool_trace(trace)
+        assert "+2 more" in s and s.startswith("Ran 7 tools:")
