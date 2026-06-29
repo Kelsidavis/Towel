@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 from towel.gateway.dispatcher import (
     REASON_AFFINITY,
     REASON_CAPABILITY_FALLBACK,
+    REASON_MOUNT_OWNER,
     REASON_NO_WORKERS,
     REASON_PINNED,
     REASON_PREEMPT_IDLE,
@@ -665,6 +666,33 @@ class TestObservability:
         assert hist[-1].worker is alt
         # And the retry decision is JSON-friendly so /dispatch/recent
         # can serialize it.
+        import json
+        json.dumps(hist[-1].to_dict())
+
+    def test_record_mount_redirect_appears_in_history(self):
+        """The data-locality override reroutes outside select_for_session;
+        recording it keeps /dispatch/recent honest about where the request ran."""
+        workers = WorkerRegistry()
+        _make_worker(workers, "small")
+        owner = _make_worker(workers, "spark")
+        d = _make_dispatcher(
+            workers, roles={"small": [NodeRole.INFERENCE], "spark": [NodeRole.INFERENCE]},
+        )
+        d.select_for_session("s-mnt", intent="tool")
+        baseline = len(d.history())
+
+        decision = d.record_mount_redirect(
+            session_id="s-mnt",
+            owner=owner,
+            original_worker_id="small",
+            intent="tool",
+        )
+        hist = d.history()
+        assert len(hist) == baseline + 1
+        assert hist[-1] is decision
+        assert hist[-1].reason == REASON_MOUNT_OWNER
+        assert hist[-1].previous_worker_id == "small"
+        assert hist[-1].worker is owner
         import json
         json.dumps(hist[-1].to_dict())
 

@@ -2170,7 +2170,7 @@ class GatewayServer:
             # Data locality: if the request names a path that lives on another
             # node's mounted drive, route there instead — the file tools only
             # see local storage, so the chosen worker couldn't touch it anyway.
-            chosen = self._redirect_to_mount_owner(message, decision.worker)
+            chosen = self._redirect_to_mount_owner(message, decision.worker, session_id)
             # If this session was previously affinitied to a different
             # worker, close the slot on the old worker — otherwise the
             # old slot persists indefinitely on a worker that no longer
@@ -2186,7 +2186,7 @@ class GatewayServer:
         return None, decision.intent
 
     def _redirect_to_mount_owner(
-        self, message: str, selected: WorkerInfo
+        self, message: str, selected: WorkerInfo, session_id: str,
     ) -> WorkerInfo:
         """Return the mount-owning worker for a path in ``message``, else ``selected``.
 
@@ -2205,6 +2205,16 @@ class GatewayServer:
                     "drive that %s cannot reach",
                     owner_id, selected.id,
                 )
+                # Record the override so /dispatch/recent shows the real routing.
+                if self._dispatcher is not None:
+                    last = self._dispatcher.last_decision_for_session(session_id)
+                    intent = last.intent if last is not None else "task"
+                    self._dispatcher.record_mount_redirect(
+                        session_id=session_id,
+                        owner=owner,
+                        original_worker_id=selected.id,
+                        intent=intent,
+                    )
                 return owner
         return selected
 

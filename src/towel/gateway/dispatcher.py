@@ -64,6 +64,7 @@ REASON_NO_WORKERS = "no_workers_available"
 # only the failed primary and couldn't tell that a retry rescued
 # the request (or didn't).
 REASON_RETRY_EMPTY = "retry_empty_text"
+REASON_MOUNT_OWNER = "mount_owner"
 
 # Recorded when /api/ask (or another endpoint) opted into the
 # ensemble collaboration mode. The individual per-worker fan-out
@@ -1000,6 +1001,36 @@ class Dispatcher:
             intent=intent,
             reason=REASON_RETRY_EMPTY,
             notes=note_phrase,
+            session_id=session_id,
+            previous_worker_id=original_worker_id,
+            candidates_considered=1,
+        )
+        self._record(decision)
+        return decision
+
+    def record_mount_redirect(
+        self,
+        session_id: str,
+        owner: WorkerInfo,
+        original_worker_id: str,
+        intent: str,
+    ) -> DispatchDecision:
+        """Log a data-locality redirect as its own dispatch decision.
+
+        The mount-aware override in `_route_by_role` reroutes a path-bearing
+        request to the node that has the drive, bypassing the normal selection.
+        Recording it here makes /dispatch/recent self-describing — operators see
+        "routed to <owner> (owns the drive) instead of <original>" rather than a
+        decision that points at a worker the request never actually ran on.
+        """
+        decision = DispatchDecision(
+            worker=owner,
+            intent=intent,
+            reason=REASON_MOUNT_OWNER,
+            notes=(
+                f"routed to {owner.id} (owns a drive the request references) "
+                f"instead of {original_worker_id}"
+            ),
             session_id=session_id,
             previous_worker_id=original_worker_id,
             candidates_considered=1,
