@@ -53,6 +53,7 @@ from towel.nodes.roles import (
     best_node_for_task,
     classify_message_intent,
     classify_task_type,
+    task_needs_tools,
     worker_quality_tier,
 )
 from towel.nodes.tracker import NodeTracker
@@ -6620,7 +6621,15 @@ class GatewayServer:
                     # failure: "worker X didn't give us a useful
                     # answer" — and a second worker is right there.
                     try:
-                        if use_agent_path:
+                        # Auto-route explicitly tool-requiring requests to the agent path
+                        # so they can actually execute work instead of just talking about it
+                        # in prose. Tasks like "write code" or "generate images" need tools.
+                        # Only route when we have a KNOWN task type that requires tools,
+                        # not for unknown classifications (which default to needing tools
+                        # as a safety margin but would break clients relying on no-tools).
+                        task_type = classify_task_type(message)
+                        needs_tools = task_type is not None and task_needs_tools(task_type)
+                        if use_agent_path or needs_tools:
                             # Operator-requested escape hatch from the
                             # chat-fast `infer` handler. Route through
                             # the agent-loop `run` handler instead —
