@@ -3229,6 +3229,10 @@ class GatewayServer:
         # toward the goal instead of ending mid-task. Capped so a chronically
         # narrating model can't loop forever.
         autonomy_nudges = 0
+        # Transparency: record each tool the agent actually ran this turn so the
+        # non-streaming /api/ask response can show what happened, not just the
+        # final text. (The WS path already streams tool_call/tool_result events.)
+        tool_trace: list[dict[str, Any]] = []
 
         for _ in range(MAX_TOOL_ITERATIONS):
             # Stream tokens so chunk_timeout (300s no-event) doesn't
@@ -3296,6 +3300,8 @@ class GatewayServer:
                 response_meta = last_metadata | {"tokens": total_tokens}
                 if "total_ms" not in response_meta:
                     response_meta["total_ms"] = stamped_total
+                if tool_trace:
+                    response_meta["tool_trace"] = tool_trace
                 response = Message(
                     role=Role.ASSISTANT,
                     content=text,
@@ -3347,8 +3353,19 @@ class GatewayServer:
                     tool_name=tc.name,
                     status="error" if is_error else "ok",
                 )
+                # Keep a compact record for the response's tool_trace. The
+                # result preview is truncated so a multi-KB file read or shell
+                # dump doesn't bloat every /api/ask body.
+                tool_trace.append({
+                    "tool": tc.name,
+                    "arguments": tc.arguments,
+                    "status": "error" if is_error else "ok",
+                    "result_preview": result_str[:500],
+                })
 
         from towel.agent.conversation import Message
+
+        trace_meta = {"tool_trace": tool_trace} if tool_trace else {}
 
         if loop_detected:
             stuck_msg = (
@@ -3358,7 +3375,9 @@ class GatewayServer:
             response = Message(
                 role=Role.ASSISTANT,
                 content=remaining_text + ("\n\n" + stuck_msg if remaining_text else stuck_msg),
-                metadata=last_metadata | {"tokens": total_tokens, "loop_detected": True},
+                metadata=last_metadata
+                | {"tokens": total_tokens, "loop_detected": True}
+                | trace_meta,
             )
             session.conversation.messages.append(response)
             return response
@@ -3366,7 +3385,9 @@ class GatewayServer:
         response = Message(
             role=Role.ASSISTANT,
             content=remaining_text or "I've reached my tool execution limit for this turn.",
-            metadata=last_metadata | {"tokens": total_tokens, "max_iterations": True},
+            metadata=last_metadata
+            | {"tokens": total_tokens, "max_iterations": True}
+            | trace_meta,
         )
         session.conversation.messages.append(response)
         return response
@@ -6997,6 +7018,11 @@ class GatewayServer:
                     body["ttft_ms"] = round(meta["ttft_ms"], 1)
                 if isinstance(meta.get("total_ms"), int | float):
                     body["total_ms"] = round(meta["total_ms"], 1)
+                # Transparency: when the agent ran tools to produce this answer,
+                # surface what it actually did so non-streaming /api/ask callers
+                # see the work, not just the final text.
+                if isinstance(meta.get("tool_trace"), list) and meta["tool_trace"]:
+                    body["tools"] = meta["tool_trace"]
                 # End-to-end wall-clock time for the whole request,
                 # including any retry hops and the coordinator's own
                 # work (memory injection, classification, dispatch).
