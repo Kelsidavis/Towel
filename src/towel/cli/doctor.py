@@ -72,7 +72,8 @@ def run_doctor(config: TowelConfig | None = None) -> list[Check]:
 
     checks.append(check_environment())
     checks.append(check_config(config))
-    checks.append(check_mlx())
+    checks.append(check_gpu(config))
+    checks.append(check_mlx(config))
     checks.append(check_model(config))
     checks.append(check_skills(config))
     checks.append(check_gateway(config))
@@ -174,9 +175,64 @@ def check_config(config: TowelConfig) -> Check:
     return c
 
 
-def check_mlx() -> Check:
-    """Check MLX installation and capabilities."""
+def check_gpu(config: TowelConfig) -> Check:
+    """Detect local GPUs and report VRAM + a rough model-size capacity.
+
+    Towel never offloads to the GPU itself — llama-server / Ollama / MLX do —
+    but operators still want to know "does my box even see the card, and how
+    big a model fits?" This answers both. On the claude/ollama backends a
+    missing local GPU is fine (inference is remote / CPU-managed), so it stays
+    informational there rather than a warning.
+    """
+    c = Check("GPU")
+    try:
+        from towel.agent.discovery import detect_gpus
+    except Exception as e:  # pragma: no cover - import guard
+        c.warn(f"GPU detection unavailable: {e}")
+        return c
+
+    try:
+        gpus = detect_gpus()
+    except Exception as e:
+        c.warn(f"GPU detection failed: {e}")
+        return c
+
+    if not gpus:
+        if config.backend in ("claude", "ollama"):
+            c.ok(f"No local GPU detected (not required for the {config.backend} backend)")
+        else:
+            c.warn("No GPU detected — local inference will run on CPU (slow)")
+            c.suggestions.append(
+                "Verify drivers (nvidia-smi) or that llama-server's "
+                "`--list-devices` shows your card (Vulkan/ROCm builds)"
+            )
+        return c
+
+    total = sum(g.vram_mb for g in gpus)
+    for g in gpus:
+        c.ok(f"{g.name} — {g.vram_mb} MB VRAM")
+    if len(gpus) > 1:
+        c.ok(f"Total VRAM: {total} MB across {len(gpus)} GPUs")
+    # Same 0.6 GB/B-param, 2 GB-headroom heuristic the worker advertises.
+    usable_gb = max(0.0, (total - 2048) / 1024.0)
+    if usable_gb > 0:
+        c.ok(f"Fits ~{usable_gb / 0.6:.1f}B-param model at 4-bit (≈0.6 GB/B, 2 GB headroom)")
+    return c
+
+
+def check_mlx(config: TowelConfig | None = None) -> Check:
+    """Check MLX installation and capabilities.
+
+    MLX is Apple-Silicon-only inference. On the llama/ollama/claude backends it
+    is never imported, so reporting "mlx not installed" there is pure noise —
+    skip straight to an informational line instead of a hard FAIL.
+    """
     c = Check("MLX")
+
+    backend = getattr(config, "backend", "") if config else ""
+    if backend in ("llama", "ollama", "claude"):
+        c.ok(f"Not used on the {backend} backend (MLX is Apple-Silicon inference only)")
+        return c
 
     # Core MLX
     try:
@@ -211,13 +267,82 @@ def check_mlx() -> Check:
     return c
 
 
+def _check_llama_model(c: Check, config: TowelConfig) -> Check:
+    """Model availability for the llama backend (GGUF / llama-server).
+
+    The model is a GGUF file served by llama-server, not an MLX/HF download, so
+    the right questions are "is a server already serving it?" and, failing that,
+    "is the GGUF on disk?" — never "should we mlx_lm.load() it?".
+    """
+    url = (config.llama_url or "http://localhost:8080").rstrip("/")
+    try:
+        import httpx
+
+        data = httpx.get(f"{url}/v1/models", timeout=2).json()
+        entries = data.get("data") or data.get("models") or []
+        served = ""
+        if entries:
+            raw = entries[0].get("id") or entries[0].get("model") or entries[0].get("name") or ""
+            served = str(raw).rsplit("/", 1)[-1]
+            if served.lower().endswith(".gguf"):
+                served = served[:-5]
+        if served:
+            c.ok(f"llama-server is serving: {served} ({url})")
+            return c
+    except Exception:
+        pass  # no server up — fall through to the on-disk scan
+
+    try:
+        from towel.agent.discovery import scan_gguf_models
+
+        models = scan_gguf_models()
+    except Exception:
+        models = []
+
+    if not models:
+        c.warn("No llama-server running and no GGUF models found on disk")
+        c.suggestions.append(
+            "Start your llama-server (e.g. ~/.towel/launch-llama.sh), or place "
+            "a .gguf in ~/models or ~/.towel/models"
+        )
+        return c
+
+    want = config.model.name.lower()
+    match = next(
+        (m for m in models if want and (want in m.name.lower() or m.name.lower() in want)),
+        None,
+    )
+    if match:
+        c.ok(f"GGUF on disk: {match.name} ({match.size_gb} GB) at {match.path}")
+        c.ok(f"No llama-server up yet at {url} — start it to serve this model")
+    else:
+        c.warn(
+            f"No llama-server running and no GGUF matching '{config.model.name}' on disk"
+        )
+        c.ok(f"{len(models)} other GGUF(s) found — largest: {models[0].name} ({models[0].size_gb} GB)")
+        c.suggestions.append(
+            "Start llama-server, or set [model].name to a GGUF you have"
+        )
+    return c
+
+
 def check_model(config: TowelConfig) -> Check:
-    """Check if the configured model is available."""
+    """Check if the configured model is available (backend-aware)."""
     c = Check("Model")
 
     model_name = config.model.name
     c.ok(f"Configured: {model_name}")
 
+    if config.backend == "claude":
+        c.ok("Served by the Claude API — nothing to download locally")
+        return c
+    if config.backend == "ollama":
+        c.ok("Served by Ollama — run `ollama list` to confirm it is pulled")
+        return c
+    if config.backend == "llama":
+        return _check_llama_model(c, config)
+
+    # Default / MLX backend: HuggingFace + MLX cache check.
     # Check HuggingFace cache for downloaded models
     hf_cache = Path.home() / ".cache" / "huggingface" / "hub"
     mlx_cache = Path.home() / ".cache" / "mlx"

@@ -341,10 +341,11 @@ class TestRunDoctor:
         config = TowelConfig()
         config.gateway.port = 19997  # avoid conflicts
         checks = run_doctor(config)
-        assert len(checks) == 11
+        assert len(checks) == 12
         names = [c.name for c in checks]
         assert "Environment" in names
         assert "Configuration" in names
+        assert "GPU" in names
         assert "MLX" in names
         assert "Model" in names
         assert "Skills" in names
