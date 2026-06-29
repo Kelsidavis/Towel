@@ -138,6 +138,48 @@ def test_tool_call_to_dict():
     assert tc.to_dict() == {"name": "test", "arguments": {"a": 1}}
 
 
+def test_special_token_call_dropped_closing_pipe():
+    """Small/abliterated models emit <|tool_call>call:name\\nargs — the
+    closing pipe before ``>`` and the trailing <|/tool_call|> are dropped,
+    and args arrive as a raw line. Previously this leaked verbatim as the
+    assistant's text instead of being parsed."""
+    calls, remaining = parse_tool_calls("<|tool_call>call:shell\necho hello-from-tool")
+    assert len(calls) == 1
+    assert calls[0].name == "shell"
+    assert calls[0].arguments == {"input": "echo hello-from-tool"}
+    assert remaining == ""
+
+
+def test_special_token_call_with_json_args():
+    """The raw trailing body is parsed as JSON arguments when it is a JSON
+    object, not wrapped in the {"input": ...} fallback."""
+    calls, _ = parse_tool_calls(
+        '<|tool_call|>call:write_file\n{"path": "a.txt", "content": "hi"}'
+    )
+    assert len(calls) == 1
+    assert calls[0].name == "write_file"
+    assert calls[0].arguments == {"path": "a.txt", "content": "hi"}
+
+
+def test_special_token_json_envelope_still_uses_json_path():
+    """A <|tool_call|>{...}<|/tool_call|> JSON envelope must keep routing
+    through the JSON normalizer (name/arguments extracted) and must NOT be
+    swept into the lenient {"input": ...} fallback."""
+    calls, _ = parse_tool_calls(
+        '<|tool_call|>{"name": "read_file", "arguments": {"path": "x"}}<|/tool_call|>'
+    )
+    assert len(calls) == 1
+    assert calls[0].name == "read_file"
+    assert calls[0].arguments == {"path": "x"}
+
+
+def test_special_token_pattern_no_false_positive_on_prose():
+    """Plain prose without any tool-call token yields no calls."""
+    calls, remaining = parse_tool_calls("Sure, I can help — no tools needed here.")
+    assert calls == []
+    assert remaining == "Sure, I can help — no tools needed here."
+
+
 def test_parse_tool_calls_handles_none_defensively():
     """A backend that returns GenerationResult(text=None) used to
     crash callers inside re.finditer. The parser now coerces non-

@@ -103,7 +103,9 @@ def test_build_request_tool_task_attaches_tools_no_thinking():
 def test_build_request_reasoning_task_thinks():
     rt = _runtime_with_tools()
     req = _request_for(rt, "Analyze the tradeoffs of mutexes versus channels.")
-    # Reasoning task: thinking enabled (no reasoning_effort=none), and it
-    # doesn't need tools so the big payload stays off.
+    # Reasoning task (analyze): thinking enabled (no reasoning_effort=none).
+    # Tools are also attached — analyze frequently means "analyze this repo",
+    # which needs to read files, so the classifier errs toward keeping tools
+    # rather than silently disarming a work request (see TASK_REQUIREMENTS).
     assert "reasoning_effort" not in req
-    assert "tools" not in req
+    assert req.get("tools")

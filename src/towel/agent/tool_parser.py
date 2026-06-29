@@ -61,6 +61,24 @@ _FUNC_CALL_PATTERN = re.compile(
     re.DOTALL,
 )
 
+# Lenient special-token style emitted by some small/abliterated models, e.g.
+#   <|tool_call>call:shell
+#   echo hello
+# The closing pipe before ``>`` is often dropped, the ``call:`` prefix is
+# optional, and the closing ``<|/tool_call|>`` may be missing entirely. Args
+# follow as a paren group, a JSON object, or a raw trailing line (terminated by
+# the next tool-call token or end of text). Bare identifiers only — blocks that
+# open with ``{`` are JSON envelopes handled by _PATTERNS, so the leading
+# ``[A-Za-z_]`` name class deliberately won't match them.
+_SPECIAL_TOKEN_CALL_PATTERN = re.compile(
+    r"<\|tool_call\|?>\s*"               # opening token, closing pipe optional
+    r"(?:call:)?\s*"                     # optional `call:` prefix
+    r"([A-Za-z_]\w*)"                    # tool name
+    r"(?:\(([^)]*)\)|[:\n]\s*(.*?))?"    # (paren args) | : / newline raw args
+    r"\s*(?=<\|/?tool_call\|?>|<\||$)",  # stop at next token or end of text
+    re.DOTALL,
+)
+
 # Qwen Hermes-style: ✿FUNCTION✿name\n✿ARGS✿{...} (terminated by ✿RESULT✿ or end)
 _QWEN_HERMES_PATTERN = re.compile(
     r"✿FUNCTION✿\s*(\w+)\s*\n✿ARGS✿\s*(\{.*?\})\s*(?:✿RESULT✿|✿|$)",
@@ -139,6 +157,34 @@ def parse_tool_calls(text: str) -> tuple[list[ToolCall], str]:
             remaining = remaining.replace(match.group(0), "")
         except (ValueError, SyntaxError):
             continue
+
+    if calls:
+        return calls, remaining.strip()
+
+    # Try the lenient special-token style (<|tool_call>call:name\nargs)
+    for match in _SPECIAL_TOKEN_CALL_PATTERN.finditer(text):
+        name = match.group(1)
+        paren_args = match.group(2)
+        raw_args = match.group(3)
+        if paren_args is not None:
+            try:
+                args = _parse_func_args(paren_args.strip())
+            except (ValueError, SyntaxError):
+                args = {}
+        elif raw_args is not None and raw_args.strip():
+            body = raw_args.strip()
+            # The trailing text may itself be a JSON object of arguments;
+            # otherwise fall back to the same {"input": ...} envelope the
+            # JSON normalizer uses for unkeyed string arguments.
+            try:
+                parsed_body = json.loads(body)
+                args = parsed_body if isinstance(parsed_body, dict) else {"input": body}
+            except (json.JSONDecodeError, TypeError):
+                args = {"input": body}
+        else:
+            args = {}
+        calls.append(ToolCall(name=name, arguments=args, raw=match.group(0)))
+        remaining = remaining.replace(match.group(0), "")
 
     if calls:
         return calls, remaining.strip()

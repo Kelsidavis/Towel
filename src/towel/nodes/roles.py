@@ -92,9 +92,9 @@ class TaskType(Enum):
 TASK_REQUIREMENTS: dict[TaskType, dict[str, Any]] = {
     # Code quality — moderate models, tools helpful
     TaskType.LINT:        {"roles": [NodeRole.TOOL_WORKER, NodeRole.GENERAL], "needs_tools": True, "min_vram_mb": 0, "min_context": 8192, "prefer_fast": True},
-    TaskType.CODE_REVIEW: {"roles": [NodeRole.INFERENCE], "needs_tools": False, "min_vram_mb": 4000, "min_context": 32768, "prefer_quality": True},
+    TaskType.CODE_REVIEW: {"roles": [NodeRole.INFERENCE], "needs_tools": True, "min_vram_mb": 4000, "min_context": 32768, "prefer_quality": True},
     TaskType.REFACTOR:    {"roles": [NodeRole.INFERENCE, NodeRole.TOOL_WORKER], "needs_tools": True, "min_vram_mb": 4000, "min_context": 32768, "prefer_quality": True},
-    TaskType.TEST_GEN:    {"roles": [NodeRole.INFERENCE], "needs_tools": False, "min_vram_mb": 4000, "min_context": 16384, "prefer_quality": True},
+    TaskType.TEST_GEN:    {"roles": [NodeRole.INFERENCE], "needs_tools": True, "min_vram_mb": 4000, "min_context": 16384, "prefer_quality": True},
     TaskType.TEST_RUN:    {"roles": [NodeRole.TOOL_WORKER], "needs_tools": True, "min_vram_mb": 0, "min_context": 8192, "prefer_fast": True},
     TaskType.TYPE_CHECK:  {"roles": [NodeRole.TOOL_WORKER, NodeRole.GENERAL], "needs_tools": True, "min_vram_mb": 0, "min_context": 8192, "prefer_fast": True},
 
@@ -102,7 +102,7 @@ TASK_REQUIREMENTS: dict[TaskType, dict[str, Any]] = {
     TaskType.RESEARCH:    {"roles": [NodeRole.INFERENCE, NodeRole.TOOL_WORKER], "needs_tools": True, "min_vram_mb": 4000, "min_context": 32768, "prefer_quality": True},
     TaskType.SUMMARIZE:   {"roles": [NodeRole.INFERENCE], "needs_tools": False, "min_vram_mb": 4000, "min_context": 65536, "prefer_quality": True},
     TaskType.EXPLAIN:     {"roles": [NodeRole.INFERENCE], "needs_tools": False, "min_vram_mb": 2000, "min_context": 16384, "prefer_quality": True},
-    TaskType.ANALYZE:     {"roles": [NodeRole.INFERENCE], "needs_tools": False, "min_vram_mb": 8000, "min_context": 32768, "prefer_quality": True},
+    TaskType.ANALYZE:     {"roles": [NodeRole.INFERENCE], "needs_tools": True, "min_vram_mb": 8000, "min_context": 32768, "prefer_quality": True},
 
     # Generation — quality models, decent context
     TaskType.GENERATE:    {"roles": [NodeRole.INFERENCE, NodeRole.TOOL_WORKER], "needs_tools": True, "min_vram_mb": 4000, "min_context": 32768, "prefer_quality": True},
@@ -118,7 +118,7 @@ TASK_REQUIREMENTS: dict[TaskType, dict[str, Any]] = {
 
     # Orchestration — lightweight, fast
     TaskType.TRIAGE:      {"roles": [NodeRole.CLASSIFIER], "needs_tools": False, "min_vram_mb": 0, "min_context": 4096, "prefer_fast": True},
-    TaskType.PLAN:        {"roles": [NodeRole.INFERENCE], "needs_tools": False, "min_vram_mb": 4000, "min_context": 32768, "prefer_quality": True},
+    TaskType.PLAN:        {"roles": [NodeRole.INFERENCE], "needs_tools": True, "min_vram_mb": 4000, "min_context": 32768, "prefer_quality": True},
     TaskType.CHAT:        {"roles": [NodeRole.CLASSIFIER, NodeRole.GENERAL], "needs_tools": False, "min_vram_mb": 0, "min_context": 4096, "prefer_fast": True},
 }
 

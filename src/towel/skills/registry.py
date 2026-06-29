@@ -14,6 +14,22 @@ from towel.skills.base import Skill
 class SkillRegistry:
     """Central registry of loaded skills and their tools."""
 
+    # Canonical tool names small models routinely miss — they emit the
+    # task/skill word ("shell") instead of the registered tool ("run_command").
+    # Resolving these here means a <|tool_call>call:shell\n<cmd> emission
+    # (parsed as {"input": "<cmd>"} by tool_parser) actually executes instead
+    # of bouncing off an "Unknown tool: shell" error. The lone positional from
+    # such calls is remapped onto the target tool's primary parameter.
+    _TOOL_ALIASES: dict[str, str] = {
+        "shell": "run_command",
+        "bash": "run_command",
+        "sh": "run_command",
+        "exec": "run_command",
+        "command": "run_command",
+        "terminal": "run_command",
+        "run_shell": "run_command",
+    }
+
     def __init__(self) -> None:
         self._skills: dict[str, Skill] = {}
         self._tool_map: dict[str, Skill] = {}  # tool_name -> owning skill
@@ -45,6 +61,47 @@ class SkillRegistry:
         """Return close tool-name matches for recovery from model mistakes."""
         return get_close_matches(tool_name, self.tool_names(), n=limit, cutoff=0.5)
 
+    def _primary_arg_key(self, tool_name: str) -> str | None:
+        """Best-guess primary parameter for a tool — the first ``required``
+        entry, else the first declared property. Used to place a lone
+        positional value (e.g. an aliased ``{"input": ...}``) onto the key the
+        tool actually expects.
+        """
+        skill = self._tool_map.get(tool_name)
+        if not skill:
+            return None
+        for tool in skill.tools():
+            if tool.name != tool_name:
+                continue
+            params = getattr(tool, "parameters", None) or {}
+            required = params.get("required")
+            if isinstance(required, list) and required:
+                return str(required[0])
+            props = params.get("properties")
+            if isinstance(props, dict) and props:
+                return next(iter(props))
+            return None
+        return None
+
+    def _resolve_alias(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> tuple[str, dict[str, Any]]:
+        """Map a misnamed tool to its canonical name and realign its args.
+
+        Returns ``(tool_name, arguments)`` unchanged when no alias applies or
+        the canonical target isn't registered. When an alias resolves and the
+        caller passed a lone ``{"input": value}`` positional, the value is
+        moved onto the target tool's primary parameter so the call can run.
+        """
+        canonical = self._TOOL_ALIASES.get(tool_name)
+        if not canonical or canonical not in self._tool_map:
+            return tool_name, arguments
+        if list(arguments.keys()) == ["input"]:
+            primary = self._primary_arg_key(canonical)
+            if primary and primary != "input":
+                arguments = {primary: arguments["input"]}
+        return canonical, arguments
+
     def tool_definitions(self) -> list[dict[str, Any]]:
         """Return all tool definitions across all skills."""
         defs: list[dict[str, Any]] = []
@@ -60,6 +117,10 @@ class SkillRegistry:
         reconstructed after the fact. Auditing is best-effort and never
         changes the tool's result or raises on its own.
         """
+        # Recover from common name mistakes (e.g. shell -> run_command) before
+        # giving up, realigning a lone positional onto the real parameter.
+        if tool_name not in self._tool_map:
+            tool_name, arguments = self._resolve_alias(tool_name, arguments)
         skill = self._tool_map.get(tool_name)
         if not skill:
             suggestions = self.suggest_tools(tool_name)
