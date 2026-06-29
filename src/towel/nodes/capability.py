@@ -193,6 +193,10 @@ class NodeCapability:
     context_window: int = 0
     max_tokens: int = 0
     tools: bool = False
+    # External/removable mount points this node can read (e.g. /media/k/drive).
+    # Advertised by the worker so the coordinator can route a request that
+    # references a path under one of them to the node that actually has it.
+    mounts: list[str] = field(default_factory=list)
     context_slots: list[ContextSlot] = field(default_factory=list)
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -305,6 +309,7 @@ class NodeCapability:
             "context_window": self.context_window,
             "max_tokens": self.max_tokens,
             "tools": self.tools,
+            "mounts": self.mounts,
             "context_pressure": round(self.context_pressure, 3),
             "active_sessions": self.active_sessions,
             "total_context_tokens_used": self.total_context_tokens_used,
@@ -324,4 +329,5 @@ class NodeCapability:
             context_window=caps.get("context_window", 0),
             max_tokens=caps.get("max_tokens", 0),
             tools=bool(caps.get("tools", False)),
+            mounts=list(caps.get("mounts", []) or []),
         )

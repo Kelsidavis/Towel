@@ -17,6 +17,7 @@ manual override per worker via the fleet UI.
 from __future__ import annotations
 
 import logging
+import re
 from enum import Enum
 from typing import Any
 
@@ -818,3 +819,42 @@ def classify_task_type(text: str) -> TaskType | None:
             return TaskType.FILE_OPS
 
     return None
+
+
+# Absolute paths mentioned in a request — used to route by data locality.
+# Quotes/backticks/parens are stripped by the surrounding non-path delimiters,
+# so this catches `/media/k/drive/x`, "/mnt/data", and bare /srv/app paths.
+_ABS_PATH_RE = re.compile(r"/(?:[\w.\-]+/)*[\w.\-]+")
+
+
+def extract_paths(text: str) -> list[str]:
+    """Return absolute filesystem paths mentioned in ``text``."""
+    if not text:
+        return []
+    return _ABS_PATH_RE.findall(text)
+
+
+def resolve_mount_owners(text: str, mount_owners: dict[str, set[str]]) -> set[str]:
+    """Worker ids that own a mount containing a path mentioned in ``text``.
+
+    Matches each referenced path against the advertised mount points and returns
+    the owners of the *longest* matching mount (most specific wins). Empty when
+    no mounted path is referenced — callers then fall back to normal scheduling.
+    """
+    if not mount_owners:
+        return set()
+    paths = extract_paths(text)
+    if not paths:
+        return set()
+    best_len = -1
+    owners: set[str] = set()
+    for path in paths:
+        for mount, workers in mount_owners.items():
+            prefix = mount.rstrip("/")
+            if path == prefix or path.startswith(prefix + "/"):
+                if len(prefix) > best_len:
+                    best_len = len(prefix)
+                    owners = set(workers)
+                elif len(prefix) == best_len:
+                    owners |= workers
+    return owners

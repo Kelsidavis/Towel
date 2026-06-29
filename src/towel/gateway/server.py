@@ -56,6 +56,7 @@ from towel.nodes.roles import (
     best_node_for_task,
     classify_message_intent,
     classify_task_type,
+    resolve_mount_owners,
     task_needs_tools,
     worker_quality_tier,
 )
@@ -2165,19 +2166,46 @@ class GatewayServer:
         )
 
         if decision.worker is not None:
+            # Data locality: if the request names a path that lives on another
+            # node's mounted drive, route there instead — the file tools only
+            # see local storage, so the chosen worker couldn't touch it anyway.
+            chosen = self._redirect_to_mount_owner(message, decision.worker)
             # If this session was previously affinitied to a different
             # worker, close the slot on the old worker — otherwise the
             # old slot persists indefinitely on a worker that no longer
             # owns this session. Same leak class as the delete path
             # (see commit 6ca89a0).
             prior = self._session_workers.get(session_id)
-            if prior is not None and prior != decision.worker.id:
+            if prior is not None and prior != chosen.id:
                 self._node_tracker.close_context_slot(prior, session_id)
-            self._session_workers[session_id] = decision.worker.id
-            return decision.worker, decision.intent
+            self._session_workers[session_id] = chosen.id
+            return chosen, decision.intent
 
         # No worker → coordinator handles the request locally.
         return None, decision.intent
+
+    def _redirect_to_mount_owner(
+        self, message: str, selected: WorkerInfo
+    ) -> WorkerInfo:
+        """Return the mount-owning worker for a path in ``message``, else ``selected``.
+
+        Only overrides when the message references a path under a mount that the
+        selected worker does NOT have, and an enabled, non-draining owner is
+        connected. Otherwise returns the original selection unchanged.
+        """
+        owner_ids = resolve_mount_owners(message, self._node_tracker.mount_owners())
+        if not owner_ids or selected.id in owner_ids:
+            return selected
+        for owner_id in owner_ids:
+            owner = self._workers.get(owner_id)
+            if owner is not None and owner.enabled and not owner.draining:
+                log.info(
+                    "routing to mount owner %s: request references a path on its "
+                    "drive that %s cannot reach",
+                    owner_id, selected.id,
+                )
+                return owner
+        return selected
 
     async def dispatch_role_task(
         self,

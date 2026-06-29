@@ -532,6 +532,35 @@ def _detect_system_resources() -> dict[str, Any]:
     return resources
 
 
+# Mount roots worth advertising for data-locality routing — external/removable
+# media, not system mounts. A worker exposes these so the coordinator can route
+# a request that references a path under one of them to the node that has it.
+_INTERESTING_MOUNT_ROOTS = ("/media/", "/mnt/", "/run/media/", "/Volumes/")
+
+
+def _probe_mounts() -> list[str]:
+    """Return this host's external/removable mount points (best effort).
+
+    Reads /proc/mounts (Linux). Anything that can't be read — e.g. macOS, where
+    there's no /proc — yields an empty list, so the worker simply advertises no
+    mounts and routing falls back to normal scheduling.
+    """
+    found: set[str] = set()
+    try:
+        with open("/proc/mounts", encoding="utf-8") as fh:
+            for line in fh:
+                parts = line.split()
+                if len(parts) < 2:
+                    continue
+                # /proc/mounts octal-escapes spaces and a few other chars.
+                mount_point = parts[1].replace("\\040", " ")
+                if mount_point.startswith(_INTERESTING_MOUNT_ROOTS):
+                    found.add(mount_point)
+    except OSError:
+        pass
+    return sorted(found)
+
+
 def default_worker_capabilities(
     config: Any,
     backend: str,
@@ -608,6 +637,12 @@ def default_worker_capabilities(
 
     # Add system resource info (RAM, CPU)
     caps["resources"] = _detect_system_resources()
+
+    # Advertise external/removable mounts so the coordinator can route requests
+    # that reference a path under one of them to this node (data locality).
+    mounts = _probe_mounts()
+    if mounts:
+        caps["mounts"] = mounts
 
     # Add GPU info if available
     try:

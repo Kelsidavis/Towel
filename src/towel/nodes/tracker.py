@@ -54,6 +54,19 @@ class NodeTracker:
     def get(self, worker_id: str) -> NodeCapability | None:
         return self._nodes.get(worker_id)
 
+    def mount_owners(self) -> dict[str, set[str]]:
+        """Map each advertised mount point to the worker ids that expose it.
+
+        Derived fresh from current node capabilities, so a disconnected worker's
+        mounts drop out automatically. Used for data-locality routing: a request
+        referencing a path under a mount routes to a node that has it.
+        """
+        owners: dict[str, set[str]] = {}
+        for worker_id, node in self._nodes.items():
+            for mount in getattr(node, "mounts", []) or []:
+                owners.setdefault(mount, set()).add(worker_id)
+        return owners
+
     def update_resources(self, worker_id: str, resources: dict[str, Any]) -> bool:
         """Update a node's hardware resource snapshot (from heartbeat)."""
         node = self._nodes.get(worker_id)

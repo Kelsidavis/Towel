@@ -549,3 +549,38 @@ class TestNodeTracker:
         node = tracker.get("w1")
         assert node is not None
         assert node.active_sessions == 1
+
+
+class TestMountRouting:
+    """Workers advertise external mounts; the coordinator routes path-bearing
+    requests to whichever node actually has the drive (data locality)."""
+
+    def test_capability_carries_mounts(self):
+        node = NodeCapability.from_worker_capabilities(
+            "spark", {"backend": "llama", "mounts": ["/media/k/drive"]}
+        )
+        assert node.mounts == ["/media/k/drive"]
+        assert node.to_dict()["mounts"] == ["/media/k/drive"]
+
+    def test_tracker_mount_owners_map(self):
+        tracker = NodeTracker()
+        tracker.register("spark", {"backend": "llama", "mounts": ["/media/k/drive"]})
+        tracker.register("nodeb", {"backend": "llama", "mounts": ["/mnt/data"]})
+        tracker.register("plain", {"backend": "llama"})  # no mounts
+        owners = tracker.mount_owners()
+        assert owners == {"/media/k/drive": {"spark"}, "/mnt/data": {"nodeb"}}
+
+    def test_mount_owners_drop_on_unregister(self):
+        tracker = NodeTracker()
+        tracker.register("spark", {"backend": "llama", "mounts": ["/media/k/drive"]})
+        tracker.unregister("spark")
+        assert tracker.mount_owners() == {}
+
+    def test_resolve_picks_owner_for_referenced_path(self):
+        from towel.nodes.roles import resolve_mount_owners
+        tracker = NodeTracker()
+        tracker.register("spark", {"backend": "llama", "mounts": ["/media/k/drive"]})
+        owners = resolve_mount_owners(
+            "cd /media/k/drive/anna && python3 run.py", tracker.mount_owners()
+        )
+        assert owners == {"spark"}
