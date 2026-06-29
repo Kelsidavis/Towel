@@ -125,3 +125,29 @@ async def test_execute_tool_unknown_still_raises():
     reg.register(CmdSkill())
     with pytest.raises(ValueError, match="Unknown tool"):
         await reg.execute_tool("definitely_not_a_tool", {})
+
+
+def test_coerce_arguments_remaps_misfit_positional():
+    """A correctly-named tool called with the wrong single key gets that value
+    moved onto the primary parameter (small-model robustness)."""
+    reg = SkillRegistry()
+    reg.register(CmdSkill())
+    assert reg._coerce_arguments("run_command", {"input": "ls"}) == {"command": "ls"}
+    assert reg._coerce_arguments("run_command", {"text": "ls"}) == {"command": "ls"}
+
+
+def test_coerce_arguments_leaves_valid_and_multiarg_alone():
+    reg = SkillRegistry()
+    reg.register(CmdSkill())
+    # already-correct key untouched
+    assert reg._coerce_arguments("run_command", {"command": "ls"}) == {"command": "ls"}
+    # multi-arg calls are never reshaped (too ambiguous to guess)
+    two = {"command": "ls", "extra": 1}
+    assert reg._coerce_arguments("run_command", two) == two
+
+
+async def test_execute_tool_runs_with_misfit_key():
+    """End-to-end: run_command({"input": ...}) actually executes."""
+    reg = SkillRegistry()
+    reg.register(CmdSkill())
+    assert await reg.execute_tool("run_command", {"input": "echo hi"}) == {"ran": "echo hi"}

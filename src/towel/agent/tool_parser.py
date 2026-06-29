@@ -79,6 +79,32 @@ _SPECIAL_TOKEN_CALL_PATTERN = re.compile(
     re.DOTALL,
 )
 
+# A raw tool-call body that leads with an ``identifier: value`` pair, e.g. a
+# small model emitting ``call:run_command\ncommand: cd /x && y``. The space (or
+# newline) after the colon is required so we don't mis-split a value that merely
+# contains a colon, like a bare ``https://example.com`` URL.
+_KEYED_BODY_PATTERN = re.compile(r"^([A-Za-z_]\w*):\s+(.+)$", re.DOTALL)
+
+
+def _args_from_raw_body(body: str) -> dict[str, Any]:
+    """Best-effort arguments from a tool call's raw trailing text.
+
+    Order: a JSON object wins; then an ``identifier: value`` pair (the key small
+    models often prepend, e.g. ``command: ...``); otherwise the whole body lands
+    under ``input`` and the registry realigns it onto the tool's real parameter.
+    """
+    try:
+        parsed = json.loads(body)
+        if isinstance(parsed, dict):
+            return parsed
+    except (json.JSONDecodeError, TypeError):
+        pass
+    keyed = _KEYED_BODY_PATTERN.match(body)
+    if keyed:
+        return {keyed.group(1): keyed.group(2).strip()}
+    return {"input": body}
+
+
 # Qwen Hermes-style: ✿FUNCTION✿name\n✿ARGS✿{...} (terminated by ✿RESULT✿ or end)
 _QWEN_HERMES_PATTERN = re.compile(
     r"✿FUNCTION✿\s*(\w+)\s*\n✿ARGS✿\s*(\{.*?\})\s*(?:✿RESULT✿|✿|$)",
@@ -172,15 +198,7 @@ def parse_tool_calls(text: str) -> tuple[list[ToolCall], str]:
             except (ValueError, SyntaxError):
                 args = {}
         elif raw_args is not None and raw_args.strip():
-            body = raw_args.strip()
-            # The trailing text may itself be a JSON object of arguments;
-            # otherwise fall back to the same {"input": ...} envelope the
-            # JSON normalizer uses for unkeyed string arguments.
-            try:
-                parsed_body = json.loads(body)
-                args = parsed_body if isinstance(parsed_body, dict) else {"input": body}
-            except (json.JSONDecodeError, TypeError):
-                args = {"input": body}
+            args = _args_from_raw_body(raw_args.strip())
         else:
             args = {}
         calls.append(ToolCall(name=name, arguments=args, raw=match.group(0)))

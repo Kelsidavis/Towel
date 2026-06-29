@@ -150,6 +150,25 @@ def test_special_token_call_dropped_closing_pipe():
     assert remaining == ""
 
 
+def test_special_token_call_with_keyed_body():
+    """A small model emitting `call:run_command\\ncommand: <cmd>` must parse the
+    `command:` prefix as the argument key — not leave it inside the value (which
+    previously ran `command: cd ...` and failed with `command:: not found`)."""
+    calls, _ = parse_tool_calls(
+        "<|tool_call>call:run_command\ncommand: cd /tmp && ls -la"
+    )
+    assert len(calls) == 1
+    assert calls[0].name == "run_command"
+    assert calls[0].arguments == {"command": "cd /tmp && ls -la"}
+
+
+def test_special_token_keyed_body_ignores_url_colon():
+    """A colon with no following space (a URL) is NOT a key:value split."""
+    calls, _ = parse_tool_calls("<|tool_call>call:fetch_url\nhttps://example.com/x")
+    assert len(calls) == 1
+    assert calls[0].arguments == {"input": "https://example.com/x"}
+
+
 def test_special_token_call_with_json_args():
     """The raw trailing body is parsed as JSON arguments when it is a JSON
     object, not wrapped in the {"input": ...} fallback."""

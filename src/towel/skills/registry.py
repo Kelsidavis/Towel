@@ -61,27 +61,59 @@ class SkillRegistry:
         """Return close tool-name matches for recovery from model mistakes."""
         return get_close_matches(tool_name, self.tool_names(), n=limit, cutoff=0.5)
 
+    def _tool_params(self, tool_name: str) -> dict[str, Any] | None:
+        """Return the JSON-schema ``parameters`` dict for a tool, or None."""
+        skill = self._tool_map.get(tool_name)
+        if not skill:
+            return None
+        for tool in skill.tools():
+            if tool.name == tool_name:
+                return getattr(tool, "parameters", None) or {}
+        return None
+
     def _primary_arg_key(self, tool_name: str) -> str | None:
         """Best-guess primary parameter for a tool — the first ``required``
         entry, else the first declared property. Used to place a lone
         positional value (e.g. an aliased ``{"input": ...}``) onto the key the
         tool actually expects.
         """
-        skill = self._tool_map.get(tool_name)
-        if not skill:
+        params = self._tool_params(tool_name)
+        if params is None:
             return None
-        for tool in skill.tools():
-            if tool.name != tool_name:
-                continue
-            params = getattr(tool, "parameters", None) or {}
-            required = params.get("required")
-            if isinstance(required, list) and required:
-                return str(required[0])
-            props = params.get("properties")
-            if isinstance(props, dict) and props:
-                return next(iter(props))
-            return None
+        required = params.get("required")
+        if isinstance(required, list) and required:
+            return str(required[0])
+        props = params.get("properties")
+        if isinstance(props, dict) and props:
+            return next(iter(props))
         return None
+
+    def _coerce_arguments(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Realign a single misfit positional onto the tool's real parameter.
+
+        Small models routinely call a correctly-named tool with the wrong key —
+        ``run_command({"input": "ls"})`` or ``write_file({"text": ...})`` — or
+        wrap the value under a generic key. When a call has exactly one argument
+        whose key isn't a declared parameter, and the tool has a clear primary
+        parameter, move the value there so the call can actually run instead of
+        dying on a KeyError deep in the skill. Multi-arg calls are left alone —
+        we only rescue the unambiguous single-positional case.
+        """
+        if len(arguments) != 1:
+            return arguments
+        params = self._tool_params(tool_name)
+        props = (params or {}).get("properties")
+        if not isinstance(props, dict) or not props:
+            return arguments
+        (key, value), = arguments.items()
+        if key in props:
+            return arguments  # already a valid parameter
+        primary = self._primary_arg_key(tool_name)
+        if primary and primary not in arguments:
+            return {primary: value}
+        return arguments
 
     def _resolve_alias(
         self, tool_name: str, arguments: dict[str, Any]
@@ -133,6 +165,9 @@ class SkillRegistry:
                     f"Unknown tool: {tool_name}. Did you mean: {', '.join(suggestions)}?"
                 )
             raise ValueError(f"Unknown tool: {tool_name}")
+        # Realign a single misfit positional (e.g. {"input": ...} from a small
+        # model) onto the tool's real parameter before it reaches the skill.
+        arguments = self._coerce_arguments(tool_name, arguments)
         # Gating policy: refuse blocked capabilities before they run. The
         # default 'audit' mode permits everything (non-breaking); enforce
         # mode blocks dangerous risk tiers. Refusals are audited, not run.
