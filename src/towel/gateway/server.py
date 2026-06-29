@@ -2809,7 +2809,12 @@ class GatewayServer:
         return {
             "preferred_backend": preferred_backend,
             "preferred_mode": preferred_mode,
-            "model": getattr(self.config.model, "name", ""),
+            # Report the model the backend actually loaded, not the config
+            # default (which may be a different/placeholder model).
+            "model": (
+                getattr(self.agent, "loaded_model_name", None)
+                or getattr(self.config.model, "name", "")
+            ),
             "tools": needs_tools,
         }
 
@@ -3759,10 +3764,16 @@ class GatewayServer:
 
         async def health(_request: Any) -> JSONResponse:
             import socket as _socket
-            model_name = getattr(self.config.model, "name", "")
-            backend = getattr(self.config, "_backend", None) or (
-                "claude" if "claude" in model_name.lower() else
-                "ollama" if "ollama" in model_name.lower() else
+            # Truthful reporting: the model the backend actually loaded, and
+            # the configured backend — not a guess from the config model name.
+            model_name = (
+                getattr(self.agent, "loaded_model_name", None)
+                or getattr(self.config.model, "name", "")
+            )
+            config_name = getattr(self.config.model, "name", "")
+            backend = getattr(self.config, "backend", "") or getattr(self.config, "_backend", None) or (
+                "claude" if "claude" in config_name.lower() else
+                "ollama" if "ollama" in config_name.lower() else
                 "mlx"
             )
             try:

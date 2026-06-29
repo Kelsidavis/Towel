@@ -1651,7 +1651,9 @@ def _cmd_whoami(ctx: SlashContext) -> None:
     console.print("[bold]Agent identity:[/bold]")
     console.print(f"  Model: [green]{config.model.name}[/green]")
     console.print(f"  Agent: {ctx.current_agent_name or 'default'}")
-    if config.model.turboquant:
+    # TurboQuant only applies on the MLX runtime; don't claim it on backends
+    # that manage their own KV cache (llama-server, ollama, claude).
+    if config.backend not in ("llama", "ollama", "claude") and config.model.turboquant:
         console.print(
             f"  KV cache: [cyan]TurboQuant "
             f"{config.model.turboquant_bits}-bit[/cyan] "

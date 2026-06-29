@@ -55,6 +55,33 @@ def _apply_turboquant_overrides(
             config.model.turboquant = True  # --tq-bits implies --turboquant
 
 
+def _probe_llama_model(llama_url: str) -> str | None:
+    """Ask a running llama-server which model it has loaded (truthful name).
+
+    Used so the startup banner reports what's actually running instead of a
+    vague "auto-detect". Returns a cleaned name (basename, no .gguf), or None
+    if the server isn't reachable yet.
+    """
+    try:
+        import json
+        import urllib.request
+
+        with urllib.request.urlopen(
+            f"{llama_url.rstrip('/')}/v1/models", timeout=3
+        ) as r:
+            data = json.load(r)
+        entries = data.get("data") or data.get("models") or []
+        if not entries:
+            return None
+        raw = entries[0].get("id") or entries[0].get("model") or entries[0].get("name") or ""
+        name = str(raw).rsplit("/", 1)[-1]
+        if name.lower().endswith(".gguf"):
+            name = name[:-5]
+        return name or None
+    except Exception:
+        return None
+
+
 def _build_skill_registry(config: TowelConfig, memory_store: Any = None) -> SkillRegistry:
     """Build a skill registry with builtins + auto-loaded user skills."""
     from towel.skills.builtin import register_builtins
@@ -208,6 +235,7 @@ def _build_runtime(
             memory=memory,
             llama_url=llama_url or "http://localhost:8080",
             llama_model=llama_model,
+            auto_start=getattr(config, "llama_auto_start", True),
         )
     else:
         from towel.agent.runtime import AgentRuntime
@@ -282,11 +310,15 @@ def serve(
         console.print(f"[dim]Backend:[/dim] Ollama ({ollama_url or 'http://localhost:11434'})")
         console.print(f"[dim]Model:[/dim] {config.model.name}")
     elif backend == "llama":
-        console.print(f"[dim]Backend:[/dim] llama-server ({llama_url or 'http://localhost:8080'})")
+        _lurl = llama_url or "http://localhost:8080"
+        console.print(f"[dim]Backend:[/dim] llama-server ({_lurl})")
         if llama_model:
             console.print(f"[dim]Model:[/dim] {llama_model}")
         else:
-            console.print("[dim]Model:[/dim] auto-detect")
+            _detected = _probe_llama_model(_lurl)
+            console.print(
+                f"[dim]Model:[/dim] {_detected or 'auto-detect (connecting to llama-server)'}"
+            )
     else:
         console.print(f"[dim]Model:[/dim] {config.model.name}")
         if config.model.turboquant:
@@ -480,11 +512,15 @@ def worker(
         console.print(f"[dim]Backend:[/dim] Ollama ({ollama_url or 'http://localhost:11434'})")
         console.print(f"[dim]Model:[/dim] {config.model.name}")
     elif backend == "llama":
-        console.print(f"[dim]Backend:[/dim] llama-server ({llama_url or 'http://localhost:8080'})")
+        _lurl = llama_url or "http://localhost:8080"
+        console.print(f"[dim]Backend:[/dim] llama-server ({_lurl})")
         if llama_model:
             console.print(f"[dim]Model:[/dim] {llama_model}")
         else:
-            console.print("[dim]Model:[/dim] auto-detect")
+            _detected = _probe_llama_model(_lurl)
+            console.print(
+                f"[dim]Model:[/dim] {_detected or 'auto-detect (connecting to llama-server)'}"
+            )
     else:
         console.print(f"[dim]Model:[/dim] {config.model.name}")
     console.print(f"[dim]Controller:[/dim] {master}")

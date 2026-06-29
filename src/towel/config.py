@@ -135,6 +135,13 @@ class TowelConfig(BaseModel):
     llama_url: str = ""
     claude_model: str = ""
 
+    # When False, the llama backend only CONNECTS to an existing llama-server
+    # and never spawns one itself. Set False when a managed service (e.g. the
+    # towel-llama systemd unit) owns the server — this prevents Towel from
+    # falling back to a stale ~/.local/bin/llama-server build that can't load
+    # the configured model (e.g. an old build that crashes on Qwen3.6).
+    llama_auto_start: bool = True
+
     # Heuristic auto-capture: extract user/preference/project facts from
     # every user turn and write them to memory. Conservative patterns
     # (role, employer, project, deadline, preference, explicit remember)

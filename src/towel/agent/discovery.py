@@ -75,19 +75,26 @@ class SystemCapabilities:
 
     @property
     def best_model(self) -> GGUFModel | None:
-        """Pick the largest model that fits in VRAM (with ~2GB overhead margin)."""
+        """Pick the best model that fits in VRAM (with ~2GB overhead margin).
+
+        Prefers an abliterated / uncensored chat model when one fits:
+        Towel's default use case runs abliterated models, and a stock
+        safety-trained model (gpt-oss) or a task-specific one (a coder
+        model) will refuse or go off-task for general chat. Among the
+        preferred set, the largest fitting build wins; if none are
+        abliterated, fall back to the largest fitting model overall.
+        """
         if not self.gguf_models:
             return None
         usable_vram_gb = (self.total_vram_mb - 2048) / 1024.0
         fitting = [m for m in self.gguf_models if m.size_gb <= usable_vram_gb]
-        gpt_oss = [m for m in fitting if "gpt-oss" in m.name.lower()]
-        if gpt_oss:
-            return max(gpt_oss, key=lambda m: m.size_gb)
-        fitting = [
+        abliterated = [
             m
             for m in fitting
-            if "qwen3.5" not in m.name.lower() and "qwen3.6" not in m.name.lower()
+            if "abliterated" in m.name.lower() or "uncensored" in m.name.lower()
         ]
+        if abliterated:
+            return max(abliterated, key=lambda m: m.size_gb)
         if fitting:
             return max(fitting, key=lambda m: m.size_gb)
         # Nothing fits cleanly — return smallest as a fallback (partial offload)

@@ -143,7 +143,11 @@ def check_config(config: TowelConfig) -> Check:
     c.ok(f"Model: {config.model.name}")
     c.ok(f"Context window: {config.model.context_window} tokens")
     c.ok(f"Max output: {config.model.max_tokens} tokens")
-    if config.model.turboquant:
+    # TurboQuant is an MLX-runtime KV cache feature. On the llama/ollama/claude
+    # backends it is inert (those manage their own KV cache), so don't claim it.
+    if config.backend in ("llama", "ollama", "claude"):
+        c.ok(f"KV cache: managed by {config.backend}")
+    elif config.model.turboquant:
         c.ok(
             f"KV cache: TurboQuant {config.model.turboquant_bits}-bit "
             f"(QJL ratio {config.model.turboquant_qjl_ratio})"

@@ -106,6 +106,10 @@ class LlamaRuntime:
         self.llama_model = llama_model
         self.auto_start = auto_start
         self._loaded = False
+        # The actual model llama-server reports as loaded (truthful name),
+        # populated on connect. None until known — callers must fall back
+        # rather than print a config guess that may not be what's running.
+        self.loaded_model_name: str | None = None
         # llama-server (with --jinja) renders tools via the model's chat template.
         # We always send tools=[...] when any are registered; servers/models that
         # ignore the field simply return plain text and the tool_parser handles it.
@@ -129,7 +133,11 @@ class LlamaRuntime:
         # Try connecting to an existing llama-server first
         server_up = await self._check_health()
         if server_up:
-            log.info(f"llama-server runtime ready (url: {self.llama_url})")
+            self.loaded_model_name = await self._fetch_model_name()
+            log.info(
+                f"llama-server runtime ready (url: {self.llama_url}, "
+                f"model: {self.loaded_model_name or 'unknown'})"
+            )
             self._loaded = True
             return
 
@@ -179,6 +187,7 @@ class LlamaRuntime:
         server.start()
         await server.wait_healthy()
         self._managed_server = server
+        self.loaded_model_name = await self._fetch_model_name()
         self._loaded = True
         log.info(f"llama-server auto-started on port {port} with {model_path}")
 
@@ -196,6 +205,29 @@ class LlamaRuntime:
                 return True
         except (httpx.ConnectError, httpx.ReadError):
             return False
+
+    async def _fetch_model_name(self) -> str | None:
+        """Ask llama-server which model it actually has loaded.
+
+        Returns a cleaned display name (basename, no .gguf) so the banner
+        and fleet report what's *running*, not a config guess. None if the
+        server doesn't say — callers fall back rather than invent a name.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{self.llama_url}/v1/models")
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception:
+            return None
+        entries = data.get("data") or data.get("models") or []
+        if not entries:
+            return None
+        raw = entries[0].get("id") or entries[0].get("model") or entries[0].get("name") or ""
+        name = str(raw).rsplit("/", 1)[-1]  # strip any path
+        if name.lower().endswith(".gguf"):
+            name = name[:-5]
+        return name or None
 
     def shutdown(self) -> None:
         """Stop the managed llama-server if we started one."""
