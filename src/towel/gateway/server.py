@@ -2939,10 +2939,10 @@ class GatewayServer:
 
     async def _schedule_idle_work(self) -> None:
         """Check all idle workers and dispatch background tasks."""
-        # Operator opt-out: on a single-GPU box idle tasks starve interactive
-        # requests (llama-server is --parallel 1), so allow disabling them
-        # entirely. See TowelConfig.idle_tasks_enabled.
-        if not getattr(self.config, "idle_tasks_enabled", True):
+        # Off by default — on a single-GPU box idle tasks starve interactive
+        # requests (llama-server is --parallel 1). Opt in on a multi-GPU fleet.
+        # See TowelConfig.idle_tasks_enabled.
+        if not getattr(self.config, "idle_tasks_enabled", False):
             return
         for worker in self._workers.list():
             if (

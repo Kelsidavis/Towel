@@ -162,13 +162,14 @@ class TowelConfig(BaseModel):
     memory_recall_log_cap: int = 5000
 
     # Background idle tasks (lint, type-check, email triage, …) that the
-    # coordinator dispatches to otherwise-idle workers. Great on a multi-GPU
-    # fleet where spare workers can stay productive; harmful on a single-GPU
-    # box where llama-server is --parallel 1 — an in-flight idle generation
-    # monopolises the GPU and a real chat turn can't start until it yields,
-    # which reads to the user as "stopped responding". Set False to keep the
-    # GPU reserved for interactive requests.
-    idle_tasks_enabled: bool = True
+    # coordinator dispatches to otherwise-idle workers. Disabled by default:
+    # the common deployment is a single GPU where llama-server is --parallel 1,
+    # so an in-flight idle generation monopolises the GPU and a real chat turn
+    # can't start until it yields — which reads to the user as "stopped
+    # responding", and preemption can't free a mid-flight generation. Opt in
+    # (set True) on a multi-GPU fleet where spare workers can stay productive
+    # without stealing the GPU an interactive request needs.
+    idle_tasks_enabled: bool = False
 
     # In-memory dispatch decision history (ring buffer). 50 was the
     # original default which only covers minutes on a busy
