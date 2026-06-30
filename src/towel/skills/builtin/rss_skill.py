@@ -38,6 +38,11 @@ class RssSkill(Skill):
             return f"Unknown: {tool_name}"
         import httpx
 
+        from towel.netguard import check_url
+        blocked = check_url(arguments.get("url", ""))
+        if blocked:
+            return blocked
+
         try:
             async with httpx.AsyncClient(timeout=10, follow_redirects=True) as c:
                 resp = await c.get(arguments["url"], headers={"User-Agent": "Towel/1.0"})

@@ -77,6 +77,11 @@ class UptimeSkill(Skill):
     async def _check(self, url: str, expected: int) -> str:
         import httpx
 
+        from towel.netguard import check_url
+        blocked = check_url(url)
+        if blocked:
+            return blocked
+
         start = _time.perf_counter()
         try:
             async with httpx.AsyncClient(timeout=10, follow_redirects=True) as c:
