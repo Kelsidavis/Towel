@@ -239,8 +239,10 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
 .md-content code { font-family:var(--mono); background:var(--bg);
   padding:1px 5px; border-radius:3px; font-size:13px; }
 .md-content pre code { background:none; padding:0; font-size:13px; }
+.md-content del { text-decoration:line-through; opacity:.7; }
 .md-content a { color:var(--cyan); text-decoration:none; }
 .md-content a:hover { text-decoration:underline; }
+.md-content img { max-width:100%; border-radius:6px; margin:6px 0; }
 .md-content strong { color:var(--text); font-weight:600; }
 .md-content hr { border:none; border-top:1px solid var(--border); margin:12px 0; }
 .md-content table { border-collapse:collapse; margin:8px 0; font-size:13px; }
@@ -1433,6 +1435,9 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
     // Italic: *text* (but not inside words like file_name)
     html = html.replace(/(?<![*\w])\*([^*\n]+)\*(?![*\w])/g, '<em>$1</em>');
+
+    // Images: ![alt](url) — must be before links
+    html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" loading="lazy">');
 
     // Links: [text](url)
     html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
@@ -3153,6 +3158,26 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     if(e.key==='Escape'&&isStreaming)stopGeneration();
   });
   inputEl.addEventListener('input',autoResize);
+  inputEl.addEventListener('dragover', function(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+  inputEl.addEventListener('drop', function(e) {
+    e.preventDefault();
+    var files = e.dataTransfer.files;
+    if (!files.length) return;
+    for (var i = 0; i < files.length; i++) {
+      var file = files[i];
+      if (file.type.startsWith('text/') || /\.(txt|md|json|csv|xml|yaml|yml|toml|py|js|ts|html|css|sh|sql|log|ini|cfg)$/i.test(file.name)) {
+        (function(f) {
+          var reader = new FileReader();
+          reader.onload = function(ev) {
+            var prefix = inputEl.value ? inputEl.value + '\n\n' : '';
+            inputEl.value = prefix + '```' + f.name.split('.').pop() + ' (' + f.name + ')\n' + ev.target.result + '\n```';
+            autoResize();
+          };
+          reader.readAsText(f);
+        })(file);
+      }
+    }
+  });
   newChatBtn.addEventListener('click',startNewChat);
   convSearchEl.addEventListener('input',function(){renderConversationList(this.value);});
 
