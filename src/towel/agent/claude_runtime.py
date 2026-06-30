@@ -701,6 +701,16 @@ class ClaudeCodeRuntime:
                     is_error = True
                     log.error(result_str)
 
+                if (
+                    not is_error and self.memory
+                    and getattr(self.config, "auto_capture", True)
+                ):
+                    try:
+                        from towel.memory.auto_capture import apply_tool_result
+                        apply_tool_result(tc.name, result_str, self.memory)
+                    except Exception as exc:
+                        log.debug("Tool-result capture skipped: %s", exc)
+
                 yield AgentEvent.tool_result(tc.name, result_str)
                 conversation.add(
                     Role.TOOL,
