@@ -28,7 +28,13 @@ def load_user_agents() -> dict[str, dict[str, Any]]:
 def save_user_agents(agents: dict[str, dict[str, Any]]) -> None:
     """Save user-created agents to agents.toml."""
     AGENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    AGENTS_FILE.write_text(toml.dumps(agents), encoding="utf-8")
+    tmp = AGENTS_FILE.with_name(AGENTS_FILE.name + ".tmp")
+    try:
+        tmp.write_text(toml.dumps(agents), encoding="utf-8")
+        tmp.replace(AGENTS_FILE)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def create_agent(

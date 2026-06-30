@@ -296,7 +296,8 @@ def _check_llama_model(c: Check, config: TowelConfig) -> Check:
         from towel.agent.discovery import scan_gguf_models
 
         models = scan_gguf_models()
-    except Exception:
+    except Exception as exc:
+        log.debug("GGUF model scan failed: %s", exc)
         models = []
 
     if not models:

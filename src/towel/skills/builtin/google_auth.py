@@ -18,6 +18,16 @@ TOWEL_HOME = Path.home() / ".towel"
 CREDS_PATH = TOWEL_HOME / "google_credentials.json"
 TOKEN_PATH = TOWEL_HOME / "google_token.json"
 
+
+def _atomic_write(path: Path, data: str) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_text(data, encoding="utf-8")
+        tmp.replace(path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+
 # OAuth client config — desktop app type (installed)
 # Users should replace these with their own from Google Cloud Console,
 # or set TOWEL_GOOGLE_CLIENT_ID / TOWEL_GOOGLE_CLIENT_SECRET env vars.
@@ -73,7 +83,7 @@ def get_google_credentials() -> Any:
     if creds and creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
-            TOKEN_PATH.write_text(creds.to_json())
+            _atomic_write(TOKEN_PATH, creds.to_json())
             return creds
         except Exception as e:
             log.warning("Token refresh failed: %s", e)
@@ -104,7 +114,7 @@ def get_google_credentials() -> Any:
     )
     creds = flow.run_local_server(port=0, open_browser=True)
     TOWEL_HOME.mkdir(parents=True, exist_ok=True)
-    TOKEN_PATH.write_text(creds.to_json())
+    _atomic_write(TOKEN_PATH, creds.to_json())
     log.info("Google OAuth credentials saved to %s", TOKEN_PATH)
     return creds
 

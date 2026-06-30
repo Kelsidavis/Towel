@@ -2267,7 +2267,7 @@ def orchestrate(
             body["workspace_dir"] = workspace_dir
 
     try:
-        resp = httpx.post(url, json=body, timeout=None)
+        resp = httpx.post(url, json=body, timeout=httpx.Timeout(10, read=None))
     except httpx.RequestError as exc:
         console.print(f"[red]Gateway request failed:[/red] {exc}")
         console.print("Is the gateway running? Try: towel serve")

@@ -1104,10 +1104,13 @@ def _cmd_save(ctx: SlashContext, arg: str) -> None:
 
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content + "\n", encoding="utf-8")
+        tmp = target.with_name(target.name + ".tmp")
+        tmp.write_text(content + "\n", encoding="utf-8")
+        tmp.replace(target)
         lines = content.count("\n") + 1
         console.print(f"[green]Saved:[/green] {target} ({lines} lines, {len(content)} bytes)")
     except OSError as e:
+        tmp.unlink(missing_ok=True)
         console.print(f"[red]Failed to save:[/red] {e}")
 
 
