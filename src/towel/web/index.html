@@ -202,6 +202,20 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   border-left:3px solid var(--text-dim); border-radius:0 6px 6px 0;
   font-family:var(--mono); font-size:12px; color:var(--text-dim);
   max-height:120px; overflow-y:auto; white-space:pre-wrap; word-break:break-all; }
+#find-bar { position:absolute; top:50px; right:20px; z-index:50; display:none;
+  background:var(--bg-surface); border:1px solid var(--border); border-radius:8px;
+  padding:6px 10px; gap:8px; align-items:center; box-shadow:0 2px 12px rgba(0,0,0,0.3); }
+#find-bar.visible { display:flex; }
+#find-bar input { background:var(--bg-input); border:1px solid var(--border); color:var(--text);
+  border-radius:4px; padding:4px 8px; font-size:13px; font-family:var(--sans); width:200px; outline:none; }
+#find-bar input:focus { border-color:var(--green-dim); }
+#find-bar .find-count { font-size:11px; color:var(--text-dim); font-family:var(--mono); min-width:40px; }
+#find-bar button { background:none; border:1px solid var(--border); color:var(--text-dim);
+  border-radius:4px; padding:2px 8px; font-size:12px; cursor:pointer; font-family:var(--mono); }
+#find-bar button:hover { border-color:var(--green); color:var(--green); }
+.find-highlight { background:rgba(230,200,76,0.3); border-radius:2px; }
+.find-highlight.active { background:rgba(230,200,76,0.6); outline:2px solid var(--yellow); }
+
 #scroll-bottom { position:absolute; bottom:80px; right:24px; z-index:50;
   width:36px; height:36px; border-radius:50%; background:var(--bg-surface);
   border:1px solid var(--border); color:var(--text-dim); cursor:pointer;
@@ -565,6 +579,13 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       <p class="motto">Tool Oriented Worker Execution Link · Don't Panic.</p>
       <p class="hint">Your local-first AI assistant.<br>Type a message to begin.</p>
     </div>
+  </div>
+  <div id="find-bar">
+    <input id="find-input" type="text" placeholder="Find in chat…" autocomplete="off">
+    <span class="find-count" id="find-count"></span>
+    <button id="find-prev" title="Previous">&#9650;</button>
+    <button id="find-next" title="Next">&#9660;</button>
+    <button id="find-close" title="Close">&#10005;</button>
   </div>
   <button id="scroll-bottom" title="Scroll to bottom">&#8595;</button>
   <div id="input-area">
@@ -1421,8 +1442,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         <span style="color:var(--text)">Ctrl+K</span><span>search conversations</span>
         <span style="color:var(--text)">Ctrl+Shift+F</span><span>fleet control</span>
         <span style="color:var(--text)">Ctrl+Shift+M</span><span>memory panel</span>
+        <span style="color:var(--text)">Ctrl+F</span><span>find in chat</span>
         <span style="color:var(--text)">Ctrl+E</span><span>export chat</span>
-        <span style="color:var(--text)">Ctrl+T</span><span>cycle theme</span>
         <span style="color:var(--text)">Esc</span><span>stop generation</span>
       </div></div>`;
   }
@@ -3182,6 +3203,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     if(e.key==='Escape'&&isStreaming)stopGeneration();
   });
   document.addEventListener('keydown',function(e){
+    if(e.key==='Escape'&&findBar.classList.contains('visible')){closeFind(); return;}
     if(e.key==='Escape'&&replayOverlay.style.display==='flex'){closeReplay(); return;}
     // Space toggles play when the replay overlay is open (and the
     // user isn't typing in an input).
@@ -3231,6 +3253,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     {icon:'📤', label:'Export Conversation', hint:'Ctrl+E', action:()=>exportConversation()},
     {icon:'🗑', label:'Delete Conversation', hint:'', action:()=>deleteCurrentConversation()},
     {icon:'🧹', label:'Clear All Conversations', hint:'', action:()=>clearAllConversations()},
+    {icon:'🔎', label:'Find in Chat', hint:'Ctrl+F', action:()=>openFind()},
     {icon:'✏️', label:'Clear Input', hint:'Ctrl+L', action:()=>{inputEl.value='';autoResize();inputEl.focus();}},
     {icon:'⏹', label:'Stop Generation', hint:'Esc', action:()=>stopGeneration()},
   ];
@@ -3314,7 +3337,92 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     if((e.ctrlKey||e.metaKey)&&e.shiftKey&&e.key.toLowerCase()==='f'){e.preventDefault();openFleetPanel();}
     // Ctrl/Cmd+Shift+M — memory panel
     if((e.ctrlKey||e.metaKey)&&e.shiftKey&&e.key.toLowerCase()==='m'){e.preventDefault();openMemoryPanel();}
+    // Ctrl/Cmd+F — find in chat
+    if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&e.key==='f'){e.preventDefault();openFind();}
   });
+
+  // ── Find in chat ──
+  const findBar = document.getElementById('find-bar');
+  const findInput = document.getElementById('find-input');
+  const findCount = document.getElementById('find-count');
+  let findMatches = [];
+  let findIdx = -1;
+
+  function openFind() {
+    findBar.classList.add('visible');
+    findInput.value = '';
+    findCount.textContent = '';
+    findInput.focus();
+  }
+  function closeFind() {
+    findBar.classList.remove('visible');
+    clearHighlights();
+    findMatches = []; findIdx = -1;
+    inputEl.focus();
+  }
+  function clearHighlights() {
+    messagesEl.querySelectorAll('.find-highlight').forEach(function(el) {
+      var parent = el.parentNode;
+      parent.replaceChild(document.createTextNode(el.textContent), el);
+      parent.normalize();
+    });
+  }
+  function doFind(query) {
+    clearHighlights();
+    findMatches = []; findIdx = -1;
+    if (!query) { findCount.textContent = ''; return; }
+    var q = query.toLowerCase();
+    var walker = document.createTreeWalker(messagesEl, NodeFilter.SHOW_TEXT, null);
+    var textNodes = [];
+    while (walker.nextNode()) textNodes.push(walker.currentNode);
+    for (var i = 0; i < textNodes.length; i++) {
+      var node = textNodes[i];
+      if (!node.parentNode || node.parentNode.closest('#find-bar')) continue;
+      var text = node.textContent;
+      var lower = text.toLowerCase();
+      var idx = lower.indexOf(q);
+      if (idx === -1) continue;
+      var frag = document.createDocumentFragment();
+      var lastEnd = 0;
+      while (idx !== -1) {
+        if (idx > lastEnd) frag.appendChild(document.createTextNode(text.slice(lastEnd, idx)));
+        var span = document.createElement('span');
+        span.className = 'find-highlight';
+        span.textContent = text.slice(idx, idx + query.length);
+        frag.appendChild(span);
+        findMatches.push(span);
+        lastEnd = idx + query.length;
+        idx = lower.indexOf(q, lastEnd);
+      }
+      if (lastEnd < text.length) frag.appendChild(document.createTextNode(text.slice(lastEnd)));
+      node.parentNode.replaceChild(frag, node);
+    }
+    findCount.textContent = findMatches.length ? findMatches.length + ' found' : 'no matches';
+    if (findMatches.length) { findIdx = 0; activateMatch(); }
+  }
+  function activateMatch() {
+    findMatches.forEach(function(m) { m.classList.remove('active'); });
+    if (findIdx >= 0 && findIdx < findMatches.length) {
+      findMatches[findIdx].classList.add('active');
+      findMatches[findIdx].scrollIntoView({block:'center', behavior:'smooth'});
+      findCount.textContent = (findIdx + 1) + '/' + findMatches.length;
+    }
+  }
+  function findNext() { if (!findMatches.length) return; findIdx = (findIdx + 1) % findMatches.length; activateMatch(); }
+  function findPrev() { if (!findMatches.length) return; findIdx = (findIdx - 1 + findMatches.length) % findMatches.length; activateMatch(); }
+
+  var findTimer = null;
+  findInput.addEventListener('input', function() {
+    clearTimeout(findTimer);
+    findTimer = setTimeout(function() { doFind(findInput.value.trim()); }, 150);
+  });
+  findInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); if (e.shiftKey) findPrev(); else findNext(); }
+    if (e.key === 'Escape') closeFind();
+  });
+  document.getElementById('find-next').addEventListener('click', findNext);
+  document.getElementById('find-prev').addEventListener('click', findPrev);
+  document.getElementById('find-close').addEventListener('click', closeFind);
 
   // ── Scroll-to-bottom button ──
   const scrollBottomBtn = document.getElementById('scroll-bottom');
