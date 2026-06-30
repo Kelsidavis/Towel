@@ -97,13 +97,26 @@ _TOOL_ERROR_PATTERNS = (
     re.compile(r"^Unknown tool:", re.IGNORECASE),
     re.compile(r"^File not found:", re.IGNORECASE),
     re.compile(r"^Not a directory:", re.IGNORECASE),
-    re.compile(r"^Invalid index:", re.IGNORECASE),
+    re.compile(r"^Not found:", re.IGNORECASE),
+    re.compile(r"^Invalid\b", re.IGNORECASE),
     re.compile(r"^File too large\b", re.IGNORECASE),
     re.compile(r"^HTTP error:", re.IGNORECASE),
     re.compile(r"^\[4\d\d\]"),  # HTTP 4xx client errors
     re.compile(r"^\[5\d\d\]"),  # HTTP 5xx server errors
     re.compile(r"^Permission denied\b", re.IGNORECASE),
     re.compile(r"^No module named\b", re.IGNORECASE),
+    re.compile(r"^Failed\b", re.IGNORECASE),
+    re.compile(r"^Cannot\b", re.IGNORECASE),
+    re.compile(r"^Connection (?:failed|error)\b", re.IGNORECASE),
+    re.compile(r"^Timeout\b", re.IGNORECASE),
+    re.compile(r"^Command (?:not found|timed out)\b", re.IGNORECASE),
+    re.compile(r"^(?:DNS|Lookup|Certificate|Decode|Parse|CSV parse) (?:failed|error)\b", re.IGNORECASE),
+    re.compile(r"^\w+ error:", re.IGNORECASE),  # service-specific: "PyPI error:", "Gmail error:", etc.
+    re.compile(r"^Path not found:", re.IGNORECASE),
+    re.compile(r"^Package not found:", re.IGNORECASE),
+    re.compile(r"^Process \d+ not found\b", re.IGNORECASE),
+    re.compile(r"not found in PATH$", re.IGNORECASE),
+    re.compile(r"^.+ not found\b", re.IGNORECASE),  # "make not found", "whois not found", etc.
 )
 
 

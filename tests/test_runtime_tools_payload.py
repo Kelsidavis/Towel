@@ -118,7 +118,7 @@ class TestOllamaNativeTools:
     def test_build_inference_request_includes_tools_when_native(self):
         rt = self._runtime()
         rt._native_tools_supported = True
-        req = rt.build_inference_request(_empty_conversation())
+        req = rt.build_inference_request(_tool_conversation())
         assert "tools" in req
         assert req["tools"][0]["function"]["name"] == "read_file"
 
@@ -252,7 +252,7 @@ class TestClaudeNativeTools:
 
     def test_build_inference_request_includes_anthropic_tools(self):
         rt = self._runtime()
-        req = rt.build_inference_request(_empty_conversation())
+        req = rt.build_inference_request(_tool_conversation())
         assert "tools" in req
         # Anthropic schema uses input_schema, no function/type envelope.
         assert req["tools"][0]["name"] == "read_file"
@@ -390,4 +390,13 @@ def _empty_conversation():
 
     conv = Conversation()
     conv.add(Role.USER, "hello")
+    return conv
+
+
+def _tool_conversation():
+    """Conversation with a query that classifies as tool-requiring."""
+    from towel.agent.conversation import Conversation, Role
+
+    conv = Conversation()
+    conv.add(Role.USER, "run ls -la in the current directory")
     return conv

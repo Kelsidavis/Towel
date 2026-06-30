@@ -22,7 +22,19 @@ from towel.agent.context import (
 )
 from towel.agent.conversation import Conversation, Message, Role
 from towel.agent.events import AgentEvent
-from towel.agent.runtime import format_tool_feedback, tool_result_is_error
+from towel.agent.runtime import (
+    AUTONOMY_NUDGE,
+    MAX_AUTONOMY_NUDGES,
+    MAX_GOAL_NUDGES,
+    TOOL_ERROR_NUDGE,
+    TOOL_LOOP_REPEAT_LIMIT,
+    _check_tool_loop,
+    _tool_call_fingerprint,
+    format_tool_feedback,
+    looks_like_goal_incomplete,
+    looks_like_unfulfilled_intent,
+    tool_result_is_error,
+)
 from towel.agent.tool_parser import ToolCall, parse_tool_calls
 from towel.agent.tools_payload import tools_as_openai_functions
 from towel.config import TowelConfig
@@ -403,10 +415,15 @@ class OllamaRuntime:
                         break
 
     async def step(self, conversation: Conversation) -> Message:
+        loop_fingerprints: list[str] = []
+        stuck_call_name: str | None = None
+        autonomy_nudges = 0
+        goal_nudges = 0
+        tool_trace: list[dict[str, Any]] = []
+        remaining_text = ""
+
         for _iteration in range(MAX_TOOL_ITERATIONS):
             result = await self.generate(conversation)
-            # Native tool channel returns structured tool_calls; only fall back
-            # to text parsing if the response was plain text.
             if result.tool_calls:
                 tool_calls = result.tool_calls
                 remaining_text = result.text
@@ -414,6 +431,25 @@ class OllamaRuntime:
                 tool_calls, remaining_text = parse_tool_calls(result.text)
 
             if not tool_calls:
+                if (
+                    autonomy_nudges < MAX_AUTONOMY_NUDGES
+                    and looks_like_unfulfilled_intent(result.text)
+                ):
+                    autonomy_nudges += 1
+                    log.info("autonomy nudge %d: model narrated without acting",
+                             autonomy_nudges)
+                    conversation.add(Role.ASSISTANT, result.text)
+                    conversation.add(Role.USER, AUTONOMY_NUDGE)
+                    continue
+                goal_nudge = looks_like_goal_incomplete(result.text, tool_trace)
+                if goal_nudges < MAX_GOAL_NUDGES and goal_nudge:
+                    goal_nudges += 1
+                    log.info("goal-completion nudge %d: %s", goal_nudges,
+                             "unaddressed errors" if goal_nudge is TOOL_ERROR_NUDGE
+                             else "premature question")
+                    conversation.add(Role.ASSISTANT, result.text)
+                    conversation.add(Role.USER, goal_nudge)
+                    continue
                 return Message(
                     role=Role.ASSISTANT,
                     content=result.text,
@@ -422,6 +458,16 @@ class OllamaRuntime:
 
             if remaining_text:
                 conversation.add(Role.ASSISTANT, remaining_text)
+
+            if _check_tool_loop(
+                loop_fingerprints, _tool_call_fingerprint(tool_calls)
+            ):
+                log.warning(
+                    "Ollama agent tool-loop detected (%r repeated %d times)",
+                    tool_calls[0].name, TOOL_LOOP_REPEAT_LIMIT,
+                )
+                stuck_call_name = tool_calls[0].name
+                break
 
             for tc in tool_calls:
                 log.info(f"Tool call: {tc.name}({tc.arguments})")
@@ -442,7 +488,21 @@ class OllamaRuntime:
                     tool_name=tc.name,
                     status="error" if is_error else "ok",
                 )
+                tool_trace.append({
+                    "tool": tc.name,
+                    "status": "error" if is_error else "ok",
+                })
 
+        if stuck_call_name is not None:
+            stuck_msg = (
+                f"I got stuck calling {stuck_call_name!r} repeatedly. "
+                "Stopping to avoid burning more time on this turn."
+            )
+            return Message(
+                role=Role.ASSISTANT,
+                content=(remaining_text + "\n\n" + stuck_msg) if remaining_text else stuck_msg,
+                metadata={"backend": "ollama", "loop_detected": True},
+            )
         log.warning(f"Hit max tool iterations ({MAX_TOOL_ITERATIONS})")
         return Message(
             role=Role.ASSISTANT,
@@ -452,6 +512,12 @@ class OllamaRuntime:
 
     async def step_streaming(self, conversation: Conversation) -> AsyncIterator[AgentEvent]:
         self._cancel_flag = False
+        loop_fingerprints: list[str] = []
+        stuck_call_name: str | None = None
+        autonomy_nudges = 0
+        goal_nudges = 0
+        tool_trace: list[dict[str, Any]] = []
+        remaining_text = ""
 
         for _iteration in range(MAX_TOOL_ITERATIONS):
             full_text = ""
@@ -466,8 +532,6 @@ class OllamaRuntime:
                 self._cancel_flag = False
                 return
 
-            # Prefer structured tool_calls captured during streaming; otherwise
-            # fall back to parsing tool-call markers out of the accumulated text.
             if self._last_stream_tool_calls:
                 tool_calls = list(self._last_stream_tool_calls)
                 self._last_stream_tool_calls = []
@@ -476,6 +540,25 @@ class OllamaRuntime:
                 tool_calls, remaining_text = parse_tool_calls(full_text)
 
             if not tool_calls:
+                if (
+                    autonomy_nudges < MAX_AUTONOMY_NUDGES
+                    and looks_like_unfulfilled_intent(full_text)
+                ):
+                    autonomy_nudges += 1
+                    log.info("autonomy nudge %d: model narrated without acting",
+                             autonomy_nudges)
+                    conversation.add(Role.ASSISTANT, full_text)
+                    conversation.add(Role.USER, AUTONOMY_NUDGE)
+                    continue
+                goal_nudge = looks_like_goal_incomplete(full_text, tool_trace)
+                if goal_nudges < MAX_GOAL_NUDGES and goal_nudge:
+                    goal_nudges += 1
+                    log.info("goal-completion nudge %d: %s", goal_nudges,
+                             "unaddressed errors" if goal_nudge is TOOL_ERROR_NUDGE
+                             else "premature question")
+                    conversation.add(Role.ASSISTANT, full_text)
+                    conversation.add(Role.USER, goal_nudge)
+                    continue
                 conversation.add(Role.ASSISTANT, full_text)
                 yield AgentEvent.complete(
                     full_text,
@@ -485,6 +568,16 @@ class OllamaRuntime:
 
             if remaining_text:
                 conversation.add(Role.ASSISTANT, remaining_text)
+
+            if _check_tool_loop(
+                loop_fingerprints, _tool_call_fingerprint(tool_calls)
+            ):
+                log.warning(
+                    "Ollama agent (streaming) tool-loop detected (%r repeated %d times)",
+                    tool_calls[0].name, TOOL_LOOP_REPEAT_LIMIT,
+                )
+                stuck_call_name = tool_calls[0].name
+                break
 
             for tc in tool_calls:
                 if self._cancel_flag:
@@ -515,7 +608,22 @@ class OllamaRuntime:
                     tool_name=tc.name,
                     status="error" if is_error else "ok",
                 )
+                tool_trace.append({
+                    "tool": tc.name,
+                    "status": "error" if is_error else "ok",
+                })
 
+        if stuck_call_name is not None:
+            stuck_msg = (
+                f"I got stuck calling {stuck_call_name!r} repeatedly. "
+                "Stopping to avoid burning more time on this turn."
+            )
+            conversation.add(Role.ASSISTANT, stuck_msg)
+            yield AgentEvent.complete(
+                (remaining_text + "\n\n" + stuck_msg) if remaining_text else stuck_msg,
+                metadata={"backend": "ollama", "loop_detected": True},
+            )
+            return
         log.warning(f"Hit max tool iterations ({MAX_TOOL_ITERATIONS})")
         yield AgentEvent.complete(
             remaining_text or "I've reached my tool execution limit for this turn.",

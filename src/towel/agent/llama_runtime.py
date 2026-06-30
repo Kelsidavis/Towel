@@ -34,6 +34,9 @@ from towel.agent.runtime import (
     MAX_AUTONOMY_NUDGES,
     MAX_GOAL_NUDGES,
     TOOL_ERROR_NUDGE,
+    TOOL_LOOP_REPEAT_LIMIT,
+    _check_tool_loop,
+    _tool_call_fingerprint,
     format_tool_feedback,
     looks_like_goal_incomplete,
     looks_like_unfulfilled_intent,
@@ -625,9 +628,12 @@ class LlamaRuntime:
             )
 
     async def step(self, conversation: Conversation) -> Message:
+        loop_fingerprints: list[str] = []
+        stuck_call_name: str | None = None
         autonomy_nudges = 0
         goal_nudges = 0
         tool_trace: list[dict[str, Any]] = []
+        remaining_text = ""
         for _iteration in range(MAX_TOOL_ITERATIONS):
             result = await self.generate(conversation)
             if result.tool_calls:
@@ -670,6 +676,16 @@ class LlamaRuntime:
             if remaining_text:
                 conversation.add(Role.ASSISTANT, remaining_text)
 
+            if _check_tool_loop(
+                loop_fingerprints, _tool_call_fingerprint(tool_calls)
+            ):
+                log.warning(
+                    "Llama agent tool-loop detected (%r repeated %d times)",
+                    tool_calls[0].name, TOOL_LOOP_REPEAT_LIMIT,
+                )
+                stuck_call_name = tool_calls[0].name
+                break
+
             for tc in tool_calls:
                 log.info(f"Tool call: {tc.name}({tc.arguments})")
                 try:
@@ -694,6 +710,16 @@ class LlamaRuntime:
                     "status": "error" if is_error else "ok",
                 })
 
+        if stuck_call_name is not None:
+            stuck_msg = (
+                f"I got stuck calling {stuck_call_name!r} repeatedly. "
+                "Stopping to avoid burning more time on this turn."
+            )
+            return Message(
+                role=Role.ASSISTANT,
+                content=(remaining_text + "\n\n" + stuck_msg) if remaining_text else stuck_msg,
+                metadata={"backend": "llama", "loop_detected": True},
+            )
         log.warning(f"Hit max tool iterations ({MAX_TOOL_ITERATIONS})")
         return Message(
             role=Role.ASSISTANT,
@@ -703,9 +729,12 @@ class LlamaRuntime:
 
     async def step_streaming(self, conversation: Conversation) -> AsyncIterator[AgentEvent]:
         self._cancel_flag = False
+        loop_fingerprints: list[str] = []
+        stuck_call_name: str | None = None
         autonomy_nudges = 0
         goal_nudges = 0
         tool_trace: list[dict[str, Any]] = []
+        remaining_text = ""
 
         for _iteration in range(MAX_TOOL_ITERATIONS):
             full_text = ""
@@ -757,6 +786,16 @@ class LlamaRuntime:
             if remaining_text:
                 conversation.add(Role.ASSISTANT, remaining_text)
 
+            if _check_tool_loop(
+                loop_fingerprints, _tool_call_fingerprint(tool_calls)
+            ):
+                log.warning(
+                    "Llama agent (streaming) tool-loop detected (%r repeated %d times)",
+                    tool_calls[0].name, TOOL_LOOP_REPEAT_LIMIT,
+                )
+                stuck_call_name = tool_calls[0].name
+                break
+
             for tc in tool_calls:
                 if self._cancel_flag:
                     yield AgentEvent.cancelled(
@@ -791,6 +830,17 @@ class LlamaRuntime:
                     "status": "error" if is_error else "ok",
                 })
 
+        if stuck_call_name is not None:
+            stuck_msg = (
+                f"I got stuck calling {stuck_call_name!r} repeatedly. "
+                "Stopping to avoid burning more time on this turn."
+            )
+            conversation.add(Role.ASSISTANT, stuck_msg)
+            yield AgentEvent.complete(
+                (remaining_text + "\n\n" + stuck_msg) if remaining_text else stuck_msg,
+                metadata={"backend": "llama", "loop_detected": True},
+            )
+            return
         log.warning(f"Hit max tool iterations ({MAX_TOOL_ITERATIONS})")
         yield AgentEvent.complete(
             remaining_text or "I've reached my tool execution limit for this turn.",
