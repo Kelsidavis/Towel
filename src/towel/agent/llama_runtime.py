@@ -129,6 +129,8 @@ class LlamaRuntime:
         # ignore the field simply return plain text and the tool_parser handles it.
         self._native_tools_supported: bool = True
         self._last_stream_tool_calls: list[ToolCall] = []
+        self._last_stream_prompt_tokens = 0
+        self._last_stream_completion_tokens = 0
         self._cancel_flag = False
         self._managed_server: Any | None = None
 

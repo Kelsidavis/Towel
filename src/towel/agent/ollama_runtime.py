@@ -106,6 +106,8 @@ class OllamaRuntime:
         self._loaded = False
         self._native_tools_supported: bool | None = None
         self._last_stream_tool_calls: list[ToolCall] = []
+        self._last_stream_prompt_tokens = 0
+        self._last_stream_completion_tokens = 0
         self._cancel_flag = False
 
     def cancel(self) -> None:

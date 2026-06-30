@@ -183,6 +183,8 @@ class ClaudeCodeRuntime:
         # when any tools are registered.
         self._native_tools_supported: bool = True
         self._last_stream_tool_calls: list[ToolCall] = []
+        self._last_stream_input_tokens = 0
+        self._last_stream_output_tokens = 0
         self._cancel_flag = False
 
     def cancel(self) -> None:
