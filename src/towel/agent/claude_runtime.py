@@ -25,6 +25,7 @@ from towel.agent.events import AgentEvent
 from towel.agent.instance_lock import acquire_runtime_lock
 from towel.agent.runtime import (
     AUTONOMY_NUDGE,
+    EMPTY_TEXT_FALLBACK,
     MAX_AUTONOMY_NUDGES,
     MAX_GOAL_NUDGES,
     TOOL_ERROR_NUDGE,
@@ -497,10 +498,15 @@ class ClaudeCodeRuntime:
                     conversation.add(Role.ASSISTANT, result.text)
                     conversation.add(Role.USER, goal_nudge)
                     continue
+                content = result.text
+                meta: dict[str, Any] = {"backend": "claude", "model": self.model}
+                if not content.strip():
+                    content = EMPTY_TEXT_FALLBACK
+                    meta["empty_text_fallback"] = True
                 return Message(
                     role=Role.ASSISTANT,
-                    content=result.text,
-                    metadata={"backend": "claude", "model": self.model},
+                    content=content,
+                    metadata=meta,
                 )
 
             if remaining_text:
@@ -528,6 +534,16 @@ class ClaudeCodeRuntime:
                     result_str = f"Error executing {tc.name}: {e}"
                     is_error = True
                     log.error(result_str)
+
+                if (
+                    not is_error and self.memory
+                    and getattr(self.config, "auto_capture", True)
+                ):
+                    try:
+                        from towel.memory.auto_capture import apply_tool_result
+                        apply_tool_result(tc.name, result_str, self.memory)
+                    except Exception as exc:
+                        log.debug("Tool-result capture skipped: %s", exc)
 
                 conversation.add(
                     Role.TOOL,
@@ -610,11 +626,13 @@ class ClaudeCodeRuntime:
                     conversation.add(Role.ASSISTANT, full_text)
                     conversation.add(Role.USER, goal_nudge)
                     continue
-                conversation.add(Role.ASSISTANT, full_text)
-                yield AgentEvent.complete(
-                    full_text,
-                    metadata={"backend": "claude", "model": self.model},
-                )
+                text = full_text
+                meta: dict[str, Any] = {"backend": "claude", "model": self.model}
+                if not text.strip():
+                    text = EMPTY_TEXT_FALLBACK
+                    meta["empty_text_fallback"] = True
+                conversation.add(Role.ASSISTANT, text)
+                yield AgentEvent.complete(text, metadata=meta)
                 return
 
             if remaining_text:
