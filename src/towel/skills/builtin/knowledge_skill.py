@@ -120,7 +120,10 @@ class KnowledgeSkill(Skill):
             "created": datetime.now(UTC).isoformat(),
         }
         entries.append(entry)
-        _save_kb(entries)
+        try:
+            _save_kb(entries)
+        except OSError as exc:
+            return f"Failed to save knowledge base: {exc}"
         return f"Saved to knowledge base ({len(entries)} total). Tags: {', '.join(tags) or 'none'}"
 
     def _search(self, query: str, tag: str | None) -> str:
@@ -165,5 +168,8 @@ class KnowledgeSkill(Skill):
         if index < 0 or index >= len(entries):
             return f"Invalid index: {index}"
         removed = entries.pop(index)
-        _save_kb(entries)
+        try:
+            _save_kb(entries)
+        except OSError as exc:
+            return f"Failed to save knowledge base: {exc}"
         return f"Deleted: {removed.get('title') or removed['content'][:40]}"

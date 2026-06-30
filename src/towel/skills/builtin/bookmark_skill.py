@@ -125,7 +125,10 @@ class BookmarkSkill(Skill):
                 "added": datetime.now(UTC).isoformat(),
             }
         )
-        _save(bms)
+        try:
+            _save(bms)
+        except OSError as exc:
+            return f"Failed to save bookmark: {exc}"
         return f"Bookmarked: {title or url}"
 
     def _search(self, query: str, tag: str | None) -> str:
@@ -163,5 +166,8 @@ class BookmarkSkill(Skill):
         if index < 0 or index >= len(bms):
             return f"Invalid index: {index}"
         removed = bms.pop(index)
-        _save(bms)
+        try:
+            _save(bms)
+        except OSError as exc:
+            return f"Failed to save bookmarks: {exc}"
         return f"Deleted: {removed.get('title', removed['url'])}"

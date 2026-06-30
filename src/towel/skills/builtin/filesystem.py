@@ -96,8 +96,11 @@ class FileSystemSkill(Skill):
 
             case "write_file":
                 path = Path(arguments["path"]).expanduser()
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(arguments["content"], encoding="utf-8")
+                try:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(arguments["content"], encoding="utf-8")
+                except OSError as exc:
+                    return f"Failed to write {path}: {exc}"
                 return f"Written {len(arguments['content'])} bytes to {path}"
 
             case "edit_file":
@@ -143,7 +146,10 @@ class FileSystemSkill(Skill):
                         "context to the old_string to disambiguate."
                     )
                 new_content = content.replace(old_string, new_string, 1)
-                path.write_text(new_content, encoding="utf-8")
+                try:
+                    path.write_text(new_content, encoding="utf-8")
+                except OSError as exc:
+                    return f"Failed to write {path}: {exc}"
                 # Surface the actual delta so the model knows what
                 # changed without re-reading the file.
                 delta = len(new_content) - len(content)
