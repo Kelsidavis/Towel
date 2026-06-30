@@ -594,7 +594,10 @@ class AgentRuntime:
                     continue
                 text = result.text
                 metadata: dict[str, Any] = {"tps": last_tps, "tokens": total_tokens}
-                if not text.strip():
+                if not text.strip() and tool_trace:
+                    text = summarize_tool_trace(tool_trace)
+                    metadata["synthesized_summary"] = True
+                elif not text.strip():
                     text = EMPTY_TEXT_FALLBACK
                     metadata["empty_text_fallback"] = True
                 return Message(
@@ -747,7 +750,10 @@ class AgentRuntime:
                     continue
                 text = full_text
                 metadata: dict[str, Any] = {"tps": tps, "tokens": total_tokens}
-                if not text.strip():
+                if not text.strip() and tool_trace:
+                    text = summarize_tool_trace(tool_trace)
+                    metadata["synthesized_summary"] = True
+                elif not text.strip():
                     text = EMPTY_TEXT_FALLBACK
                     metadata["empty_text_fallback"] = True
                 conversation.add(Role.ASSISTANT, text)

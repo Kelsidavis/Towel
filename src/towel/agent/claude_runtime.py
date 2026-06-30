@@ -35,6 +35,7 @@ from towel.agent.runtime import (
     format_tool_feedback,
     looks_like_goal_incomplete,
     looks_like_unfulfilled_intent,
+    summarize_tool_trace,
     tool_result_is_error,
 )
 from towel.agent.tool_parser import ToolCall, parse_tool_calls
@@ -503,7 +504,10 @@ class ClaudeCodeRuntime:
                     continue
                 content = result.text
                 meta: dict[str, Any] = {"backend": "claude", "model": self.model}
-                if not content.strip():
+                if not content.strip() and tool_trace:
+                    content = summarize_tool_trace(tool_trace)
+                    meta["synthesized_summary"] = True
+                elif not content.strip():
                     content = EMPTY_TEXT_FALLBACK
                     meta["empty_text_fallback"] = True
                 return Message(
@@ -631,7 +635,10 @@ class ClaudeCodeRuntime:
                     continue
                 text = full_text
                 meta: dict[str, Any] = {"backend": "claude", "model": self.model}
-                if not text.strip():
+                if not text.strip() and tool_trace:
+                    text = summarize_tool_trace(tool_trace)
+                    meta["synthesized_summary"] = True
+                elif not text.strip():
                     text = EMPTY_TEXT_FALLBACK
                     meta["empty_text_fallback"] = True
                 conversation.add(Role.ASSISTANT, text)

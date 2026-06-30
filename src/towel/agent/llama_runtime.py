@@ -792,7 +792,10 @@ class LlamaRuntime:
                     continue
                 text = full_text
                 meta: dict[str, Any] = {"backend": "llama", "model": self.config.model.name}
-                if not text.strip():
+                if not text.strip() and tool_trace:
+                    text = summarize_tool_trace(tool_trace)
+                    meta["synthesized_summary"] = True
+                elif not text.strip():
                     text = EMPTY_TEXT_FALLBACK
                     meta["empty_text_fallback"] = True
                 conversation.add(Role.ASSISTANT, text)
