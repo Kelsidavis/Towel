@@ -1414,7 +1414,17 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   function showWelcome() {
     messagesEl.innerHTML = `<div id="welcome">
       <h2>TOWEL</h2><p class="motto">Don't Panic.</p>
-      <p class="hint">Your local-first AI assistant.<br>Type a message to begin.</p></div>`;
+      <p class="hint">Your local-first AI assistant.<br>Type a message to begin.</p>
+      <div style="margin-top:28px;display:grid;grid-template-columns:repeat(2,auto);gap:4px 16px;justify-content:center;font-family:var(--mono);font-size:11px;color:var(--text-dim);text-align:left">
+        <span style="color:var(--text)">Ctrl+P</span><span>command palette</span>
+        <span style="color:var(--text)">Ctrl+N</span><span>new chat</span>
+        <span style="color:var(--text)">Ctrl+K</span><span>search conversations</span>
+        <span style="color:var(--text)">Ctrl+Shift+F</span><span>fleet control</span>
+        <span style="color:var(--text)">Ctrl+Shift+M</span><span>memory panel</span>
+        <span style="color:var(--text)">Ctrl+E</span><span>export chat</span>
+        <span style="color:var(--text)">Ctrl+T</span><span>cycle theme</span>
+        <span style="color:var(--text)">Esc</span><span>stop generation</span>
+      </div></div>`;
   }
 
   // ── Markdown renderer ──
