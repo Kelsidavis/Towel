@@ -34,6 +34,7 @@ from towel.agent.runtime import (
     MAX_AUTONOMY_NUDGES,
     format_tool_feedback,
     looks_like_unfulfilled_intent,
+    summarize_tool_trace,
     tool_result_is_error,
 )
 from towel.agent.tool_parser import ToolCall, parse_tool_calls
@@ -622,6 +623,7 @@ class LlamaRuntime:
 
     async def step(self, conversation: Conversation) -> Message:
         autonomy_nudges = 0
+        tool_trace: list[dict[str, Any]] = []
         for _iteration in range(MAX_TOOL_ITERATIONS):
             result = await self.generate(conversation)
             if result.tool_calls:
@@ -644,10 +646,16 @@ class LlamaRuntime:
                     conversation.add(Role.ASSISTANT, result.text)
                     conversation.add(Role.USER, AUTONOMY_NUDGE)
                     continue
+                # Recap tool work when the model returns no concluding text.
+                content = result.text
+                meta = {"backend": "llama", "model": self.config.model.name}
+                if not content.strip() and tool_trace:
+                    content = summarize_tool_trace(tool_trace)
+                    meta["synthesized_summary"] = True
                 return Message(
                     role=Role.ASSISTANT,
-                    content=result.text,
-                    metadata={"backend": "llama", "model": self.config.model.name},
+                    content=content,
+                    metadata=meta,
                 )
 
             if remaining_text:
@@ -672,6 +680,10 @@ class LlamaRuntime:
                     tool_name=tc.name,
                     status="error" if is_error else "ok",
                 )
+                tool_trace.append({
+                    "tool": tc.name,
+                    "status": "error" if is_error else "ok",
+                })
 
         log.warning(f"Hit max tool iterations ({MAX_TOOL_ITERATIONS})")
         return Message(
