@@ -549,6 +549,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
 <div id="main" style="position:relative">
   <div id="toolbar">
     <div class="session-info" id="session-info"></div>
+    <span id="model-badge" style="font-size:10px;color:var(--text-dim);font-family:var(--mono);padding:2px 8px;border:1px solid var(--border);border-radius:10px;white-space:nowrap;display:none"></span>
     <div class="actions">
       <button class="tb-btn" id="tb-fleet" title="Open worker and route controls">fleet</button>
       <button class="tb-btn" id="tb-memory" title="View persistent memory: stats, recent captures, search">memory</button>
@@ -574,6 +575,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       <button id="send-btn" title="Send (Enter)">&#8593;</button>
       <button id="stop-btn" title="Stop generation (Esc)">&#9632;</button>
     </div>
+    <div id="input-meta" style="max-width:780px;margin:2px auto 0;font-size:10px;color:var(--text-dim);font-family:var(--mono);text-align:right;opacity:0;transition:opacity .15s;min-height:14px"></div>
   </div>
 </div>
 
@@ -663,6 +665,18 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   async function apiGet(p) { return (await fetch(apiBase+p)).json(); }
   async function apiDelete(p) { return (await fetch(apiBase+p,{method:'DELETE'})).json(); }
   async function apiPost(p,b) { return (await fetch(apiBase+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})).json(); }
+
+  async function fetchModelBadge() {
+    const badge = document.getElementById('model-badge');
+    try {
+      const h = await apiGet('/health');
+      const c = h.coordinator || {};
+      const model = String(c.model || '').split('/').pop() || 'unknown';
+      const backend = c.backend || '?';
+      badge.textContent = backend + ' · ' + model;
+      badge.style.display = '';
+    } catch (_) { badge.style.display = 'none'; }
+  }
 
   function renderModelCapacity(caps) {
     // Rough "biggest model this host can hold" — derived from VRAM (or
@@ -1522,6 +1536,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       reconnectDelay = 1000;
       ws.send(JSON.stringify({ type: 'register', id: 'channel:webchat:' + sessionId }));
       loadConversationList();
+      fetchModelBadge();
       if (sessionId !== localStorage.getItem('towel-session-loaded')) {
         switchSession(sessionId);
         localStorage.setItem('towel-session-loaded', sessionId);
@@ -1777,7 +1792,18 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     if(!isStreaming)inputEl.focus();
   }
   function scrollToBottom(){messagesEl.scrollTop=messagesEl.scrollHeight;}
-  function autoResize(){inputEl.style.height='auto';inputEl.style.height=Math.min(inputEl.scrollHeight,160)+'px';}
+  const inputMeta = document.getElementById('input-meta');
+  function autoResize(){
+    inputEl.style.height='auto';inputEl.style.height=Math.min(inputEl.scrollHeight,160)+'px';
+    var len = inputEl.value.length;
+    if (len > 50) {
+      var words = inputEl.value.trim().split(/\s+/).length;
+      inputMeta.textContent = len + ' chars · ' + words + ' words';
+      inputMeta.style.opacity = '1';
+    } else {
+      inputMeta.style.opacity = '0';
+    }
+  }
   function escHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 
   // Sticky launcher credentials so the operator doesn't retype on every
