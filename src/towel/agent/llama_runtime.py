@@ -565,9 +565,8 @@ class LlamaRuntime:
             payload["tools"] = request["tools"]
 
         self._last_stream_tool_calls = []
-        # Accumulator for streamed tool_call deltas, keyed by index. Each entry
-        # tracks {"name": str, "arguments": str} where ``arguments`` is built up
-        # as a JSON-encoded string across chunks (the OpenAI streaming contract).
+        self._last_stream_prompt_tokens = 0
+        self._last_stream_completion_tokens = 0
         tc_accum: dict[int, dict[str, str]] = {}
 
         async with httpx.AsyncClient(timeout=300.0) as client:
@@ -604,6 +603,10 @@ class LlamaRuntime:
                             chunk = json.loads(data_str)
                         except json.JSONDecodeError:
                             continue
+                        usage = chunk.get("usage")
+                        if usage:
+                            self._last_stream_prompt_tokens = usage.get("prompt_tokens", 0)
+                            self._last_stream_completion_tokens = usage.get("completion_tokens", 0)
                         delta = chunk.get("choices", [{}])[0].get("delta", {})
                         token = delta.get("content", "")
                         if token:
@@ -635,8 +638,12 @@ class LlamaRuntime:
         goal_nudges = 0
         tool_trace: list[dict[str, Any]] = []
         remaining_text = ""
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
         for _iteration in range(MAX_TOOL_ITERATIONS):
             result = await self.generate(conversation)
+            total_prompt_tokens += result.prompt_tokens
+            total_completion_tokens += result.completion_tokens
             if result.tool_calls:
                 tool_calls = result.tool_calls
                 remaining_text = result.text
@@ -664,7 +671,12 @@ class LlamaRuntime:
                     conversation.add(Role.USER, goal_nudge)
                     continue
                 content = result.text
-                meta: dict[str, Any] = {"backend": "llama", "model": self.config.model.name}
+                meta: dict[str, Any] = {
+                    "backend": "llama",
+                    "model": self.config.model.name,
+                    "prompt_tokens": total_prompt_tokens,
+                    "completion_tokens": total_completion_tokens,
+                }
                 if not content.strip() and tool_trace:
                     content = summarize_tool_trace(tool_trace)
                     meta["synthesized_summary"] = True
@@ -749,12 +761,16 @@ class LlamaRuntime:
         goal_nudges = 0
         tool_trace: list[dict[str, Any]] = []
         remaining_text = ""
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
 
         for _iteration in range(MAX_TOOL_ITERATIONS):
             full_text = ""
             async for chunk in self.stream(conversation):
                 full_text += chunk
                 yield AgentEvent.token(chunk)
+            total_prompt_tokens += self._last_stream_prompt_tokens
+            total_completion_tokens += self._last_stream_completion_tokens
 
             if self._cancel_flag:
                 if full_text.strip():
@@ -791,7 +807,12 @@ class LlamaRuntime:
                     conversation.add(Role.USER, goal_nudge)
                     continue
                 text = full_text
-                meta: dict[str, Any] = {"backend": "llama", "model": self.config.model.name}
+                meta: dict[str, Any] = {
+                    "backend": "llama",
+                    "model": self.config.model.name,
+                    "prompt_tokens": total_prompt_tokens,
+                    "completion_tokens": total_completion_tokens,
+                }
                 if not text.strip() and tool_trace:
                     text = summarize_tool_trace(tool_trace)
                     meta["synthesized_summary"] = True

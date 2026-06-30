@@ -450,20 +450,22 @@ class ClaudeCodeRuntime:
             stream_kwargs["tools"] = request["tools"]
 
         self._last_stream_tool_calls = []
+        self._last_stream_input_tokens = 0
+        self._last_stream_output_tokens = 0
         async with self._client.messages.stream(**stream_kwargs) as stream:
             async for text in stream.text_stream:
                 if self._cancel_flag:
                     break
                 yield text
-            # After text streaming ends (or was cancelled), reconcile the final
-            # message to capture any tool_use blocks Claude emitted alongside
-            # the text. The SDK aggregates them into ``final.content``.
             try:
                 final = await stream.get_final_message()
             except Exception as exc:
                 log.debug("Anthropic stream.get_final_message failed: %s", exc)
                 return
             self._last_stream_tool_calls = _extract_anthropic_tool_calls(final.content)
+            if hasattr(final, "usage") and final.usage:
+                self._last_stream_input_tokens = getattr(final.usage, "input_tokens", 0)
+                self._last_stream_output_tokens = getattr(final.usage, "output_tokens", 0)
 
     async def step(self, conversation: Conversation) -> Message:
         """Run one full agent step: generate -> maybe call tools -> return response."""
@@ -473,9 +475,13 @@ class ClaudeCodeRuntime:
         goal_nudges = 0
         tool_trace: list[dict[str, Any]] = []
         remaining_text = ""
+        total_input_tokens = 0
+        total_output_tokens = 0
 
         for iteration in range(MAX_TOOL_ITERATIONS):
             result = await self.generate(conversation)
+            total_input_tokens += result.input_tokens
+            total_output_tokens += result.output_tokens
             if result.tool_calls:
                 tool_calls = result.tool_calls
                 remaining_text = result.text
@@ -503,7 +509,12 @@ class ClaudeCodeRuntime:
                     conversation.add(Role.USER, goal_nudge)
                     continue
                 content = result.text
-                meta: dict[str, Any] = {"backend": "claude", "model": self.model}
+                meta: dict[str, Any] = {
+                    "backend": "claude",
+                    "model": self.model,
+                    "input_tokens": total_input_tokens,
+                    "output_tokens": total_output_tokens,
+                }
                 if not content.strip() and tool_trace:
                     content = summarize_tool_trace(tool_trace)
                     meta["synthesized_summary"] = True
@@ -589,12 +600,16 @@ class ClaudeCodeRuntime:
         goal_nudges = 0
         tool_trace: list[dict[str, Any]] = []
         remaining_text = ""
+        total_input_tokens = 0
+        total_output_tokens = 0
 
         for iteration in range(MAX_TOOL_ITERATIONS):
             full_text = ""
             async for chunk in self.stream(conversation):
                 full_text += chunk
                 yield AgentEvent.token(chunk)
+            total_input_tokens += self._last_stream_input_tokens
+            total_output_tokens += self._last_stream_output_tokens
 
             if self._cancel_flag:
                 if full_text.strip():
@@ -634,7 +649,12 @@ class ClaudeCodeRuntime:
                     conversation.add(Role.USER, goal_nudge)
                     continue
                 text = full_text
-                meta: dict[str, Any] = {"backend": "claude", "model": self.model}
+                meta: dict[str, Any] = {
+                    "backend": "claude",
+                    "model": self.model,
+                    "input_tokens": total_input_tokens,
+                    "output_tokens": total_output_tokens,
+                }
                 if not text.strip() and tool_trace:
                     text = summarize_tool_trace(tool_trace)
                     meta["synthesized_summary"] = True

@@ -388,6 +388,8 @@ class OllamaRuntime:
             payload["tools"] = request["tools"]
 
         self._last_stream_tool_calls = []
+        self._last_stream_prompt_tokens = 0
+        self._last_stream_completion_tokens = 0
         async with httpx.AsyncClient(timeout=300.0) as client:
             async with client.stream("POST", f"{self.ollama_url}/api/chat", json=payload) as resp:
                 resp.raise_for_status()
@@ -406,14 +408,12 @@ class OllamaRuntime:
                         yield token
                     chunk_tcs = chunk_message.get("tool_calls") or []
                     if chunk_tcs:
-                        # Ollama emits tool_calls in the final chunk (done=true).
-                        # Stash them so step_streaming can pick them up after the
-                        # stream finishes — the AsyncIterator[str] contract can't
-                        # carry structured payloads directly.
                         self._last_stream_tool_calls.extend(
                             _normalize_ollama_tool_calls(chunk_tcs)
                         )
                     if chunk.get("done"):
+                        self._last_stream_prompt_tokens = chunk.get("prompt_eval_count", 0)
+                        self._last_stream_completion_tokens = chunk.get("eval_count", 0)
                         break
 
     async def step(self, conversation: Conversation) -> Message:
@@ -423,9 +423,13 @@ class OllamaRuntime:
         goal_nudges = 0
         tool_trace: list[dict[str, Any]] = []
         remaining_text = ""
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
 
         for _iteration in range(MAX_TOOL_ITERATIONS):
             result = await self.generate(conversation)
+            total_prompt_tokens += result.prompt_tokens
+            total_completion_tokens += result.completion_tokens
             if result.tool_calls:
                 tool_calls = result.tool_calls
                 remaining_text = result.text
@@ -453,7 +457,12 @@ class OllamaRuntime:
                     conversation.add(Role.USER, goal_nudge)
                     continue
                 content = result.text
-                meta: dict[str, Any] = {"backend": "ollama", "model": self.config.model.name}
+                meta: dict[str, Any] = {
+                    "backend": "ollama",
+                    "model": self.config.model.name,
+                    "prompt_tokens": total_prompt_tokens,
+                    "completion_tokens": total_completion_tokens,
+                }
                 if not content.strip() and tool_trace:
                     content = summarize_tool_trace(tool_trace)
                     meta["synthesized_summary"] = True
@@ -538,12 +547,16 @@ class OllamaRuntime:
         goal_nudges = 0
         tool_trace: list[dict[str, Any]] = []
         remaining_text = ""
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
 
         for _iteration in range(MAX_TOOL_ITERATIONS):
             full_text = ""
             async for chunk in self.stream(conversation):
                 full_text += chunk
                 yield AgentEvent.token(chunk)
+            total_prompt_tokens += self._last_stream_prompt_tokens
+            total_completion_tokens += self._last_stream_completion_tokens
 
             if self._cancel_flag:
                 if full_text.strip():
@@ -580,7 +593,12 @@ class OllamaRuntime:
                     conversation.add(Role.USER, goal_nudge)
                     continue
                 text = full_text
-                meta: dict[str, Any] = {"backend": "ollama", "model": self.config.model.name}
+                meta: dict[str, Any] = {
+                    "backend": "ollama",
+                    "model": self.config.model.name,
+                    "prompt_tokens": total_prompt_tokens,
+                    "completion_tokens": total_completion_tokens,
+                }
                 if not text.strip() and tool_trace:
                     text = summarize_tool_trace(tool_trace)
                     meta["synthesized_summary"] = True
