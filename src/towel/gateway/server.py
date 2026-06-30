@@ -5967,13 +5967,11 @@ class GatewayServer:
             self._save_worker_states()
 
             updated = self._workers.get(worker_id)
-            assert updated is not None
-            # WorkerInfo.to_dict directly — the previous code mistakenly
-            # routed this through `_memory_entry_dict`, which is the
-            # memory-store response shaper and added spurious
-            # `tags`/`source`/`scope`/`last_recalled_at` fields to the
-            # worker payload. Operators saw "tags": [] on a worker
-            # and reasonably wondered if memory entries were attached.
+            if updated is None:
+                return JSONResponse(
+                    {"error": f"Worker {worker_id} disconnected during update"},
+                    status_code=404,
+                )
             return JSONResponse(updated.to_dict())
 
         async def session_pin_worker(request: Request) -> JSONResponse:

@@ -255,8 +255,12 @@ class TowelConfig(BaseModel):
         config_path = path or TOWEL_HOME / "config.toml"
         config_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = config_path.with_name(config_path.name + ".tmp")
-        tmp.write_text(toml.dumps(self.model_dump()))
-        tmp.replace(config_path)
+        try:
+            tmp.write_text(toml.dumps(self.model_dump()))
+            tmp.replace(config_path)
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            raise
 
     def list_agents(self) -> dict[str, AgentProfile]:
         """List all available agents (user-defined + built-in)."""
@@ -272,8 +276,11 @@ class TowelConfig(BaseModel):
 
                 for name, data in _toml.load(agents_file).items():
                     result[name] = AgentProfile.model_validate(data)
-            except Exception:
-                pass
+            except Exception as exc:
+                import logging
+                logging.getLogger("towel.config").warning(
+                    "Failed to load agent profiles from %s: %s", agents_file, exc,
+                )
         # Config-defined override everything
         result.update(self.agents)
         return result

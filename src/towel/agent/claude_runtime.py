@@ -94,7 +94,10 @@ def _read_oauth_token() -> str:
     """
     import os
 
-    username = os.environ.get("USER") or os.getlogin()
+    try:
+        username = os.environ.get("USER") or os.getlogin()
+    except (OSError, RuntimeError):
+        username = "unknown"
 
     result = subprocess.run(
         ["security", "find-generic-password", "-a", username, "-w", "-s", _KEYCHAIN_SERVICE],

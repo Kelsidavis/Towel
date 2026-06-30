@@ -97,7 +97,10 @@ def _probe_claude() -> dict[str, Any]:
     if plain.exists():
         return {"available": True, "reason": "credentials at ~/.claude/.credentials.json"}
     try:
-        username = os.environ.get("USER") or os.getlogin()
+        try:
+            username = os.environ.get("USER") or os.getlogin()
+        except (OSError, RuntimeError):
+            return {"available": False, "reason": "cannot determine username"}
         result = subprocess.run(
             ["security", "find-generic-password", "-a", username, "-s", "Claude Code-credentials"],
             capture_output=True,
