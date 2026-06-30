@@ -202,6 +202,13 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   border-left:3px solid var(--text-dim); border-radius:0 6px 6px 0;
   font-family:var(--mono); font-size:12px; color:var(--text-dim);
   max-height:120px; overflow-y:auto; white-space:pre-wrap; word-break:break-all; }
+#scroll-bottom { position:absolute; bottom:80px; right:24px; z-index:50;
+  width:36px; height:36px; border-radius:50%; background:var(--bg-surface);
+  border:1px solid var(--border); color:var(--text-dim); cursor:pointer;
+  display:none; align-items:center; justify-content:center; font-size:16px;
+  transition:opacity .15s, border-color .15s, color .15s; box-shadow:0 2px 8px rgba(0,0,0,0.3); }
+#scroll-bottom:hover { border-color:var(--green); color:var(--green); }
+#scroll-bottom.visible { display:flex; }
 .cursor { display:inline-block; width:7px; height:16px; background:var(--green);
   margin-left:2px; vertical-align:text-bottom; animation:blink .8s step-end infinite; }
 @keyframes blink { 50%{opacity:0} }
@@ -537,7 +544,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   </div>
 </div>
 
-<div id="main">
+<div id="main" style="position:relative">
   <div id="toolbar">
     <div class="session-info" id="session-info"></div>
     <div class="actions">
@@ -556,6 +563,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       <p class="hint">Your local-first AI assistant.<br>Type a message to begin.</p>
     </div>
   </div>
+  <button id="scroll-bottom" title="Scroll to bottom">&#8595;</button>
   <div id="input-area">
     <div id="input-row">
       <textarea id="user-input" placeholder="Message Towel..." rows="1" autofocus></textarea>
@@ -1416,6 +1424,9 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     // Horizontal rule
     html = html.replace(/^---$/gm, '<hr>');
 
+    // Strikethrough: ~~text~~
+    html = html.replace(/~~(.+?)~~/g, '<del>$1</del>');
+
     // Bold + italic: ***text*** or ___text___
     html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
     // Bold: **text**
@@ -1448,6 +1459,10 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       }).join('') + '</tbody>' : '';
       return '<table>' + thead + tbody + '</table>';
     });
+
+    // Task lists: - [ ] item or - [x] item (before regular list handling)
+    html = html.replace(/^[\-\*] \[x\] (.+)$/gm, '<li style="list-style:none"><input type="checkbox" checked disabled> $1</li>');
+    html = html.replace(/^[\-\*] \[ \] (.+)$/gm, '<li style="list-style:none"><input type="checkbox" disabled> $1</li>');
 
     // Unordered lists: - item or * item
     html = html.replace(/^[\-\*] (.+)$/gm, '<li>$1</li>');
@@ -1594,6 +1609,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
           currentAssistantEl?.querySelector('.body')?.appendChild(el);
         }
         speakReply(stripToolCallMarkup(msg.content || streamingRawText || ''));
+        if (!tabFocused) { unreadCount++; document.title = '(' + unreadCount + ') ' + originalTitle; }
         isStreaming=false; currentAssistantEl=null; currentContentEl=null;
         updateUI(); scrollToBottom(); loadConversationList(); break;
       }
@@ -3238,6 +3254,24 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     // Ctrl/Cmd+Shift+M — memory panel
     if((e.ctrlKey||e.metaKey)&&e.shiftKey&&e.key.toLowerCase()==='m'){e.preventDefault();openMemoryPanel();}
   });
+
+  // ── Scroll-to-bottom button ──
+  const scrollBottomBtn = document.getElementById('scroll-bottom');
+  messagesEl.addEventListener('scroll', function() {
+    const gap = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
+    scrollBottomBtn.classList.toggle('visible', gap > 200);
+  });
+  scrollBottomBtn.addEventListener('click', scrollToBottom);
+
+  // ── Tab notification when unfocused ──
+  let tabFocused = true;
+  let unreadCount = 0;
+  const originalTitle = document.title;
+  window.addEventListener('focus', function() {
+    tabFocused = true; unreadCount = 0;
+    document.title = originalTitle;
+  });
+  window.addEventListener('blur', function() { tabFocused = false; });
 
   // ── Sidebar toggle (mobile) ──
   const sidebarToggle = document.getElementById('sidebar-toggle');
