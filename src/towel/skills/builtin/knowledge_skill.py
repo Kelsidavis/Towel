@@ -29,7 +29,13 @@ def _load_kb() -> list[dict]:
 
 def _save_kb(entries: list[dict]) -> None:
     KB_FILE.parent.mkdir(parents=True, exist_ok=True)
-    KB_FILE.write_text(json.dumps(entries, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp = KB_FILE.with_name(KB_FILE.name + ".tmp")
+    try:
+        tmp.write_text(json.dumps(entries, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(KB_FILE)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 class KnowledgeSkill(Skill):

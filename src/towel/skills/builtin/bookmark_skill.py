@@ -34,7 +34,13 @@ def _load() -> list[dict]:
 
 def _save(bms: list[dict]) -> None:
     BM_FILE.parent.mkdir(parents=True, exist_ok=True)
-    BM_FILE.write_text(json.dumps(bms, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp = BM_FILE.with_name(BM_FILE.name + ".tmp")
+    try:
+        tmp.write_text(json.dumps(bms, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(BM_FILE)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 class BookmarkSkill(Skill):

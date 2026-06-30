@@ -29,7 +29,13 @@ def _load() -> list[dict]:
 
 def _save(todos: list[dict]) -> None:
     TODO_FILE.parent.mkdir(parents=True, exist_ok=True)
-    TODO_FILE.write_text(json.dumps(todos, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp = TODO_FILE.with_name(TODO_FILE.name + ".tmp")
+    try:
+        tmp.write_text(json.dumps(todos, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(TODO_FILE)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 class TodoSkill(Skill):
@@ -138,7 +144,10 @@ class TodoSkill(Skill):
         if due:
             entry["due"] = due
         todos.append(entry)
-        _save(todos)
+        try:
+            _save(todos)
+        except OSError as exc:
+            return f"Failed to save todo: {exc}"
         icon = {"high": "!", "medium": "-", "low": "."}[priority]
         return f"[{icon}] Added: {task}" + (f" (due {due})" if due else "")
 
@@ -172,7 +181,10 @@ class TodoSkill(Skill):
             return f"Invalid index: {index}"
         todos[index]["done"] = True
         todos[index]["completed_at"] = datetime.now(UTC).isoformat()
-        _save(todos)
+        try:
+            _save(todos)
+        except OSError as exc:
+            return f"Failed to save todo: {exc}"
         return f"Completed: {todos[index]['task']}"
 
     def _remove(self, index: int) -> str:
@@ -180,5 +192,8 @@ class TodoSkill(Skill):
         if index < 0 or index >= len(todos):
             return f"Invalid index: {index}"
         removed = todos.pop(index)
-        _save(todos)
+        try:
+            _save(todos)
+        except OSError as exc:
+            return f"Failed to save todo: {exc}"
         return f"Removed: {removed['task']}"
