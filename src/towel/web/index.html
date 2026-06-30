@@ -168,7 +168,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
 .message.user .avatar { background:var(--user-avatar-bg); color:var(--cyan); }
 .message.assistant .avatar { background:var(--asst-avatar-bg); color:var(--green); }
 .message .body { flex:1; min-width:0; }
-.message .role { font-size:12px; font-weight:600; margin-bottom:4px; font-family:var(--mono); }
+.message .role { font-size:12px; font-weight:600; margin-bottom:4px; font-family:var(--mono); display:flex; align-items:baseline; gap:8px; }
 .message.user .role { color:var(--cyan); }
 .message.assistant .role { color:var(--green); }
 .message .content { font-size:14px; line-height:1.6; white-space:pre-wrap; word-break:break-word; }
@@ -221,6 +221,14 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   font-family:var(--mono); font-size:13px; line-height:1.5; position:relative; }
 .md-content pre .lang-tag { position:absolute; top:4px; right:8px;
   font-size:10px; color:var(--text-dim); font-family:var(--mono); }
+.md-content pre .copy-btn { position:absolute; top:4px; right:8px;
+  background:var(--bg-surface); border:1px solid var(--border); color:var(--text-dim);
+  border-radius:4px; padding:2px 6px; font-size:10px; font-family:var(--mono);
+  cursor:pointer; opacity:0; transition:opacity .15s; z-index:1; }
+.md-content pre .lang-tag + .copy-btn { right:auto; left:8px; top:4px; }
+.md-content pre:hover .copy-btn { opacity:1; }
+.md-content pre .copy-btn:hover { color:var(--green); border-color:var(--green); }
+.md-content pre .copy-btn.copied { color:var(--green); border-color:var(--green); opacity:1; }
 .md-content code { font-family:var(--mono); background:var(--bg);
   padding:1px 5px; border-radius:3px; font-size:13px; }
 .md-content pre code { background:none; padding:0; font-size:13px; }
@@ -265,6 +273,27 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   justify-content:center; font-size:16px; transition:opacity .2s; flex-shrink:0; }
 #stop-btn:hover { opacity:.85; }
 #stop-btn.visible { display:flex; }
+
+.message .timestamp { font-size:10px; color:var(--text-dim); font-family:var(--mono);
+  opacity:0; transition:opacity .15s; margin-left:auto; white-space:nowrap; }
+.message:hover .timestamp { opacity:1; }
+
+#sidebar-toggle { display:none; position:fixed; top:10px; left:10px; z-index:110;
+  background:var(--bg-surface); border:1px solid var(--border); color:var(--text);
+  border-radius:6px; width:36px; height:36px; cursor:pointer; font-size:16px;
+  align-items:center; justify-content:center; }
+
+@media (max-width: 768px) {
+  #sidebar { position:fixed; left:-260px; z-index:100; transition:left .2s ease; height:100vh; }
+  #sidebar.open { left:0; }
+  #main { margin-left:0; }
+  #sidebar-toggle { display:flex; }
+  #sidebar.open ~ #sidebar-toggle { left:266px; }
+  .message { gap:8px; }
+  .message .avatar { width:28px; height:28px; font-size:11px; }
+  #input-row { gap:6px; }
+  .voice-btn { display:none; }
+}
 
 ::-webkit-scrollbar { width:6px; }
 ::-webkit-scrollbar-track { background:transparent; }
@@ -493,6 +522,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   </div>
 </div>
 
+<button id="sidebar-toggle" title="Toggle sidebar">&#9776;</button>
 <div id="sidebar">
   <div id="sidebar-header">
     <h1>TOWEL</h1>
@@ -1371,7 +1401,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     // Fenced code blocks: ```lang\n...\n```
     html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function(_,lang,code) {
       const tag = lang ? `<span class="lang-tag">${lang}</span>` : '';
-      return `<pre>${tag}<code>${code.replace(/\n$/,'')}</code></pre>`;
+      return `<pre>${tag}<button class="copy-btn" onclick="copyCode(this)">copy</button><code>${code.replace(/\n$/,'')}</code></pre>`;
     });
 
     // Inline code: `code`
@@ -1399,6 +1429,26 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     // Blockquotes: > text
     html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
 
+    // Tables: | col | col | ... with separator row
+    html = html.replace(/((?:^\|.+\|$\n?)+)/gm, function(block) {
+      const rows = block.trim().split('\n').filter(function(r) { return r.trim(); });
+      if (rows.length < 2) return block;
+      const isSep = function(r) { return /^\|[\s:|-]+\|$/.test(r.trim()); };
+      if (!isSep(rows[1])) return block;
+      const parseRow = function(r) {
+        return r.replace(/^\||\|$/g, '').split('|').map(function(c) { return c.trim(); });
+      };
+      const headers = parseRow(rows[0]);
+      const bodyRows = rows.slice(2);
+      const thead = '<thead><tr>' + headers.map(function(h) { return '<th>' + h + '</th>'; }).join('') + '</tr></thead>';
+      const tbody = bodyRows.length ? '<tbody>' + bodyRows.map(function(r) {
+        if (isSep(r)) return '';
+        const cells = parseRow(r);
+        return '<tr>' + cells.map(function(c) { return '<td>' + c + '</td>'; }).join('') + '</tr>';
+      }).join('') + '</tbody>' : '';
+      return '<table>' + thead + tbody + '</table>';
+    });
+
     // Unordered lists: - item or * item
     html = html.replace(/^[\-\*] (.+)$/gm, '<li>$1</li>');
     html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
@@ -1424,6 +1474,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     html = html.replace(/(<\/ul>)<\/p>/g, '$1');
     html = html.replace(/<p>(<blockquote>)/g, '$1');
     html = html.replace(/(<\/blockquote>)<\/p>/g, '$1');
+    html = html.replace(/<p>(<table>)/g, '$1');
+    html = html.replace(/(<\/table>)<\/p>/g, '$1');
     html = html.replace(/<p>(<hr>)<\/p>/g, '$1');
     html = html.replace(/<p><br>/g, '<p>');
     html = html.replace(/<br><\/p>/g, '</p>');
@@ -1457,9 +1509,15 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     };
     ws.onclose = function() {
       statusDot.className = '';
-      statusText.textContent = 'disconnected';
       isStreaming = false; updateUI();
-      setTimeout(connect, reconnectDelay);
+      var secs = Math.round(reconnectDelay / 1000);
+      statusText.textContent = 'reconnecting in ' + secs + 's…';
+      var countdown = setInterval(function() {
+        secs--;
+        if (secs <= 0) { clearInterval(countdown); statusText.textContent = 'connecting…'; }
+        else statusText.textContent = 'reconnecting in ' + secs + 's…';
+      }, 1000);
+      setTimeout(function() { clearInterval(countdown); connect(); }, reconnectDelay);
       reconnectDelay = Math.min(reconnectDelay * 2, 30000);
     };
     ws.onerror = function() { ws.close(); };
@@ -1522,9 +1580,17 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
           currentContentEl.classList.add('md-content');
           currentContentEl.innerHTML = renderMarkdown(stripToolCallMarkup(msg.content));
         }
-        if (msg.metadata && msg.metadata.tps) {
+        if (msg.metadata && (msg.metadata.tps || msg.metadata.tokens)) {
           const el = document.createElement('div'); el.className = 'stats';
-          el.textContent = `${msg.metadata.tps.toFixed(1)} tok/s · ${msg.metadata.tokens} tokens`;
+          const parts = [];
+          if (msg.metadata.tps) parts.push(msg.metadata.tps.toFixed(1) + ' tok/s');
+          if (msg.metadata.input_tokens && msg.metadata.output_tokens) {
+            parts.push(msg.metadata.input_tokens + ' in / ' + msg.metadata.output_tokens + ' out');
+          } else if (msg.metadata.tokens) {
+            parts.push(msg.metadata.tokens + ' tokens');
+          }
+          if (msg.metadata.backend) parts.push(msg.metadata.backend);
+          el.textContent = parts.join(' · ');
           currentAssistantEl?.querySelector('.body')?.appendChild(el);
         }
         speakReply(stripToolCallMarkup(msg.content || streamingRawText || ''));
@@ -1553,18 +1619,23 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
 
   // ── Rendering ──
   function removeWelcome() { const w=document.getElementById('welcome'); if(w)w.remove(); }
+  function formatTime(d) {
+    return d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0');
+  }
   function addUserMessage(text, animate) {
     removeWelcome();
     const el = document.createElement('div'); el.className='message user';
     if(animate===false)el.style.animation='none';
-    el.innerHTML=`<div class="avatar">Y</div><div class="body"><div class="role">you</div><div class="content"></div></div>`;
+    const ts = formatTime(new Date());
+    el.innerHTML=`<div class="avatar">Y</div><div class="body"><div class="role">you<span class="timestamp">${ts}</span></div><div class="content"></div></div>`;
     el.querySelector('.content').textContent=text; messagesEl.appendChild(el); scrollToBottom();
   }
   function startAssistantMessage() {
     removeWelcome();
-    streamingRawText = '';  // reset the tool-call-stripping accumulator
+    streamingRawText = '';
     const el=document.createElement('div'); el.className='message assistant';
-    el.innerHTML=`<div class="avatar">T</div><div class="body"><div class="role">towel</div><div class="content"></div><span class="cursor"></span></div>`;
+    const ts = formatTime(new Date());
+    el.innerHTML=`<div class="avatar">T</div><div class="body"><div class="role">towel<span class="timestamp">${ts}</span></div><div class="content"></div><span class="cursor"></span></div>`;
     messagesEl.appendChild(el); currentAssistantEl=el; currentContentEl=el.querySelector('.content');
   }
   function addStaticAssistantMessage(text) {
@@ -3079,6 +3150,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     {icon:'🔍', label:'Search Conversations', hint:'Ctrl+K', action:()=>{closePalette();convSearchEl.focus();convSearchEl.select();}},
     {icon:'🎨', label:'Cycle Theme', hint:'Ctrl+T', action:()=>cycleTheme()},
     {icon:'🛰', label:'Fleet Control', hint:'Ctrl+Shift+F', action:()=>openFleetPanel()},
+    {icon:'🧠', label:'Memory', hint:'Ctrl+Shift+M', action:()=>openMemoryPanel()},
     {icon:'📤', label:'Export Conversation', hint:'Ctrl+E', action:()=>exportConversation()},
     {icon:'🗑', label:'Delete Conversation', hint:'', action:()=>deleteCurrentConversation()},
     {icon:'🧹', label:'Clear All Conversations', hint:'', action:()=>clearAllConversations()},
@@ -3163,11 +3235,35 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     if((e.ctrlKey||e.metaKey)&&e.key==='t'){e.preventDefault();cycleTheme();}
     // Ctrl/Cmd+Shift+F — fleet control
     if((e.ctrlKey||e.metaKey)&&e.shiftKey&&e.key.toLowerCase()==='f'){e.preventDefault();openFleetPanel();}
+    // Ctrl/Cmd+Shift+M — memory panel
+    if((e.ctrlKey||e.metaKey)&&e.shiftKey&&e.key.toLowerCase()==='m'){e.preventDefault();openMemoryPanel();}
+  });
+
+  // ── Sidebar toggle (mobile) ──
+  const sidebarToggle = document.getElementById('sidebar-toggle');
+  const sidebarEl = document.getElementById('sidebar');
+  sidebarToggle.addEventListener('click', function() {
+    sidebarEl.classList.toggle('open');
+  });
+  document.getElementById('main').addEventListener('click', function() {
+    if (sidebarEl.classList.contains('open')) sidebarEl.classList.remove('open');
   });
 
   // ── Init ──
   saveSession(); connect(); updateVoiceUI(); updateUI();
 })();
+
+function copyCode(btn) {
+  const pre = btn.closest('pre');
+  const code = pre.querySelector('code');
+  if (!code) return;
+  navigator.clipboard.writeText(code.textContent).then(function() {
+    btn.textContent = 'copied';
+    btn.classList.add('copied');
+    setTimeout(function() { btn.textContent = 'copy'; btn.classList.remove('copied'); }, 1500);
+  });
+}
+
 </script>
 </body>
 </html>
