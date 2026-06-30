@@ -206,6 +206,7 @@ class ClaudeCodeRuntime:
         self,
         include_tools_section: bool = True,
         query: str | None = None,
+        tools_available: bool = True,
     ) -> str:
         """Build system prompt with towel's identity, context, and tool instructions.
 
@@ -245,7 +246,7 @@ class ClaudeCodeRuntime:
             if memory_block:
                 system += memory_block
 
-        tools = self.skills.tool_definitions()
+        tools = self.skills.tool_definitions() if tools_available else []
         if tools:
             if include_tools_section:
                 tool_lines = []
@@ -343,19 +344,26 @@ class ClaudeCodeRuntime:
 
     def build_inference_request(self, conversation: Conversation) -> dict[str, Any]:
         """Build a worker-safe Anthropic payload for this conversation."""
+        from towel.nodes.roles import classify_task_type, task_needs_tools
+
         use_native = self._native_tools_supported
         query = conversation.latest_user_query()
         from towel.agent.capture import run_capture_hooks
         run_capture_hooks(query, memory=self.memory, config=self.config, runtime=self)
+
+        task_type = classify_task_type(query)
+        wants_tools = task_needs_tools(task_type)
+
         request: dict[str, Any] = {
             "mode": "anthropic_messages",
             "system": self._build_system_prompt(
                 include_tools_section=not use_native,
                 query=query,
+                tools_available=wants_tools,
             ),
             "messages": self._build_messages(conversation),
         }
-        if use_native:
+        if use_native and wants_tools:
             native_tools = tools_as_anthropic(self.skills.tool_definitions())
             if native_tools:
                 request["tools"] = native_tools

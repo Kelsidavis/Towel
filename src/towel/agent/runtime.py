@@ -858,6 +858,7 @@ class AgentRuntime:
         self,
         include_tools_section: bool = True,
         query: str | None = None,
+        tools_available: bool = True,
     ) -> str:
         """Build the system prompt including project context, memory, and tool definitions.
 
@@ -896,7 +897,7 @@ class AgentRuntime:
             memory_block = self.memory.to_prompt_block(query=query)
             if memory_block:
                 system += memory_block
-        tools = self.skills.tool_definitions()
+        tools = self.skills.tool_definitions() if tools_available else []
         if tools:
             if include_tools_section:
                 # Compact format: name + description only. Full parameter schemas
@@ -1000,12 +1001,19 @@ class AgentRuntime:
         Uses the context window manager to fit messages within the
         model's token budget, dropping oldest messages first.
         """
+        from towel.nodes.roles import classify_task_type, task_needs_tools
+
         use_native_tools = bool(self._native_tools_supported)
         query = conversation.latest_user_query()
         self._run_capture_hooks(query)
+
+        task_type = classify_task_type(query)
+        wants_tools = task_needs_tools(task_type)
+
         system_content = self._build_system_content(
             include_tools_section=not use_native_tools,
             query=query,
+            tools_available=wants_tools,
         )
         all_messages = conversation.to_chat_messages()
         output_reserve = estimate_output_reserve(
@@ -1085,7 +1093,7 @@ class AgentRuntime:
                 # not.
                 "enable_thinking": False,
             }
-            if use_native_tools:
+            if use_native_tools and wants_tools:
                 native_tools = self._tools_for_chat_template()
                 if native_tools:
                     template_kwargs["tools"] = native_tools
