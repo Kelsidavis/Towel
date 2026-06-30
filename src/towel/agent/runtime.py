@@ -110,7 +110,7 @@ _TOOL_ERROR_PATTERNS = (
     re.compile(r"^Connection (?:failed|error)\b", re.IGNORECASE),
     re.compile(r"^Timeout\b", re.IGNORECASE),
     re.compile(r"^Command (?:not found|timed out)\b", re.IGNORECASE),
-    re.compile(r"^(?:DNS|Lookup|Certificate|Decode|Parse|CSV parse) (?:failed|error)\b", re.IGNORECASE),
+    re.compile(r"^(?:DNS|Lookup|Certificate|Decode|Parse|CSV parse)\b.+(?:failed|error)\b", re.IGNORECASE),
     re.compile(r"^\w+ error:", re.IGNORECASE),  # service-specific: "PyPI error:", "Gmail error:", etc.
     re.compile(r"^Path not found:", re.IGNORECASE),
     re.compile(r"^Package not found:", re.IGNORECASE),
