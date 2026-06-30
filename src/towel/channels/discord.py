@@ -161,7 +161,7 @@ class DiscordChannel(Channel):
         # Discord message limit is 2000 chars
         chunks = [content[i : i + 1990] for i in range(0, len(content), 1990)]
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=15) as client:
             for chunk in chunks:
                 try:
                     await client.post(

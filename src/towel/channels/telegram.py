@@ -44,7 +44,7 @@ class TelegramChannel(Channel):
         import httpx
 
         # Verify bot token
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(f"{self._api}/getMe")
             data = resp.json()
             if not data.get("ok"):
@@ -117,7 +117,7 @@ class TelegramChannel(Channel):
         # Telegram message limit is 4096 chars
         chunks = [text[i : i + 4090] for i in range(0, len(text), 4090)]
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=15) as client:
             for chunk in chunks:
                 try:
                     await client.post(
@@ -128,8 +128,8 @@ class TelegramChannel(Channel):
                             "parse_mode": "Markdown",
                         },
                     )
-                except Exception:
-                    # Retry without markdown if it fails
+                except Exception as exc:
+                    log.debug("Markdown send failed, retrying plain: %s", exc)
                     try:
                         await client.post(
                             f"{self._api}/sendMessage",

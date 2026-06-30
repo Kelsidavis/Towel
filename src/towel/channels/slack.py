@@ -46,7 +46,7 @@ class SlackChannel(Channel):
         import websockets
 
         # Get WebSocket URL via apps.connections.open
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(
                 "https://slack.com/api/apps.connections.open",
                 headers={"Authorization": f"Bearer {self.app_token}"},
@@ -58,7 +58,7 @@ class SlackChannel(Channel):
             ws_url = data["url"]
 
         # Get bot user ID
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(
                 "https://slack.com/api/auth.test",
                 headers={"Authorization": f"Bearer {self.bot_token}"},
@@ -123,7 +123,7 @@ class SlackChannel(Channel):
         # Slack message limit is ~40000 chars but keep it reasonable
         chunks = [text[i : i + 3900] for i in range(0, len(text), 3900)]
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=15) as client:
             for chunk in chunks:
                 try:
                     resp = await client.post(
