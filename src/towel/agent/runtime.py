@@ -207,6 +207,76 @@ def looks_like_unfulfilled_intent(text: str) -> bool:
     return bool(_UNFULFILLED_INTENT_RE.search(text))
 
 
+MAX_GOAL_NUDGES = 2
+
+_STOP_TO_ASK_RE = re.compile(
+    r"\b(?:"
+    r"(?:shall|should)\s+i\s+(?:proceed|continue|go\s+ahead|start|begin)"
+    r"|do\s+you\s+want\s+me\s+to\s+(?:proceed|continue|go\s+ahead|start)"
+    r"|would\s+you\s+like\s+me\s+to\s+(?:proceed|continue|go\s+ahead|start)"
+    r"|before\s+i\s+(?:proceed|continue|start|begin|go)"
+    r"|please\s+(?:confirm|specify|clarify)\b"
+    r"|can\s+you\s+(?:confirm|specify|clarify|tell\s+me)\b"
+    r"|i\s+need\s+(?:you\s+to|more\s+information|to\s+know)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+_COMPLETION_MARKERS_RE = re.compile(
+    r"\b(?:"
+    r"(?:i(?:'ve| have)?|we(?:'ve)?) (?:completed|finished|created|written|updated|fixed|installed|built|configured)"
+    r"|(?:here (?:are|is)|the (?:result|output|answer) (?:is|was))"
+    r"|successfully"
+    r"|succeeded"
+    r"|passed"
+    r"|exit code 0"
+    r"|done[.!\s]"
+    r")",
+    re.IGNORECASE,
+)
+
+GOAL_COMPLETION_NUDGE = (
+    "You stopped to ask the user a question, but the task is not finished and "
+    "you have enough context to proceed. Make a reasonable decision and keep "
+    "working toward the goal — only ask the user if you truly cannot determine "
+    "the answer yourself."
+)
+
+TOOL_ERROR_NUDGE = (
+    "One or more tools failed during this turn but your response did not address "
+    "the errors. Try a different approach, work around the issue, or explain "
+    "clearly what went wrong and why you cannot proceed."
+)
+
+
+def _has_unaddressed_tool_errors(text: str, tool_trace: list[dict[str, Any]]) -> bool:
+    errors = [t for t in tool_trace if t.get("status") == "error"]
+    if not errors:
+        return False
+    return not bool(re.search(
+        r"\b(?:error|fail|issue|problem|couldn't|unable|didn't work)\b",
+        text, re.IGNORECASE,
+    ))
+
+
+def looks_like_goal_incomplete(
+    text: str,
+    tool_trace: list[dict[str, Any]] | None = None,
+) -> str | None:
+    """If the model stopped prematurely — asking permission to continue, or
+    ignoring tool errors — return the appropriate nudge text. Otherwise None.
+    """
+    if not text or not text.strip():
+        return None
+    if tool_trace and _has_unaddressed_tool_errors(text, tool_trace):
+        return TOOL_ERROR_NUDGE
+    if _STOP_TO_ASK_RE.search(text):
+        if _COMPLETION_MARKERS_RE.search(text):
+            return None
+        return GOAL_COMPLETION_NUDGE
+    return None
+
+
 def summarize_tool_trace(tool_trace: list[dict[str, Any]]) -> str:
     """One-line recap of the tools run this turn, for when the model finishes
     work but returns no concluding text — so the user sees what happened rather
@@ -479,6 +549,8 @@ class AgentRuntime:
         loop_fingerprints: list[str] = []
         stuck_call_name: str | None = None
         autonomy_nudges = 0
+        goal_nudges = 0
+        tool_trace: list[dict[str, Any]] = []
 
         for iteration in range(MAX_TOOL_ITERATIONS):
             result = await self.generate(conversation)
@@ -488,8 +560,6 @@ class AgentRuntime:
             tool_calls, remaining_text = parse_tool_calls(result.text)
 
             if not tool_calls:
-                # Autonomy: narrated-but-unperformed work → nudge to act rather
-                # than ending the turn mid-goal (up to a small per-turn budget).
                 if (
                     autonomy_nudges < MAX_AUTONOMY_NUDGES
                     and looks_like_unfulfilled_intent(result.text)
@@ -500,7 +570,15 @@ class AgentRuntime:
                     conversation.add(Role.ASSISTANT, result.text)
                     conversation.add(Role.USER, AUTONOMY_NUDGE)
                     continue
-                # No tool calls — return the final text response
+                goal_nudge = looks_like_goal_incomplete(result.text, tool_trace)
+                if goal_nudges < MAX_GOAL_NUDGES and goal_nudge:
+                    goal_nudges += 1
+                    log.info("goal-completion nudge %d: %s", goal_nudges,
+                             "unaddressed errors" if goal_nudge is TOOL_ERROR_NUDGE
+                             else "premature question")
+                    conversation.add(Role.ASSISTANT, result.text)
+                    conversation.add(Role.USER, goal_nudge)
+                    continue
                 text = result.text
                 metadata: dict[str, Any] = {"tps": last_tps, "tokens": total_tokens}
                 if not text.strip():
@@ -561,6 +639,10 @@ class AgentRuntime:
                     tool_name=tc.name,
                     status="error" if is_error else "ok",
                 )
+                tool_trace.append({
+                    "tool": tc.name,
+                    "status": "error" if is_error else "ok",
+                })
 
         # Either hit max iterations OR loop detection broke us out.
         if stuck_call_name is not None:
@@ -596,6 +678,8 @@ class AgentRuntime:
         loop_fingerprints: list[str] = []
         stuck_call_name: str | None = None
         autonomy_nudges = 0
+        goal_nudges = 0
+        tool_trace: list[dict[str, Any]] = []
 
         for iteration in range(MAX_TOOL_ITERATIONS):
             # Stream tokens and accumulate the full response
@@ -629,8 +713,6 @@ class AgentRuntime:
             tool_calls, remaining_text = parse_tool_calls(full_text)
 
             if not tool_calls:
-                # Autonomy: narrated-but-unperformed work → nudge to act rather
-                # than ending the turn mid-goal (up to a small per-turn budget).
                 if (
                     autonomy_nudges < MAX_AUTONOMY_NUDGES
                     and looks_like_unfulfilled_intent(full_text)
@@ -640,6 +722,15 @@ class AgentRuntime:
                              autonomy_nudges)
                     conversation.add(Role.ASSISTANT, full_text)
                     conversation.add(Role.USER, AUTONOMY_NUDGE)
+                    continue
+                goal_nudge = looks_like_goal_incomplete(full_text, tool_trace)
+                if goal_nudges < MAX_GOAL_NUDGES and goal_nudge:
+                    goal_nudges += 1
+                    log.info("goal-completion nudge %d: %s", goal_nudges,
+                             "unaddressed errors" if goal_nudge is TOOL_ERROR_NUDGE
+                             else "premature question")
+                    conversation.add(Role.ASSISTANT, full_text)
+                    conversation.add(Role.USER, goal_nudge)
                     continue
                 text = full_text
                 metadata: dict[str, Any] = {"tps": tps, "tokens": total_tokens}
@@ -708,6 +799,10 @@ class AgentRuntime:
                     tool_name=tc.name,
                     status="error" if is_error else "ok",
                 )
+                tool_trace.append({
+                    "tool": tc.name,
+                    "status": "error" if is_error else "ok",
+                })
 
         # Either hit max iterations OR loop detection broke us out.
         # Persist the terminal message into the conversation so callers

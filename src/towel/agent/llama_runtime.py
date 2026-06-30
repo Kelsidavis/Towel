@@ -32,7 +32,10 @@ from towel.agent.events import AgentEvent
 from towel.agent.runtime import (
     AUTONOMY_NUDGE,
     MAX_AUTONOMY_NUDGES,
+    MAX_GOAL_NUDGES,
+    TOOL_ERROR_NUDGE,
     format_tool_feedback,
+    looks_like_goal_incomplete,
     looks_like_unfulfilled_intent,
     summarize_tool_trace,
     tool_result_is_error,
@@ -623,6 +626,7 @@ class LlamaRuntime:
 
     async def step(self, conversation: Conversation) -> Message:
         autonomy_nudges = 0
+        goal_nudges = 0
         tool_trace: list[dict[str, Any]] = []
         for _iteration in range(MAX_TOOL_ITERATIONS):
             result = await self.generate(conversation)
@@ -633,9 +637,6 @@ class LlamaRuntime:
                 tool_calls, remaining_text = parse_tool_calls(result.text)
 
             if not tool_calls:
-                # Autonomy: if the model narrated an action without calling a
-                # tool ("I'll run the build now…"), nudge it to actually act
-                # instead of ending the turn mid-goal — up to a small budget.
                 if (
                     autonomy_nudges < MAX_AUTONOMY_NUDGES
                     and looks_like_unfulfilled_intent(result.text)
@@ -646,7 +647,15 @@ class LlamaRuntime:
                     conversation.add(Role.ASSISTANT, result.text)
                     conversation.add(Role.USER, AUTONOMY_NUDGE)
                     continue
-                # Recap tool work when the model returns no concluding text.
+                goal_nudge = looks_like_goal_incomplete(result.text, tool_trace)
+                if goal_nudges < MAX_GOAL_NUDGES and goal_nudge:
+                    goal_nudges += 1
+                    log.info("goal-completion nudge %d: %s", goal_nudges,
+                             "unaddressed errors" if goal_nudge is TOOL_ERROR_NUDGE
+                             else "premature question")
+                    conversation.add(Role.ASSISTANT, result.text)
+                    conversation.add(Role.USER, goal_nudge)
+                    continue
                 content = result.text
                 meta = {"backend": "llama", "model": self.config.model.name}
                 if not content.strip() and tool_trace:
@@ -695,6 +704,8 @@ class LlamaRuntime:
     async def step_streaming(self, conversation: Conversation) -> AsyncIterator[AgentEvent]:
         self._cancel_flag = False
         autonomy_nudges = 0
+        goal_nudges = 0
+        tool_trace: list[dict[str, Any]] = []
 
         for _iteration in range(MAX_TOOL_ITERATIONS):
             full_text = ""
@@ -717,8 +728,6 @@ class LlamaRuntime:
                 tool_calls, remaining_text = parse_tool_calls(full_text)
 
             if not tool_calls:
-                # Autonomy: narrated-but-unperformed work → nudge to act rather
-                # than ending the turn (up to a small per-turn budget).
                 if (
                     autonomy_nudges < MAX_AUTONOMY_NUDGES
                     and looks_like_unfulfilled_intent(full_text)
@@ -728,6 +737,15 @@ class LlamaRuntime:
                              autonomy_nudges)
                     conversation.add(Role.ASSISTANT, full_text)
                     conversation.add(Role.USER, AUTONOMY_NUDGE)
+                    continue
+                goal_nudge = looks_like_goal_incomplete(full_text, tool_trace)
+                if goal_nudges < MAX_GOAL_NUDGES and goal_nudge:
+                    goal_nudges += 1
+                    log.info("goal-completion nudge %d: %s", goal_nudges,
+                             "unaddressed errors" if goal_nudge is TOOL_ERROR_NUDGE
+                             else "premature question")
+                    conversation.add(Role.ASSISTANT, full_text)
+                    conversation.add(Role.USER, goal_nudge)
                     continue
                 conversation.add(Role.ASSISTANT, full_text)
                 yield AgentEvent.complete(
@@ -768,6 +786,10 @@ class LlamaRuntime:
                     tool_name=tc.name,
                     status="error" if is_error else "ok",
                 )
+                tool_trace.append({
+                    "tool": tc.name,
+                    "status": "error" if is_error else "ok",
+                })
 
         log.warning(f"Hit max tool iterations ({MAX_TOOL_ITERATIONS})")
         yield AgentEvent.complete(

@@ -30,10 +30,13 @@ from towel.agent.events import AgentEvent
 from towel.agent.runtime import (
     AUTONOMY_NUDGE,
     MAX_AUTONOMY_NUDGES,
+    MAX_GOAL_NUDGES,
     MAX_TOOL_ITERATIONS,
+    TOOL_ERROR_NUDGE,
     TOOL_LOOP_REPEAT_LIMIT,
     AgentRuntime,
     format_tool_feedback,
+    looks_like_goal_incomplete,
     looks_like_unfulfilled_intent,
     summarize_tool_trace,
     tool_result_is_error,
@@ -3268,6 +3271,7 @@ class GatewayServer:
         # toward the goal instead of ending mid-task. Capped so a chronically
         # narrating model can't loop forever.
         autonomy_nudges = 0
+        goal_nudges = 0
         # Transparency: record each tool the agent actually ran this turn so the
         # non-streaming /api/ask response can show what happened, not just the
         # final text. (The WS path already streams tool_call/tool_result events.)
@@ -3314,6 +3318,18 @@ class GatewayServer:
                     )
                     session.conversation.add(Role.ASSISTANT, text)
                     session.conversation.add(Role.USER, AUTONOMY_NUDGE)
+                    continue
+                goal_nudge = looks_like_goal_incomplete(text, tool_trace)
+                if goal_nudges < MAX_GOAL_NUDGES and goal_nudge:
+                    goal_nudges += 1
+                    log.info(
+                        "goal-completion nudge %d/%d on session %s: %s",
+                        goal_nudges, MAX_GOAL_NUDGES, session_id,
+                        "unaddressed errors" if goal_nudge is TOOL_ERROR_NUDGE
+                        else "premature question",
+                    )
+                    session.conversation.add(Role.ASSISTANT, text)
+                    session.conversation.add(Role.USER, goal_nudge)
                     continue
 
                 from towel.agent.conversation import Message
@@ -3492,6 +3508,7 @@ class GatewayServer:
         last_call_fingerprints: list[str] = []
         loop_detected_call_name: str | None = None
         autonomy_nudges = 0
+        goal_nudges = 0
         tool_trace: list[dict[str, Any]] = []
 
         for _ in range(MAX_TOOL_ITERATIONS):
@@ -3541,6 +3558,18 @@ class GatewayServer:
                     )
                     session.conversation.add(Role.ASSISTANT, full_text)
                     session.conversation.add(Role.USER, AUTONOMY_NUDGE)
+                    continue
+                goal_nudge = looks_like_goal_incomplete(full_text, tool_trace)
+                if goal_nudges < MAX_GOAL_NUDGES and goal_nudge:
+                    goal_nudges += 1
+                    log.info(
+                        "goal-completion nudge %d/%d on streaming session %s: %s",
+                        goal_nudges, MAX_GOAL_NUDGES, session_id,
+                        "unaddressed errors" if goal_nudge is TOOL_ERROR_NUDGE
+                        else "premature question",
+                    )
+                    session.conversation.add(Role.ASSISTANT, full_text)
+                    session.conversation.add(Role.USER, goal_nudge)
                     continue
                 # Recap tool work when the model returns no concluding text, so
                 # the user gets a real answer instead of a blank final event.

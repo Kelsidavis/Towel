@@ -3,9 +3,12 @@
 from towel.agent.conversation import Conversation, Role
 from towel.agent.runtime import (
     EMPTY_TEXT_FALLBACK,
+    GOAL_COMPLETION_NUDGE,
+    TOOL_ERROR_NUDGE,
     AgentRuntime,
     GenerationResult,
     format_tool_feedback,
+    looks_like_goal_incomplete,
     looks_like_unfulfilled_intent,
     mlx_tokenizer_config,
     summarize_tool_trace,
@@ -378,3 +381,80 @@ class TestSummarizeToolTrace:
         trace = [{"tool": f"t{i}", "status": "ok"} for i in range(7)]
         s = summarize_tool_trace(trace)
         assert "+2 more" in s and s.startswith("Ran 7 tools:")
+
+
+class TestGoalCompletion:
+    """looks_like_goal_incomplete gates the goal-completion nudge — it must fire
+    when the model stops to ask permission or ignores tool errors, and stay quiet
+    on genuine final answers and polite closers."""
+
+    def test_fires_on_permission_seeking(self):
+        for text in [
+            "Shall I proceed with the installation?",
+            "Should I go ahead and create the file?",
+            "Do you want me to continue with the build?",
+            "Would you like me to proceed?",
+            "Before I start, can you confirm the directory?",
+            "Please confirm the target path.",
+            "Can you specify which config file to use?",
+            "I need you to provide the database credentials.",
+        ]:
+            result = looks_like_goal_incomplete(text)
+            assert result == GOAL_COMPLETION_NUDGE, text
+
+    def test_quiet_on_polite_closers(self):
+        for text in [
+            "I've completed the migration. Let me know if you need anything else.",
+            "Done! The build succeeded. Would you like me to proceed with deployment?",
+            "Here are the results. Please confirm they look correct.",
+            "I've successfully created the files. Can you verify they work?",
+        ]:
+            result = looks_like_goal_incomplete(text)
+            assert result is None, text
+
+    def test_quiet_on_final_answers(self):
+        for text in [
+            "The test suite passed with 42 tests.",
+            "I fixed the bug in parser.py — the regex was missing a capture group.",
+            "Here are the three endpoints: /api/users, /api/posts, /api/comments.",
+            "",
+            "   ",
+        ]:
+            result = looks_like_goal_incomplete(text)
+            assert result is None, text
+
+    def test_fires_on_unaddressed_tool_errors(self):
+        trace = [
+            {"tool": "run_command", "status": "ok"},
+            {"tool": "write_file", "status": "error"},
+        ]
+        result = looks_like_goal_incomplete(
+            "I've written the configuration file and set up the project.", trace
+        )
+        assert result == TOOL_ERROR_NUDGE
+
+    def test_quiet_when_errors_acknowledged(self):
+        trace = [
+            {"tool": "run_command", "status": "error"},
+        ]
+        result = looks_like_goal_incomplete(
+            "The command failed with a permission error. You'll need sudo access.", trace
+        )
+        assert result is None
+
+    def test_quiet_when_no_errors(self):
+        trace = [
+            {"tool": "run_command", "status": "ok"},
+            {"tool": "write_file", "status": "ok"},
+        ]
+        result = looks_like_goal_incomplete(
+            "All done — the files are in place.", trace
+        )
+        assert result is None
+
+    def test_error_nudge_takes_priority_over_question(self):
+        trace = [{"tool": "write_file", "status": "error"}]
+        result = looks_like_goal_incomplete(
+            "Should I proceed with the next step?", trace
+        )
+        assert result == TOOL_ERROR_NUDGE
