@@ -1712,6 +1712,11 @@ class TestAsciiSkill:
         assert "+---" in result
         assert "Alice" in result
 
+    @pytest.mark.asyncio
+    async def test_box_empty_text(self, asc):
+        result = await asc.execute("ascii_box", {"text": ""})
+        assert "┌" in result
+
 
 class TestStringSkill:
     @pytest.fixture
@@ -1743,6 +1748,13 @@ class TestStringSkill:
     async def test_truncate(self, ss):
         result = await ss.execute("string_truncate", {"text": "Hello World!", "length": 8})
         assert result == "Hello..."
+
+    @pytest.mark.asyncio
+    async def test_truncate_suffix_exceeds_length(self, ss):
+        result = await ss.execute(
+            "string_truncate", {"text": "Hello", "length": 2, "suffix": "..."}
+        )
+        assert len(result) <= 2
 
 
 class TestSshSkill:
