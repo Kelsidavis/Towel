@@ -47,10 +47,14 @@ class ConversationStore:
         path = self._path_for(conversation.id)
         data = conversation.to_dict()
         tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8",
-        )
-        tmp.replace(path)
+        try:
+            tmp.write_text(
+                json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8",
+            )
+            tmp.replace(path)
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            raise
         log.debug(f"Saved conversation {conversation.id} ({len(conversation)} messages)")
         return path
 
