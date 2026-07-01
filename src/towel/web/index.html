@@ -1345,21 +1345,34 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     } catch(e) {}
   }
 
+  function relativeTime(isoStr) {
+    if (!isoStr) return '';
+    var d = new Date(isoStr);
+    var now = Date.now();
+    var diff = Math.max(0, Math.floor((now - d.getTime()) / 1000));
+    if (diff < 60) return 'now';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+    if (diff < 172800) return 'yesterday';
+    if (diff < 604800) return Math.floor(diff / 86400) + 'd ago';
+    return isoStr.slice(5, 10);
+  }
+
   function renderConversationList(filter) {
     convListEl.innerHTML = '';
     const q = (filter||'').toLowerCase();
     const filtered = q
-      ? allConversations.filter(c => (c.summary||'').toLowerCase().includes(q) || c.id.toLowerCase().includes(q))
+      ? allConversations.filter(c => (c.summary||'').toLowerCase().includes(q) || c.id.toLowerCase().includes(q) || (c.title||'').toLowerCase().includes(q))
       : allConversations;
     for (const conv of filtered) {
       const el = document.createElement('div');
       el.className = 'conv-item' + (conv.id === sessionId ? ' active' : '');
-      const date = conv.created_at ? conv.created_at.slice(5, 10) : '';
+      const when = relativeTime(conv.updated_at || conv.created_at);
       const titleText = conv.title || conv.summary;
       el.innerHTML = `
         <div class="conv-body">
           <div class="conv-title">${escHtml(titleText)}</div>
-          <div class="conv-meta">${date} · ${conv.message_count} msgs</div>
+          <div class="conv-meta">${when} · ${conv.message_count} msgs</div>
         </div>
         <button class="conv-del" title="Delete">&#10005;</button>
       `;
