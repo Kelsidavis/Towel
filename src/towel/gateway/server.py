@@ -3219,6 +3219,8 @@ class GatewayServer:
             self._job_queues.pop(job_id, None)
             self._session_jobs.pop(session_id, None)
             self._workers.release(worker.id)
+            if not completed_normally:
+                self._node_tracker.close_context_slot(worker.id, session_id)
 
     async def _step_remote_inference(
         self, session_id: str, session: Any, worker: WorkerInfo

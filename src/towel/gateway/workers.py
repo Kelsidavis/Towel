@@ -297,7 +297,9 @@ class WorkerRegistry:
         )
 
     def assign(self, worker_id: str, job_id: str, session_id: str) -> None:
-        worker = self._workers[worker_id]
+        worker = self._workers.get(worker_id)
+        if not worker:
+            raise KeyError(f"Worker {worker_id} disconnected before assignment")
         worker.busy = True
         worker.current_job_id = job_id
         worker.current_session_id = session_id
