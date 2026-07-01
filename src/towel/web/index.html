@@ -349,11 +349,11 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       <div style="color:var(--text-dim)">Pick a conversation to begin.</div>
     </div>
     <div style="display:flex;gap:6px;align-items:center;padding:10px 18px;border-top:1px solid var(--border);background:rgba(0,0,0,0.15)">
-      <button class="tb-btn" id="replay-rewind">⏮</button>
-      <button class="tb-btn" id="replay-step-back">◀</button>
-      <button class="tb-btn" id="replay-play">▶</button>
-      <button class="tb-btn" id="replay-step-fwd">▶▶</button>
-      <button class="tb-btn" id="replay-end">⏭</button>
+      <button class="tb-btn" id="replay-rewind" aria-label="Rewind to start">⏮</button>
+      <button class="tb-btn" id="replay-step-back" aria-label="Step back">◀</button>
+      <button class="tb-btn" id="replay-play" aria-label="Play or pause">▶</button>
+      <button class="tb-btn" id="replay-step-fwd" aria-label="Step forward">▶▶</button>
+      <button class="tb-btn" id="replay-end" aria-label="Skip to end">⏭</button>
       <span style="color:var(--text-dim);font-size:0.85em">speed</span>
       <select id="replay-speed" style="background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px">
         <option value="2000">0.5×</option>
@@ -545,23 +545,23 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   </div>
 </div>
 
-<button id="sidebar-toggle" title="Toggle sidebar">&#9776;</button>
-<div id="sidebar">
+<button id="sidebar-toggle" title="Toggle sidebar" aria-label="Toggle sidebar">&#9776;</button>
+<nav id="sidebar" aria-label="Conversations">
   <div id="sidebar-header">
     <h1>TOWEL</h1>
-    <button id="new-chat-btn">+ New</button>
+    <button id="new-chat-btn" aria-label="New conversation">+ New</button>
   </div>
-  <input id="conv-search" type="text" placeholder="Search conversations...">
-  <div id="conv-list"></div>
+  <input id="conv-search" type="text" placeholder="Search conversations..." aria-label="Search conversations">
+  <div id="conv-list" role="list" aria-label="Conversation list"></div>
   <div id="sidebar-footer">
-    <div class="status"><span id="status-dot"></span><span id="status-text">connecting...</span></div>
-    <button id="clear-all-btn" title="Clear all conversations">clear all</button>
-    <button id="theme-btn" title="Switch theme">theme</button>
+    <div class="status" role="status" aria-live="polite"><span id="status-dot"></span><span id="status-text">connecting...</span></div>
+    <button id="clear-all-btn" title="Clear all conversations" aria-label="Clear all conversations">clear all</button>
+    <button id="theme-btn" title="Switch theme" aria-label="Switch theme">theme</button>
   </div>
-</div>
+</nav>
 
-<div id="main" style="position:relative">
-  <div id="toolbar">
+<main id="main" style="position:relative">
+  <div id="toolbar" role="toolbar" aria-label="Chat actions">
     <div class="session-info" id="session-info"></div>
     <span id="model-badge" style="font-size:10px;color:var(--text-dim);font-family:var(--mono);padding:2px 8px;border:1px solid var(--border);border-radius:10px;white-space:nowrap;display:none"></span>
     <div class="actions">
@@ -573,32 +573,32 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
       <button class="tb-btn" id="tb-delete" title="Delete conversation">delete</button>
     </div>
   </div>
-  <div id="messages">
+  <div id="messages" role="log" aria-label="Chat messages" aria-live="polite">
     <div id="welcome">
       <h2>TOWEL</h2>
       <p class="motto">Tool Oriented Worker Execution Link · Don't Panic.</p>
       <p class="hint">Your local-first AI assistant.<br>Type a message to begin.</p>
     </div>
   </div>
-  <div id="find-bar">
-    <input id="find-input" type="text" placeholder="Find in chat…" autocomplete="off">
-    <span class="find-count" id="find-count"></span>
-    <button id="find-prev" title="Previous">&#9650;</button>
-    <button id="find-next" title="Next">&#9660;</button>
-    <button id="find-close" title="Close">&#10005;</button>
+  <div id="find-bar" role="search" aria-label="Find in chat">
+    <input id="find-input" type="text" placeholder="Find in chat…" autocomplete="off" aria-label="Search text">
+    <span class="find-count" id="find-count" aria-live="polite"></span>
+    <button id="find-prev" title="Previous match" aria-label="Previous match">&#9650;</button>
+    <button id="find-next" title="Next match" aria-label="Next match">&#9660;</button>
+    <button id="find-close" title="Close search" aria-label="Close search">&#10005;</button>
   </div>
-  <button id="scroll-bottom" title="Scroll to bottom">&#8595;</button>
+  <button id="scroll-bottom" title="Scroll to bottom" aria-label="Scroll to bottom">&#8595;</button>
   <div id="input-area">
     <div id="input-row">
-      <textarea id="user-input" placeholder="Message Towel..." rows="1" autofocus></textarea>
-      <button id="mic-btn" class="voice-btn" title="Voice input">mic</button>
-      <button id="speak-btn" class="voice-btn" title="Speak replies">spk</button>
-      <button id="send-btn" title="Send (Enter)">&#8593;</button>
-      <button id="stop-btn" title="Stop generation (Esc)">&#9632;</button>
+      <textarea id="user-input" placeholder="Message Towel..." rows="1" autofocus aria-label="Message input"></textarea>
+      <button id="mic-btn" class="voice-btn" title="Voice input" aria-label="Voice input">mic</button>
+      <button id="speak-btn" class="voice-btn" title="Speak replies" aria-label="Text to speech">spk</button>
+      <button id="send-btn" title="Send (Enter)" aria-label="Send message">&#8593;</button>
+      <button id="stop-btn" title="Stop generation (Esc)" aria-label="Stop generation">&#9632;</button>
     </div>
     <div id="input-meta" style="max-width:780px;margin:2px auto 0;font-size:10px;color:var(--text-dim);font-family:var(--mono);text-align:right;opacity:0;transition:opacity .15s;min-height:14px"></div>
   </div>
-</div>
+</main>
 
 <script>
 (function() {
@@ -1367,6 +1367,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     for (const conv of filtered) {
       const el = document.createElement('div');
       el.className = 'conv-item' + (conv.id === sessionId ? ' active' : '');
+      el.setAttribute('role', 'listitem');
       const when = relativeTime(conv.updated_at || conv.created_at);
       const titleText = conv.title || conv.summary;
       el.innerHTML = `
