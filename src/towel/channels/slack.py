@@ -52,6 +52,9 @@ class SlackChannel(Channel):
                 "https://slack.com/api/apps.connections.open",
                 headers={"Authorization": f"Bearer {self.app_token}"},
             )
+            if resp.status_code != 200:
+                log.error("Socket Mode HTTP error: %d", resp.status_code)
+                return
             data = resp.json()
             if not data.get("ok"):
                 log.error(f"Socket Mode auth failed: {data.get('error')}")
@@ -64,6 +67,9 @@ class SlackChannel(Channel):
                 "https://slack.com/api/auth.test",
                 headers={"Authorization": f"Bearer {self.bot_token}"},
             )
+            if resp.status_code != 200:
+                log.error("Auth test HTTP error: %d", resp.status_code)
+                return
             auth = resp.json()
             self._bot_id = auth.get("user_id")
             log.info(f"Slack bot: {auth.get('user', '?')} ({self._bot_id})")

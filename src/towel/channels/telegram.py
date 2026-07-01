@@ -46,6 +46,9 @@ class TelegramChannel(Channel):
         # Verify bot token
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(f"{self._api}/getMe")
+            if resp.status_code != 200:
+                log.error("getMe HTTP error: %d", resp.status_code)
+                return
             data = resp.json()
             if not data.get("ok"):
                 log.error(f"Invalid token: {data}")
@@ -62,6 +65,10 @@ class TelegramChannel(Channel):
                         f"{self._api}/getUpdates",
                         params={"offset": self._offset, "timeout": 30},
                     )
+                    if resp.status_code != 200:
+                        log.warning("getUpdates HTTP %d", resp.status_code)
+                        await asyncio.sleep(5)
+                        continue
                     data = resp.json()
 
                     if not data.get("ok"):

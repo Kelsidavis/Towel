@@ -33,9 +33,10 @@ class _FakeConnect:
         return False
 
 
-def _fake_response(payload):
+def _fake_response(payload, status_code=200):
     fake_resp = MagicMock()
     fake_resp.json.return_value = payload
+    fake_resp.status_code = status_code
     return fake_resp
 
 

@@ -117,19 +117,23 @@ class DiscordChannel(Channel):
     async def _handle_dispatch(self, event: str, data: dict) -> None:
         """Handle Discord gateway dispatch events."""
         if event == "READY":
-            self._bot_id = data["user"]["id"]
-            log.info(f"Bot ready as {data['user']['username']}#{data['user']['discriminator']}")
+            user = data.get("user", {})
+            self._bot_id = user.get("id")
+            log.info(f"Bot ready as {user.get('username', '?')}#{user.get('discriminator', '0')}")
             return
 
         if event != "MESSAGE_CREATE":
             return
 
         # Ignore own messages
-        if data["author"]["id"] == self._bot_id:
+        author = data.get("author", {})
+        if author.get("id") == self._bot_id:
             return
 
         content = data.get("content", "").strip()
-        channel_id = data["channel_id"]
+        channel_id = data.get("channel_id")
+        if not channel_id:
+            return
         is_dm = data.get("guild_id") is None
         mentioned = self._bot_id and f"<@{self._bot_id}>" in content
 
