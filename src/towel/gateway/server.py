@@ -1043,8 +1043,8 @@ class GatewayServer:
                 log.warning("Reaping stale worker %s (no heartbeat for %.0fs)", worker.id, timeout)
                 try:
                     await worker.ws.close(1001, "heartbeat timeout")
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log.debug("Failed to close stale worker %s WS: %s", worker.id, exc)
 
     async def _sweep_idle_results(self, interval: float = 300.0) -> None:
         """Evict expired idle-task results so the cache doesn't accumulate.
@@ -1538,8 +1538,8 @@ class GatewayServer:
         # leak class fixed for OpenAI-compat in fffdc1e.
         try:
             self.cleanup_ephemeral_session(verify_sess_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            log.debug("Verifier session cleanup failed (%s): %s", verify_sess_id, exc)
 
         verifier_text = (verify_response.content or "").strip()
         # Confirmation detection. Models routinely add casing /
@@ -1713,8 +1713,8 @@ class GatewayServer:
             finally:
                 try:
                     self.cleanup_ephemeral_session(sess_id)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log.debug("Ensemble session cleanup failed (%s): %s", sess_id, exc)
 
         # Fire all candidates in parallel with an outer deadline.
         # Each _ask_one already has its own per-worker timeout via
@@ -2704,8 +2704,8 @@ class GatewayServer:
             if msg:
                 try:
                     await worker.ws.send(json.dumps(msg))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log.debug("Memory sync to %s failed: %s", worker.id, exc)
 
     async def _replace_worker_impl(
         self,
@@ -3491,7 +3491,7 @@ class GatewayServer:
                     )
                 )
             except Exception:
-                pass  # client already gone; nothing to do
+                pass
 
     async def _stream_remote_inference_inner(
         self,
