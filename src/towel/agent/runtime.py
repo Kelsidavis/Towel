@@ -364,7 +364,7 @@ class AgentRuntime:
         acquire_runtime_lock()
 
         # Run in executor to avoid blocking the event loop
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         self._model, self._tokenizer = await loop.run_in_executor(
             self._mlx_executor, self._load_model_sync
         )
@@ -402,7 +402,7 @@ class AgentRuntime:
         if not self._loaded:
             await self.load_model()
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
             self._mlx_executor, self._generate_sync, conversation, temperature,
         )
@@ -420,7 +420,7 @@ class AgentRuntime:
         if request.get("mode") != "mlx_prompt":
             raise ValueError(f"Unsupported inference mode: {request.get('mode')}")
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         prompt = request["prompt"]
         max_tokens = request.get("max_tokens")
         return await loop.run_in_executor(
@@ -510,7 +510,7 @@ class AgentRuntime:
         if request.get("mode") != "mlx_prompt":
             raise ValueError(f"Unsupported inference mode: {request.get('mode')}")
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         queue: asyncio.Queue[str | None] = asyncio.Queue()
         cancel_flag = self._cancel
 
@@ -541,7 +541,7 @@ class AgentRuntime:
                 loop.call_soon_threadsafe(queue.put_nowait, chunk.text)
             loop.call_soon_threadsafe(queue.put_nowait, None)
 
-        asyncio.get_event_loop().run_in_executor(self._mlx_executor, _stream_sync)
+        asyncio.get_running_loop().run_in_executor(self._mlx_executor, _stream_sync)
 
         while True:
             if cancel_flag.is_set():

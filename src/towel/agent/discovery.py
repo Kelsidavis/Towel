@@ -293,9 +293,10 @@ class ManagedLlamaServer:
         import httpx
 
         url = f"{self.url}/health"
-        deadline = asyncio.get_event_loop().time() + timeout
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
 
-        while asyncio.get_event_loop().time() < deadline:
+        while loop.time() < deadline:
             if self._process and self._process.poll() is not None:
                 stderr = ""
                 if self._process.stderr:
