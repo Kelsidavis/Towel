@@ -23,6 +23,7 @@ import os
 import re
 import sys
 import time
+import uuid
 from datetime import UTC
 from typing import TYPE_CHECKING, Any
 
@@ -2103,7 +2104,7 @@ def ask(
     if session:
         conv = store.load(session)
     if conv is None:
-        sid = session or f"ask-{__import__('uuid').uuid4().hex[:8]}"
+        sid = session or f"ask-{uuid.uuid4().hex[:8]}"
         conv = Conversation(id=sid, channel="cli")
 
     conv.add(Role.USER, full_prompt)

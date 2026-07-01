@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -193,7 +194,7 @@ class SecuritySkill(Skill):
         pkg = root / "package.json"
         if pkg.exists():
             try:
-                data = __import__("json").loads(pkg.read_text())
+                data = json.loads(pkg.read_text())
                 deps = {**data.get("dependencies", {}), **data.get("devDependencies", {})}
                 stars = [f"{k}: {v}" for k, v in deps.items() if v.startswith("*") or v == "latest"]
                 if stars:

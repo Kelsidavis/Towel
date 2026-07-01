@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import time
@@ -42,9 +43,7 @@ TOOL_LOOP_REPEAT_LIMIT = 3
 
 def _tool_call_fingerprint(tool_calls: Any) -> str:
     """Stable fingerprint of one iteration's tool calls for loop detection."""
-    import json as _json
-
-    return _json.dumps(
+    return json.dumps(
         [(tc.name, tc.arguments) for tc in tool_calls],
         sort_keys=True, default=str,
     )
