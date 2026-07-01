@@ -2232,6 +2232,18 @@ class TestDispatchRecentEphemeralFilter:
         assert "no alternate worker available" in src
         assert "nothing to verify" in src
 
+    def test_ws_verify_flag_defaults_to_config(self):
+        """Parity with /api/ask: the WS chat path should also honor
+        `verify_default` from config, not just an explicit `verify: true`
+        on the message, so a fleet-wide default applies to every client
+        (CLI, web UI, channels) without each one remembering the flag."""
+        import inspect
+
+        from towel.gateway.server import GatewayServer
+
+        src = inspect.getsource(GatewayServer._handle_ws)
+        assert 'msg.get("verify", getattr(self.config, "verify_default", False))' in src
+
     def test_ws_ensemble_response_includes_contributions_for_parity(self):
         """The WS ensemble response previously sent only `ensemble`,
         `ensemble_arbitration`, and `remote_worker` in the metadata —
@@ -2460,6 +2472,74 @@ class TestDispatchRecentEphemeralFilter:
         entry = verify_entries[0]
         assert entry["previous_worker_id"] == "primary"
         assert "confirmed" in entry["notes"]
+
+    def _setup_verify_workers(self, gateway):
+        """Shared fixture logic for the verify_default config tests."""
+        from unittest.mock import MagicMock
+
+        from towel.agent.conversation import Message, Role
+
+        gateway._workers.register(
+            "primary", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"], "tools": False},
+        )
+        gateway._workers.register(
+            "verifier", MagicMock(),
+            {"backend": "llama", "modes": ["llama_chat"], "tools": False},
+        )
+
+        async def fake_quick(session_id, session, worker, max_tokens=256, **kwargs):
+            if session_id.startswith("_verify_"):
+                return Message(
+                    role=Role.ASSISTANT,
+                    content="VERIFIED",
+                    metadata={"remote_worker": worker.id, "tokens": 1, "tps": 5.0},
+                )
+            msg = Message(
+                role=Role.ASSISTANT, content="primary",
+                metadata={"remote_worker": worker.id, "tokens": 1, "tps": 5.0},
+            )
+            session.conversation.messages.append(msg)
+            return msg
+
+        gateway._quick_remote_infer = fake_quick  # type: ignore[method-assign]
+
+        async def fake_route(_msg, _sid):
+            return gateway._workers.get("primary"), "chat"
+
+        gateway._route_by_role = fake_route  # type: ignore[method-assign]
+
+    def test_verify_default_config_runs_verify_without_explicit_flag(self, gateway, client):
+        """`verify_default=True` should apply the verifier pass on every
+        /api/ask call even when the request body doesn't mention `verify`
+        at all — the whole point of making it a config default instead of
+        a per-request opt-in."""
+        gateway.config.verify_default = True
+        self._setup_verify_workers(gateway)
+
+        resp = client.post("/api/ask", json={"message": "q", "session_id": "ver-cfg-on"})
+        assert resp.status_code == 200
+
+        agg = client.get("/dispatch/recent?session=ver-cfg-on").json()
+        verify_entries = [d for d in agg["decisions"] if d.get("reason") == "verify"]
+        assert len(verify_entries) == 1
+
+    def test_verify_default_config_overridden_by_explicit_false(self, gateway, client):
+        """An explicit `verify: false` in the request must still win over
+        a `verify_default=True` config, so a single caller can opt out
+        without the operator having to flip the fleet-wide default."""
+        gateway.config.verify_default = True
+        self._setup_verify_workers(gateway)
+
+        resp = client.post(
+            "/api/ask",
+            json={"message": "q", "session_id": "ver-cfg-override", "verify": False},
+        )
+        assert resp.status_code == 200
+
+        agg = client.get("/dispatch/recent?session=ver-cfg-override").json()
+        verify_entries = [d for d in agg["decisions"] if d.get("reason") == "verify"]
+        assert len(verify_entries) == 0
 
     def test_ephemeral_sessions_hidden_by_default(self, gateway, client):
         # Mix user-facing and ephemeral session ids.

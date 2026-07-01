@@ -573,13 +573,18 @@ class GatewayServer:
                     # since the WS protocol doesn't carry HTTP error
                     # codes).
                     ensemble_flag = bool(msg.get("ensemble", False))
-                    # Opt-in verify (sequential collaboration). Same
-                    # constraint as ensemble: synthesis/review can't
+                    # Verify (sequential collaboration). Defaults to the
+                    # operator's `verify_default` config so a fleet can
+                    # turn this on for every client at once; an explicit
+                    # `verify` in the message still overrides per-request.
+                    # Same constraint as ensemble: synthesis/review can't
                     # be streamed, so stream=true silently falls
                     # through. Mutually exclusive with ensemble at
                     # the WS layer too — if both are set, ensemble
                     # wins (the more thorough mode).
-                    verify_flag = bool(msg.get("verify", False)) and not ensemble_flag
+                    verify_flag = bool(
+                        msg.get("verify", getattr(self.config, "verify_default", False))
+                    ) and not ensemble_flag
                     # Optional max_tokens / temperature overrides on
                     # the WS path. /api/ask has accepted these since
                     # the OpenAI-parity fix; the WS path was silently
@@ -6482,6 +6487,7 @@ class GatewayServer:
                   "session_id": "default",     // resume / pin context
                   "system": null,              // identity override
                   "verify": false,             // second-worker review pass
+                                                // (defaults to config verify_default)
                   "ensemble": false,           // parallel fan-out + synthesis
                   "max_tokens": 256,           // 1..4096, default 256
                   "temperature": 0.7           // 0..2, default 0.7
@@ -6564,14 +6570,16 @@ class GatewayServer:
                 return JSONResponse(
                     {"error": "system must be a string"}, status_code=400,
                 )
-            # Opt-in two-worker verifier pass: after the primary
-            # response lands, a second worker reviews (question,
-            # answer) and either confirms or returns a corrected
-            # version. This is genuine multi-worker collaboration on a
-            # single user request — not just routing one request to
-            # one worker. Trades latency for accuracy; the operator
-            # toggles per-request.
-            verify_raw = body.get("verify", False)
+            # Two-worker verifier pass: after the primary response lands,
+            # a second worker reviews (question, answer) and either
+            # confirms or returns a corrected version. This is genuine
+            # multi-worker collaboration on a single user request — not
+            # just routing one request to one worker. Trades latency for
+            # accuracy. Defaults to the operator's `verify_default`
+            # config so it can run automatically for every caller;
+            # an explicit `verify` in the request body still overrides
+            # per-request.
+            verify_raw = body.get("verify", getattr(self.config, "verify_default", False))
             if not isinstance(verify_raw, bool):
                 return JSONResponse(
                     {"error": "verify must be true or false"}, status_code=400,

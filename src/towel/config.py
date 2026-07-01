@@ -171,6 +171,17 @@ class TowelConfig(BaseModel):
     # without stealing the GPU an interactive request needs.
     idle_tasks_enabled: bool = False
 
+    # Default for the two-worker verifier pass (gateway/server.py
+    # `_verify_pass`) on /api/ask and the WS chat path. The pass itself has
+    # always existed as a per-request opt-in (`verify: true`), which meant
+    # nobody got it unless every client remembered to set the flag. Setting
+    # this True makes every chat turn verified by default across all
+    # clients (CLI, web UI, channels) without touching call sites — a
+    # caller can still send an explicit `verify: false` to opt out for a
+    # single request. Off by default: it costs a second worker call per
+    # turn, so it only pays off on a fleet with spare inference capacity.
+    verify_default: bool = False
+
     # In-memory dispatch decision history (ring buffer). 50 was the
     # original default which only covers minutes on a busy
     # coordinator. 500 trades ~50KB for several hours of audit at
