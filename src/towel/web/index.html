@@ -75,6 +75,11 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
 .conv-item .conv-title { font-size:13px; white-space:nowrap;
   overflow:hidden; text-overflow:ellipsis; margin-bottom:1px; }
 .conv-item .conv-meta { font-size:10px; color:var(--text-dim); font-family:var(--mono); }
+.conv-item .conv-pin { opacity:0; background:none; border:none; color:var(--text-dim);
+  cursor:pointer; font-size:12px; padding:2px 4px; transition:opacity .15s,color .15s; flex-shrink:0; }
+.conv-item:hover .conv-pin { opacity:1; }
+.conv-item .conv-pin:hover { color:var(--yellow); }
+.pin-star { color:var(--yellow); }
 .conv-item .conv-del { opacity:0; background:none; border:none; color:var(--text-dim);
   cursor:pointer; font-size:14px; padding:2px 4px; border-radius:4px; transition:opacity .15s,color .15s; flex-shrink:0; }
 .conv-item:hover .conv-del { opacity:1; }
@@ -1363,29 +1368,51 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     return isoStr.slice(5, 10);
   }
 
+  function getPinnedIds() {
+    try { return JSON.parse(localStorage.getItem('towel-pinned') || '[]'); } catch(e) { return []; }
+  }
+  function setPinnedIds(ids) { localStorage.setItem('towel-pinned', JSON.stringify(ids)); }
+  function togglePin(id) {
+    var pins = getPinnedIds();
+    var idx = pins.indexOf(id);
+    if (idx >= 0) pins.splice(idx, 1); else pins.push(id);
+    setPinnedIds(pins);
+    renderConversationList(convSearchEl.value);
+  }
+
   function renderConversationList(filter) {
     convListEl.innerHTML = '';
     const q = (filter||'').toLowerCase();
     const filtered = q
       ? allConversations.filter(c => (c.summary||'').toLowerCase().includes(q) || c.id.toLowerCase().includes(q) || (c.title||'').toLowerCase().includes(q))
       : allConversations;
-    for (const conv of filtered) {
+    var pins = getPinnedIds();
+    var pinned = filtered.filter(c => pins.indexOf(c.id) >= 0);
+    var unpinned = filtered.filter(c => pins.indexOf(c.id) < 0);
+    var sorted = pinned.concat(unpinned);
+    for (const conv of sorted) {
       const el = document.createElement('div');
+      var isPinned = pins.indexOf(conv.id) >= 0;
       el.className = 'conv-item' + (conv.id === sessionId ? ' active' : '');
       el.setAttribute('role', 'listitem');
       const when = relativeTime(conv.updated_at || conv.created_at);
       const titleText = conv.title || conv.summary;
       el.innerHTML = `
         <div class="conv-body">
-          <div class="conv-title">${escHtml(titleText)}</div>
+          <div class="conv-title">${isPinned ? '<span class="pin-star" title="Pinned">&#9733; </span>' : ''}${escHtml(titleText)}</div>
           <div class="conv-meta">${when} · ${conv.message_count} msgs</div>
         </div>
-        <button class="conv-del" title="Delete">&#10005;</button>
+        <button class="conv-pin" title="${isPinned ? 'Unpin' : 'Pin'}" aria-label="${isPinned ? 'Unpin' : 'Pin'}">${isPinned ? '&#9733;' : '&#9734;'}</button>
+        <button class="conv-del" title="Delete" aria-label="Delete conversation">&#10005;</button>
       `;
       el.querySelector('.conv-body').addEventListener('click', () => switchSession(conv.id));
       el.querySelector('.conv-body').addEventListener('dblclick', (e) => {
         e.stopPropagation();
         renameConversation(conv.id, titleText);
+      });
+      el.querySelector('.conv-pin').addEventListener('click', (e) => {
+        e.stopPropagation();
+        togglePin(conv.id);
       });
       el.querySelector('.conv-del').addEventListener('click', (e) => {
         e.stopPropagation();
@@ -3296,6 +3323,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     {icon:'🗑', label:'Delete Conversation', hint:'', action:()=>deleteCurrentConversation()},
     {icon:'🧹', label:'Clear All Conversations', hint:'', action:()=>clearAllConversations()},
     {icon:'🔎', label:'Find in Chat', hint:'Ctrl+F', action:()=>openFind()},
+    {icon:'🎬', label:'Replay Session', hint:'', action:()=>openReplayPanel()},
+    {icon:'⚙', label:'Settings', hint:'', action:()=>openSettingsPanel()},
     {icon:'✏️', label:'Clear Input', hint:'Ctrl+L', action:()=>{inputEl.value='';autoResize();inputEl.focus();}},
     {icon:'⏹', label:'Stop Generation', hint:'Esc', action:()=>stopGeneration()},
   ];
