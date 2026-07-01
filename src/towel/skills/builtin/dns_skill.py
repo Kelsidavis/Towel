@@ -78,7 +78,7 @@ class DnsSkill(Skill):
                 return f"Unknown: {tool_name}"
 
     async def _resolve(self, domain: str) -> str:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             results = await loop.run_in_executor(
                 None, lambda: socket.getaddrinfo(domain, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
@@ -96,7 +96,7 @@ class DnsSkill(Skill):
             return f"DNS failed: {e}"
 
     async def _reverse(self, ip: str) -> str:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             hostname = await loop.run_in_executor(None, lambda: socket.gethostbyaddr(ip))
             return f"{ip} → {hostname[0]}"

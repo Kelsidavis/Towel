@@ -59,7 +59,7 @@ class PortScannerSkill(Skill):
         results = []
 
         async def check(port):
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 s.settimeout(2)

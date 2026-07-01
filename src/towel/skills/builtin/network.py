@@ -99,7 +99,7 @@ class NetworkSkill(Skill):
                 return f"Unknown tool: {tool_name}"
 
     async def _dns_lookup(self, hostname: str) -> str:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             results = await loop.run_in_executor(
                 None,
@@ -124,7 +124,7 @@ class NetworkSkill(Skill):
         return "\n".join(lines)
 
     async def _port_check(self, host: str, port: int, timeout: float) -> str:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(timeout)

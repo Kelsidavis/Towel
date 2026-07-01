@@ -44,7 +44,7 @@ class CertSkill(Skill):
             return f"Unknown: {tool_name}"
         domain = arguments["domain"]
         port = arguments.get("port", 443)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
 
             def _check():
