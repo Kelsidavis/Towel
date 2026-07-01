@@ -686,8 +686,10 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     if (conv) {
       const title = conv.title || conv.summary || conv.id;
       sessionInfoEl.textContent = title;
+      document.title = title + ' — Towel';
     } else {
       sessionInfoEl.textContent = sessionId;
+      document.title = 'Towel';
     }
   }
 
@@ -1734,7 +1736,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
           currentAssistantEl?.querySelector('.body')?.appendChild(el);
         }
         speakReply(stripToolCallMarkup(msg.content || streamingRawText || ''));
-        if (!tabFocused) { unreadCount++; document.title = '(' + unreadCount + ') ' + originalTitle; }
+        if (!tabFocused) { unreadCount++; document.title = '(' + unreadCount + ') ' + baseTitle(); }
         isStreaming=false; currentAssistantEl=null; currentContentEl=null;
         updateUI(); scrollToBottom(); loadConversationList(); break;
       }
@@ -3522,10 +3524,14 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   // ── Tab notification when unfocused ──
   let tabFocused = true;
   let unreadCount = 0;
-  const originalTitle = document.title;
+  function baseTitle() {
+    var conv = allConversations.find(function(c) { return c.id === sessionId; });
+    if (conv) return (conv.title || conv.summary || conv.id) + ' — Towel';
+    return 'Towel';
+  }
   window.addEventListener('focus', function() {
     tabFocused = true; unreadCount = 0;
-    document.title = originalTitle;
+    document.title = baseTitle();
   });
   window.addEventListener('blur', function() { tabFocused = false; });
 
