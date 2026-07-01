@@ -1910,7 +1910,7 @@ SyslogIdentifier=towel-llama
 WantedBy=default.target
 """
         llama_service = "towel-llama.service"
-        (systemd_dir / llama_service).write_text(llama_unit)
+        (systemd_dir / llama_service).write_text(llama_unit, encoding="utf-8")
         console.print(f"[green]Wrote[/green] {systemd_dir / llama_service}")
         services_to_start.append(llama_service)
 
@@ -1959,7 +1959,7 @@ SyslogIdentifier=towel-worker
 WantedBy=default.target
 """
     worker_service = "towel-worker.service"
-    (systemd_dir / worker_service).write_text(worker_unit)
+    (systemd_dir / worker_service).write_text(worker_unit, encoding="utf-8")
     console.print(f"[green]Wrote[/green] {systemd_dir / worker_service}")
     services_to_start.append(worker_service)
 

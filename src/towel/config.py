@@ -267,7 +267,7 @@ class TowelConfig(BaseModel):
         config_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = config_path.with_name(config_path.name + ".tmp")
         try:
-            tmp.write_text(toml.dumps(self.model_dump()))
+            tmp.write_text(toml.dumps(self.model_dump()), encoding="utf-8")
             tmp.replace(config_path)
         except Exception:
             tmp.unlink(missing_ok=True)

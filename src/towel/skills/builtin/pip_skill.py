@@ -93,7 +93,7 @@ class PipSkill(Skill):
         p = Path(path).expanduser()
         if not p.is_file():
             return f"Not found: {path}"
-        lines = p.read_text().strip().splitlines()
+        lines = p.read_text(encoding="utf-8").strip().splitlines()
         pkgs = [
             line.strip()
             for line in lines

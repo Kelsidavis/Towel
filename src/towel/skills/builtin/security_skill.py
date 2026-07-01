@@ -177,7 +177,7 @@ class SecuritySkill(Skill):
         # Check requirements.txt
         req = root / "requirements.txt"
         if req.exists():
-            content = req.read_text()
+            content = req.read_text(encoding="utf-8")
             unpinned = [
                 line.strip()
                 for line in content.splitlines()
@@ -194,7 +194,7 @@ class SecuritySkill(Skill):
         pkg = root / "package.json"
         if pkg.exists():
             try:
-                data = json.loads(pkg.read_text())
+                data = json.loads(pkg.read_text(encoding="utf-8"))
                 deps = {**data.get("dependencies", {}), **data.get("devDependencies", {})}
                 stars = [f"{k}: {v}" for k, v in deps.items() if v.startswith("*") or v == "latest"]
                 if stars:

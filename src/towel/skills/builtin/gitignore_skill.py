@@ -140,7 +140,7 @@ class GitignoreSkill(Skill):
             return "No .gitignore found."
         patterns = [
             line.strip()
-            for line in gi.read_text().splitlines()
+            for line in gi.read_text(encoding="utf-8").splitlines()
             if line.strip() and not line.startswith("#")
         ]
         return f".gitignore patterns ({len(patterns)}):\n" + "\n".join(f"  {p}" for p in patterns)

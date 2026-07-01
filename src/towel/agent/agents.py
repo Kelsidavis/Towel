@@ -77,7 +77,8 @@ def _load_agents() -> list[AutonomousAgent]:
     if not AGENTS_FILE.exists():
         return []
     try:
-        return [AutonomousAgent.from_dict(a) for a in json.loads(AGENTS_FILE.read_text())]
+        raw = AGENTS_FILE.read_text(encoding="utf-8")
+        return [AutonomousAgent.from_dict(a) for a in json.loads(raw)]
     except Exception as exc:
         # Rename the corrupt file aside so the next _save_agents call
         # can't overwrite the bytes with a fresh (probably empty)
@@ -105,7 +106,7 @@ def _save_agents(agents: list[AutonomousAgent]) -> None:
     # a kill / disk-full mid-write leaves a half-written agents file
     # that the next _load_agents classifies as corrupt and discards.
     tmp = AGENTS_FILE.with_name(AGENTS_FILE.name + ".tmp")
-    tmp.write_text(json.dumps([a.to_dict() for a in agents], indent=2))
+    tmp.write_text(json.dumps([a.to_dict() for a in agents], indent=2), encoding="utf-8")
     tmp.replace(AGENTS_FILE)
 
 

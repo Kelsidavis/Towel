@@ -50,7 +50,8 @@ def _load_schedules() -> list[Schedule]:
     if not SCHEDULES_FILE.exists():
         return []
     try:
-        return [Schedule.from_dict(s) for s in json.loads(SCHEDULES_FILE.read_text())]
+        raw = SCHEDULES_FILE.read_text(encoding="utf-8")
+        return [Schedule.from_dict(s) for s in json.loads(raw)]
     except Exception as exc:
         # Same backup-the-corrupt-file pattern the persistence stores
         # adopted (5512834, 98d1c68, 8a86987). Without it, next save
@@ -75,7 +76,7 @@ def _save_schedules(schedules: list[Schedule]) -> None:
     SCHEDULES_FILE.parent.mkdir(parents=True, exist_ok=True)
     # Atomic write so a crash mid-save can't corrupt the file.
     tmp = SCHEDULES_FILE.with_name(SCHEDULES_FILE.name + ".tmp")
-    tmp.write_text(json.dumps([s.to_dict() for s in schedules], indent=2))
+    tmp.write_text(json.dumps([s.to_dict() for s in schedules], indent=2), encoding="utf-8")
     tmp.replace(SCHEDULES_FILE)
 
 

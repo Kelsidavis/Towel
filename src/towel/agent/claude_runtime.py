@@ -111,7 +111,7 @@ def _read_oauth_token() -> str:
 
         creds_path = Path.home() / ".claude" / ".credentials.json"
         if creds_path.exists():
-            data = json.loads(creds_path.read_text())
+            data = json.loads(creds_path.read_text(encoding="utf-8"))
         else:
             raise RuntimeError(
                 "No Claude OAuth credentials found. Run `claude` and log in with "

@@ -48,7 +48,7 @@ def _load_client_config() -> dict[str, str]:
     client_secret = os.environ.get("TOWEL_GOOGLE_CLIENT_SECRET", "")
 
     if not client_id and CREDS_PATH.exists():
-        data = json.loads(CREDS_PATH.read_text())
+        data = json.loads(CREDS_PATH.read_text(encoding="utf-8"))
         installed = data.get("installed", data.get("web", {}))
         client_id = installed.get("client_id", "")
         client_secret = installed.get("client_secret", "")
