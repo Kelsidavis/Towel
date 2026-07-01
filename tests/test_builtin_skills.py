@@ -497,6 +497,20 @@ class TestConvertSkill:
         assert "Unknown unit" in result
 
     @pytest.mark.asyncio
+    async def test_full_name_aliases(self, conv):
+        result = await conv.execute(
+            "convert_units", {"value": 100, "from_unit": "celsius", "to_unit": "fahrenheit"}
+        )
+        assert "212" in result
+
+    @pytest.mark.asyncio
+    async def test_full_name_miles(self, conv):
+        result = await conv.execute(
+            "convert_units", {"value": 1, "from_unit": "miles", "to_unit": "kilometers"}
+        )
+        assert "1.609" in result
+
+    @pytest.mark.asyncio
     async def test_list_units(self, conv):
         result = await conv.execute("list_units", {})
         assert "Length" in result

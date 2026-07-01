@@ -77,10 +77,31 @@ for cat, units in _CATEGORIES.items():
     for u in units:
         _UNIT_TO_CATEGORY[u] = cat
 
+_ALIASES: dict[str, str] = {
+    "celsius": "c", "fahrenheit": "f", "kelvin": "k",
+    "meter": "m", "meters": "m", "metre": "m", "metres": "m",
+    "kilometer": "km", "kilometers": "km", "kilometre": "km",
+    "centimeter": "cm", "centimeters": "cm",
+    "millimeter": "mm", "millimeters": "mm",
+    "inch": "in", "inches": "in", "foot": "ft", "feet": "ft",
+    "yard": "yd", "yards": "yd", "mile": "mi", "miles": "mi",
+    "gram": "g", "grams": "g", "kilogram": "kg", "kilograms": "kg",
+    "milligram": "mg", "milligrams": "mg",
+    "pound": "lb", "pounds": "lb", "ounce": "oz", "ounces": "oz",
+    "liter": "l", "liters": "l", "litre": "l", "litres": "l",
+    "milliliter": "ml", "milliliters": "ml",
+    "gallon": "gal", "gallons": "gal",
+    "second": "s", "seconds": "s", "minute": "min", "minutes": "min",
+    "hour": "h", "hours": "h", "day": "d", "days": "d",
+    "week": "wk", "weeks": "wk", "year": "yr", "years": "yr",
+    "byte": "b", "bytes": "b", "kilobyte": "kb", "megabyte": "mb",
+    "gigabyte": "gb", "terabyte": "tb",
+}
+
 
 def _convert(value: float, from_unit: str, to_unit: str) -> tuple[float, str] | str:
-    f = from_unit.lower().strip()
-    t = to_unit.lower().strip()
+    f = _ALIASES.get(from_unit.lower().strip(), from_unit.lower().strip())
+    t = _ALIASES.get(to_unit.lower().strip(), to_unit.lower().strip())
 
     # Temperature special case
     if f in ("c", "f", "k") or t in ("c", "f", "k"):
