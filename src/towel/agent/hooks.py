@@ -34,7 +34,7 @@ class HookRegistry:
     def on(self, event: str, name: str, fn: HookFn) -> None:
         """Register a hook for an event."""
         self._hooks[event].append((name, fn))
-        log.debug(f"Hook registered: {name} -> {event}")
+        log.debug("Hook registered: %s -> %s", name, event)
 
     def off(self, event: str, name: str) -> None:
         """Remove a named hook from an event."""
@@ -46,7 +46,7 @@ class HookRegistry:
             try:
                 await fn(**kwargs)
             except Exception as e:
-                log.warning(f"Hook {name} error on {event}: {e}")
+                log.warning("Hook %s error on %s: %s", name, event, e)
 
     def list_hooks(self) -> dict[str, list[str]]:
         """Return {event: [hook_names]}."""
@@ -68,7 +68,7 @@ async def log_hook(**kwargs: Any) -> None:
     """Simple logging hook — logs all events."""
     event = kwargs.pop("_event", "unknown")
     details = ", ".join(f"{k}={str(v)[:50]}" for k, v in kwargs.items())
-    log.info(f"[hook] {event}: {details}")
+    log.info("[hook] %s: %s", event, details)
 
 
 def register_builtin_hooks(registry: HookRegistry) -> None:

@@ -83,7 +83,7 @@ class Heartbeat:
         self._health.alive = True
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
-        log.info(f"Heartbeat started (interval={self.interval}s)")
+        log.info("Heartbeat started (interval=%ds)", self.interval)
 
     def stop(self) -> None:
         """Stop the heartbeat monitor."""
@@ -113,11 +113,11 @@ class Heartbeat:
         with self._lock:
             self._health.total_errors += 1
             self._health.consecutive_errors += 1
-            log.warning(f"Agent error #{self._health.total_errors}: {error}")
+            log.warning("Agent error #%d: %s", self._health.total_errors, error)
 
             if self._health.consecutive_errors >= self.max_consecutive_errors:
                 self._health.alive = False
-                log.error(f"Agent unhealthy: {self._health.consecutive_errors} consecutive errors")
+                log.error("Agent unhealthy: %d consecutive errors", self._health.consecutive_errors)
                 if self.on_unhealthy:
                     self.on_unhealthy(self._health)
 
@@ -144,9 +144,9 @@ class Heartbeat:
                 try:
                     cb(status)
                 except Exception as e:
-                    log.warning(f"Heartbeat callback error: {e}")
+                    log.warning("Heartbeat callback error: %s", e)
 
             log.debug(
-                f"Heartbeat: gen={status.total_generations} "
-                f"err={status.total_errors} up={status.uptime_seconds:.0f}s"
+                "Heartbeat: gen=%d err=%d up=%.0fs",
+                status.total_generations, status.total_errors, status.uptime_seconds,
             )

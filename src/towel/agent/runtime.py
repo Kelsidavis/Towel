@@ -628,7 +628,7 @@ class AgentRuntime:
 
             # Execute each tool call and add results
             for tc in tool_calls:
-                log.info(f"Tool call: {tc.name}({tc.arguments})")
+                log.info("Tool call: %s(%s)", tc.name, tc.arguments)
                 try:
                     tool_result = await self.skills.execute_tool(tc.name, tc.arguments)
                     result_str = (
@@ -678,7 +678,7 @@ class AgentRuntime:
                     "loop_detected": True,
                 },
             )
-        log.warning(f"Hit max tool iterations ({MAX_TOOL_ITERATIONS})")
+        log.warning("Hit max tool iterations (%d)", MAX_TOOL_ITERATIONS)
         return Message(
             role=Role.ASSISTANT,
             content=remaining_text or "I've reached my tool execution limit for this turn.",
@@ -790,7 +790,7 @@ class AgentRuntime:
                     self._cancel.clear()
                     return
 
-                log.info(f"Tool call: {tc.name}({tc.arguments})")
+                log.info("Tool call: %s(%s)", tc.name, tc.arguments)
                 yield AgentEvent.tool_call(tc.name, tc.arguments)
 
                 try:
@@ -854,7 +854,7 @@ class AgentRuntime:
                 },
             )
             return
-        log.warning(f"Hit max tool iterations ({MAX_TOOL_ITERATIONS})")
+        log.warning("Hit max tool iterations (%d)", MAX_TOOL_ITERATIONS)
         max_iter_msg = "I've reached my tool execution limit for this turn."
         if not remaining_text:
             conversation.add(Role.ASSISTANT, max_iter_msg)

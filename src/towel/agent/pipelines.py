@@ -90,7 +90,7 @@ class Pipeline:
             except Exception as e:
                 step.result = f"Error: {e}"
                 step.status = "failed"
-                log.error(f"Pipeline {self.name} step {i} failed: {e}")
+                log.error("Pipeline %s step %d failed: %s", self.name, i, e)
                 break
             finally:
                 step.elapsed = time.perf_counter() - step_start

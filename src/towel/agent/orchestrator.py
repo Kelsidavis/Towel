@@ -423,7 +423,7 @@ class Orchestrator:
         start = time.perf_counter()
         result = OrchestratorResult(tasks=tasks)
 
-        log.info(f"Orchestrating {len(tasks)} tasks for: {goal[:80]}")
+        log.info("Orchestrating %d tasks for: %s", len(tasks), goal[:80])
 
         workspace_preamble = self._workspace_preamble(workspace_dir)
 

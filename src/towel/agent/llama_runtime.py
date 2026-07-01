@@ -151,8 +151,8 @@ class LlamaRuntime:
         if server_up:
             self.loaded_model_name = await self._fetch_model_name()
             log.info(
-                f"llama-server runtime ready (url: {self.llama_url}, "
-                f"model: {self.loaded_model_name or 'unknown'})"
+                "llama-server runtime ready (url: %s, model: %s)",
+                self.llama_url, self.loaded_model_name or "unknown",
             )
             self._loaded = True
             return
@@ -182,7 +182,7 @@ class LlamaRuntime:
                     "~/.towel/models/, or use --llama-model to specify one."
                 )
             model_path = str(best.path)
-            log.info(f"Auto-selected model: {best.name} ({best.size_gb} GB)")
+            log.info("Auto-selected model: %s (%s GB)", best.name, best.size_gb)
 
         # Extract port from llama_url
         port = 8080
@@ -205,7 +205,7 @@ class LlamaRuntime:
         self._managed_server = server
         self.loaded_model_name = await self._fetch_model_name()
         self._loaded = True
-        log.info(f"llama-server auto-started on port {port} with {model_path}")
+        log.info("llama-server auto-started on port %d with %s", port, model_path)
 
     async def _check_health(self) -> bool:
         """Return True if llama-server is healthy at self.llama_url."""
@@ -216,7 +216,7 @@ class LlamaRuntime:
                 health = resp.json()
                 status = health.get("status", "unknown")
                 if status != "ok":
-                    log.warning(f"llama-server health status: {status}")
+                    log.warning("llama-server health status: %s", status)
                     return False
                 return True
         except (httpx.ConnectError, httpx.ReadError):
@@ -705,7 +705,7 @@ class LlamaRuntime:
                 break
 
             for tc in tool_calls:
-                log.info(f"Tool call: {tc.name}({tc.arguments})")
+                log.info("Tool call: %s(%s)", tc.name, tc.arguments)
                 try:
                     tool_result = await self.skills.execute_tool(tc.name, tc.arguments)
                     result_str = (
@@ -748,7 +748,7 @@ class LlamaRuntime:
                 content=(remaining_text + "\n\n" + stuck_msg) if remaining_text else stuck_msg,
                 metadata={"backend": "llama", "loop_detected": True},
             )
-        log.warning(f"Hit max tool iterations ({MAX_TOOL_ITERATIONS})")
+        log.warning("Hit max tool iterations (%d)", MAX_TOOL_ITERATIONS)
         return Message(
             role=Role.ASSISTANT,
             content=remaining_text or "I've reached my tool execution limit for this turn.",
@@ -846,7 +846,7 @@ class LlamaRuntime:
                     self._cancel_flag = False
                     return
 
-                log.info(f"Tool call: {tc.name}({tc.arguments})")
+                log.info("Tool call: %s(%s)", tc.name, tc.arguments)
                 yield AgentEvent.tool_call(tc.name, tc.arguments)
 
                 try:
@@ -893,7 +893,7 @@ class LlamaRuntime:
                 metadata={"backend": "llama", "loop_detected": True},
             )
             return
-        log.warning(f"Hit max tool iterations ({MAX_TOOL_ITERATIONS})")
+        log.warning("Hit max tool iterations (%d)", MAX_TOOL_ITERATIONS)
         yield AgentEvent.complete(
             remaining_text or "I've reached my tool execution limit for this turn.",
             metadata={"backend": "llama", "max_iterations": True},

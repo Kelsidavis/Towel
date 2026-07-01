@@ -55,22 +55,22 @@ class MiddlewareStack:
     def add_pre(self, name: str, fn: MiddlewareFn) -> None:
         """Add middleware that runs BEFORE generation."""
         self._pre.append((name, fn))
-        log.info(f"Pre-middleware registered: {name}")
+        log.info("Pre-middleware registered: %s", name)
 
     def add_post(self, name: str, fn: MiddlewareFn) -> None:
         """Add middleware that runs AFTER generation."""
         self._post.append((name, fn))
-        log.info(f"Post-middleware registered: {name}")
+        log.info("Post-middleware registered: %s", name)
 
     async def run_pre(self, ctx: MiddlewareContext) -> MiddlewareContext:
         for name, fn in self._pre:
             try:
                 ctx = await fn(ctx)
                 if ctx.blocked:
-                    log.info(f"Blocked by {name}: {ctx.block_reason}")
+                    log.info("Blocked by %s: %s", name, ctx.block_reason)
                     return ctx
             except Exception as e:
-                log.warning(f"Pre-middleware {name} error: {e}")
+                log.warning("Pre-middleware %s error: %s", name, e)
         return ctx
 
     async def run_post(self, ctx: MiddlewareContext) -> MiddlewareContext:
@@ -78,7 +78,7 @@ class MiddlewareStack:
             try:
                 ctx = await fn(ctx)
             except Exception as e:
-                log.warning(f"Post-middleware {name} error: {e}")
+                log.warning("Post-middleware %s error: %s", name, e)
         return ctx
 
     def list_middleware(self) -> dict[str, list[str]]:
@@ -118,13 +118,12 @@ async def content_logger(ctx: MiddlewareContext) -> MiddlewareContext:
     if ctx.response:
         # Post-generation
         log.info(
-            f"Response: {len(ctx.response)} chars, "
-            f"{ctx.elapsed:.2f}s, "
-            f"tokens={ctx.metadata.get('tokens', '?')}"
+            "Response: %d chars, %.2fs, tokens=%s",
+            len(ctx.response), ctx.elapsed, ctx.metadata.get("tokens", "?"),
         )
     else:
         # Pre-generation
-        log.info(f"Request: {len(ctx.user_message)} chars")
+        log.info("Request: %d chars", len(ctx.user_message))
     return ctx
 
 

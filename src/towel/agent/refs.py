@@ -179,7 +179,7 @@ def _read_file(path: Path, line_start: int | None, line_end: int | None) -> str 
         return f"\n**{path.name}**{range_info}:\n```{lang}\n{content}\n```"
 
     except OSError as e:
-        log.warning(f"Failed to read {path}: {e}")
+        log.warning("Failed to read %s: %s", path, e)
         return None
 
 
@@ -227,7 +227,7 @@ def _fetch_url(url: str) -> str | None:
             return f"\n**{display}**:\n```{lang}\n{body}\n```"
 
     except Exception as e:
-        log.warning(f"Failed to fetch {url}: {e}")
+        log.warning("Failed to fetch %s: %s", url, e)
         return f"\n[Failed to fetch {url}: {e}]\n"
 
 

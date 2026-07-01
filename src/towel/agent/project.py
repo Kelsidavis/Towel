@@ -81,14 +81,14 @@ def load_project_context(start_dir: Path | None = None) -> str:
                 if remaining > 0:
                     content = content[:remaining] + "\n\n[... truncated ...]"
                     sections.append(content)
-                log.warning(f"Project context truncated at {MAX_CONTEXT_BYTES} bytes")
+                log.warning("Project context truncated at %d bytes", MAX_CONTEXT_BYTES)
                 break
 
             sections.append(content)
-            log.debug(f"Loaded project context: {path} ({len(content)} bytes)")
+            log.debug("Loaded project context: %s (%d bytes)", path, len(content))
 
         except OSError as e:
-            log.warning(f"Failed to read {path}: {e}")
+            log.warning("Failed to read %s: %s", path, e)
 
     if not sections:
         return ""
