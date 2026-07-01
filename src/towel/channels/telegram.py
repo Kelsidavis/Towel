@@ -77,7 +77,9 @@ class TelegramChannel(Channel):
                         continue
 
                     for update in data.get("result", []):
-                        self._offset = update["update_id"] + 1
+                        uid = update.get("update_id")
+                        if uid is not None:
+                            self._offset = uid + 1
                         await self._handle_update(update)
 
                 except asyncio.CancelledError:
