@@ -150,7 +150,7 @@ class DiscordChannel(Channel):
         if not content:
             return
 
-        log.info(f"Message from {data['author']['username']}: {content[:50]}")
+        log.info("Message from %s: %s", author.get("username", "?"), content[:50])
 
         # Get response from Towel gateway
         try:

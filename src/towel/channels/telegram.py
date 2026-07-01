@@ -53,8 +53,8 @@ class TelegramChannel(Channel):
             if not data.get("ok"):
                 log.error(f"Invalid token: {data}")
                 return
-            bot = data["result"]
-            log.info(f"Telegram bot: @{bot['username']} ({bot['first_name']})")
+            bot = data.get("result", {})
+            log.info("Telegram bot: @%s (%s)", bot.get("username", "?"), bot.get("first_name", "?"))
 
         # Poll for updates
         log.info("Listening for Telegram messages...")

@@ -112,7 +112,7 @@ class MatrixChannel(Channel):
         if not body:
             return
 
-        log.info(f"Message from {event['sender']}: {body[:50]}")
+        log.info("Message from %s: %s", event.get("sender", "?"), body[:50])
 
         try:
             session_id = f"matrix-{room_id}"
