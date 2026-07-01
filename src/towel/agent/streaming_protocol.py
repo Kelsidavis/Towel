@@ -29,7 +29,10 @@ def build_sse_routes(agent: Any, config: Any) -> list[Route]:
 
         if not prompt:
             return StreamingResponse(
-                iter(['data: {"error": "prompt parameter required"}\n\n']),
+                iter([
+                    'data: {"error": "prompt parameter required"}\n\n',
+                    'data: [DONE]\n\n',
+                ]),
                 media_type="text/event-stream",
             )
 
@@ -46,14 +49,14 @@ def build_sse_routes(agent: Any, config: Any) -> list[Route]:
             full_text = ""
             async for event in agent.step_streaming(conv):
                 if event.type == EventType.TOKEN:
-                    chunk = event.data["content"]
+                    chunk = event.data.get("content", "")
                     full_text += chunk
                     yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
 
                 elif event.type == EventType.TOOL_CALL:
                     payload = {
                         'type': 'tool_call',
-                        'tool': event.data['tool'],
+                        'tool': event.data.get('tool', 'unknown'),
                         'arguments': str(
                             event.data.get('arguments', {})
                         )[:200],
@@ -63,8 +66,8 @@ def build_sse_routes(agent: Any, config: Any) -> list[Route]:
                 elif event.type == EventType.TOOL_RESULT:
                     payload = {
                         'type': 'tool_result',
-                        'tool': event.data['tool'],
-                        'result': event.data['result'][:500],
+                        'tool': event.data.get('tool', 'unknown'),
+                        'result': str(event.data.get('result', ''))[:500],
                     }
                     yield f"data: {json.dumps(payload)}\n\n"
 
@@ -135,7 +138,10 @@ def build_sse_routes(agent: Any, config: Any) -> list[Route]:
             body = await request.json()
         except Exception:
             return StreamingResponse(
-                iter(['data: {"error": "invalid JSON"}\n\n']),
+                iter([
+                    'data: {"error": "invalid JSON"}\n\n',
+                    'data: [DONE]\n\n',
+                ]),
                 media_type="text/event-stream",
             )
 
@@ -144,7 +150,10 @@ def build_sse_routes(agent: Any, config: Any) -> list[Route]:
 
         if not prompt:
             return StreamingResponse(
-                iter(['data: {"error": "prompt required"}\n\n']),
+                iter([
+                    'data: {"error": "prompt required"}\n\n',
+                    'data: [DONE]\n\n',
+                ]),
                 media_type="text/event-stream",
             )
 
@@ -159,10 +168,11 @@ def build_sse_routes(agent: Any, config: Any) -> list[Route]:
             full_text = ""
             async for event in agent.step_streaming(conv):
                 if event.type == EventType.TOKEN:
-                    full_text += event.data["content"]
+                    chunk = event.data.get("content", "")
+                    full_text += chunk
                     payload = {
                         'type': 'token',
-                        'content': event.data['content'],
+                        'content': chunk,
                     }
                     yield f"data: {json.dumps(payload)}\n\n"
                 elif event.type == EventType.RESPONSE_COMPLETE:

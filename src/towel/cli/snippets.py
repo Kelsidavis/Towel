@@ -39,7 +39,7 @@ def _load() -> dict[str, str]:
         # and start fresh so the next /snippets set doesn't get
         # rejected by the same caller-side AttributeError.
         log.warning(
-            f"Snippets file shape is {type(data).__name__}, expected dict"
+            "Snippets file shape is %s, expected dict", type(data).__name__
         )
         _back_up_corrupt(
             ValueError(f"top-level shape is {type(data).__name__}, expected dict")

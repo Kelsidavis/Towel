@@ -37,7 +37,7 @@ def _load() -> dict[str, str]:
         # parity with the snippets fix. Callers expect a dict and
         # would crash on .get() / .items().
         log.warning(
-            f"Aliases file shape is {type(data).__name__}, expected dict"
+            "Aliases file shape is %s, expected dict", type(data).__name__
         )
         _back_up_corrupt(
             ValueError(f"top-level shape is {type(data).__name__}, expected dict")

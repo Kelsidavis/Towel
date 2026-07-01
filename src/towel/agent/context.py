@@ -417,8 +417,9 @@ def fit_messages(
 
     if budget.messages_dropped > 0:
         log.info(
-            f"Context window: kept {budget.messages_included}/{len(messages)} messages "
-            f"({budget.message_tokens} tokens), dropped {budget.messages_dropped} oldest"
+            "Context window: kept %d/%d messages (%d tokens), dropped %d oldest",
+            budget.messages_included, len(messages),
+            budget.message_tokens, budget.messages_dropped,
         )
 
     dropped_indices = [i for i in range(len(messages)) if i not in selected_indices]

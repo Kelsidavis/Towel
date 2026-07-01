@@ -132,9 +132,9 @@ class OllamaRuntime:
                     m == model or m.startswith(model.split(":")[0]) for m in available
                 ):
                     log.warning(
-                        f"Model '{model}' not found in Ollama. "
-                        f"Available: {available}. "
-                        f"Pull it with: ollama pull {model}"
+                        "Model '%s' not found in Ollama. Available: %s. "
+                        "Pull it with: ollama pull %s",
+                        model, available, model,
                     )
             except httpx.ConnectError as exc:
                 raise RuntimeError(
