@@ -37,6 +37,7 @@ Usage with curl:
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -44,6 +45,8 @@ from typing import TYPE_CHECKING, Any
 from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
+
+log = logging.getLogger("towel.openai_compat")
 
 if TYPE_CHECKING:
     from towel.agent.conversation import Conversation
@@ -474,8 +477,8 @@ def build_openai_routes(
                                     contributions=_contribs,
                                     arbitration_mode=arb_mode,
                                 )
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                log.debug("record_ensemble failed: %s", exc)
                         if arbitrated:
                             from towel.agent.conversation import Message
                             response = Message(
@@ -697,8 +700,8 @@ def build_openai_routes(
                                     primary_id=primary_id,
                                     was_corrected=was_corrected,
                                 )
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                log.debug("record_verify failed: %s", exc)
                         if was_corrected and final != response.content:
                             # Preserve the primary's original answer
                             # in metadata so the caller can see WHAT
