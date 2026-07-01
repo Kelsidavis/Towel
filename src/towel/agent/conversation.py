@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
+
+_AT_REF_RE = re.compile(r"@[\w./~*?:-]+")
 
 
 class Role(Enum):
@@ -115,7 +118,7 @@ class Conversation:
             if msg.role == Role.USER:
                 text = msg.content.strip().replace("\n", " ")
                 # Strip @file references from summary
-                text = __import__("re").sub(r"@[\w./~*?:-]+", "", text).strip()
+                text = _AT_REF_RE.sub("", text).strip()
                 return text[:80] + "..." if len(text) > 80 else text
         return "(empty)"
 
