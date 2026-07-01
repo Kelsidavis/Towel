@@ -1608,8 +1608,10 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   }
 
   // ── Toolbar actions ──
-  function exportConversation() {
-    window.open(apiBase + '/conversations/' + encodeURIComponent(sessionId) + '/export', '_blank');
+  function exportConversation(fmt) {
+    var url = apiBase + '/conversations/' + encodeURIComponent(sessionId) + '/export';
+    if (fmt) url += '?format=' + fmt;
+    window.open(url, '_blank');
   }
   function deleteCurrentConversation() { deleteConversation(sessionId); }
 
@@ -3335,7 +3337,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     {icon:'🎨', label:'Cycle Theme', hint:'Ctrl+T', action:()=>cycleTheme()},
     {icon:'🛰', label:'Fleet Control', hint:'Ctrl+Shift+F', action:()=>openFleetPanel()},
     {icon:'🧠', label:'Memory', hint:'Ctrl+Shift+M', action:()=>openMemoryPanel()},
-    {icon:'📤', label:'Export Conversation', hint:'Ctrl+E', action:()=>exportConversation()},
+    {icon:'📤', label:'Export as Markdown', hint:'Ctrl+E', action:()=>exportConversation()},
+    {icon:'📄', label:'Export as JSON', hint:'', action:()=>exportConversation('json')},
     {icon:'🗑', label:'Delete Conversation', hint:'', action:()=>deleteCurrentConversation()},
     {icon:'🧹', label:'Clear All Conversations', hint:'', action:()=>clearAllConversations()},
     {icon:'🔎', label:'Find in Chat', hint:'Ctrl+F', action:()=>openFind()},
