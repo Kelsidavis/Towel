@@ -73,6 +73,26 @@ class TestIntentRestatement:
         ) is None
 
 
+class TestPathTraversal:
+    def test_dotdot_slash_blocked(self):
+        assert reject_reason("../../etc/passwd", "x") is not None
+
+    def test_leading_slash_blocked(self):
+        assert reject_reason("/etc/shadow", "content") is not None
+
+    def test_backslash_blocked(self):
+        assert reject_reason("..\\windows\\system32", "content") is not None
+
+    def test_embedded_traversal_blocked(self):
+        assert reject_reason("files/../secret", "content") is not None
+
+    def test_normal_underscored_key_passes(self):
+        assert reject_reason("my_favorite_color", "blue") is None
+
+    def test_dotted_key_without_traversal_passes(self):
+        assert reject_reason("config.theme", "dark") is None
+
+
 class TestEdgeCases:
     def test_empty_key_and_content(self):
         assert reject_reason("", "") is None

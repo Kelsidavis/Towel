@@ -83,12 +83,16 @@ _INTENT_RESTATEMENT = re.compile(
 )
 
 
+_PATH_TRAVERSAL = re.compile(r"\.\./|/\.\.|^/|\\")
+
+
 def reject_reason(key: str, content: str) -> str | None:
     """Return why a memory write should be refused, or None to allow it.
 
     The block fires when the write reads as a third-party judgment or
     safety flag about the user rather than a user-stated fact:
 
+    * the key contains path traversal sequences (``../``, leading ``/``),
     * the key is one only a flagging behavior would pick, or
     * the content characterizes the user ("user is/attempting/...") AND
       carries safety/triage vocabulary.
@@ -99,6 +103,12 @@ def reject_reason(key: str, content: str) -> str | None:
     """
     k = (key or "").strip().lower()
     c = (content or "").strip()
+
+    if _PATH_TRAVERSAL.search(k):
+        return (
+            f"refused: key {key!r} contains path traversal sequences. "
+            "Memory keys must be plain identifiers, not file paths."
+        )
 
     if k in _DENY_KEYS:
         return (
