@@ -15,6 +15,22 @@ from rich.console import Console
 
 console = Console()
 
+_KV_PATTERN = re.compile(
+    r'(\w+)=((?:\[.*?\]|\{.*?\}|"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'|\S+))'
+)
+
+
+def parse_kv_args(arg_str: str) -> dict[str, Any]:
+    """Parse key=value argument string, preserving JSON arrays and objects."""
+    args: dict[str, Any] = {}
+    for m in _KV_PATTERN.finditer(arg_str):
+        k, v = m.group(1), m.group(2)
+        try:
+            args[k] = json.loads(v)
+        except json.JSONDecodeError:
+            args[k] = v
+    return args
+
 
 def run_repl(skills_registry: Any) -> None:
     """Interactive skill tool REPL."""
@@ -88,13 +104,7 @@ def run_repl(skills_registry: Any) -> None:
                 console.print(f"[red]Invalid JSON:[/red] {e}")
                 continue
         elif "=" in arg_str:
-            kv_pat = r'(\w+)=((?:\[.*?\]|\{.*?\}|"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'|\S+))'
-            for m in re.finditer(kv_pat, arg_str):
-                k, v = m.group(1), m.group(2)
-                try:
-                    args[k] = json.loads(v)
-                except json.JSONDecodeError:
-                    args[k] = v
+            args = parse_kv_args(arg_str)
         elif arg_str.strip():
             # Single unnamed arg — guess the first required parameter
             tool_def = next((t for t in tool_defs if t["name"] == tool_name), None)
