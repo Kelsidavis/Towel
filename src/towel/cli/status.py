@@ -246,7 +246,7 @@ def status(as_json: bool, verbose: bool, history: bool) -> None:
             # bytes survive untouched (we don't back up here — the
             # status history is a low-loss-cost append log).
             try:
-                with open(history_path) as f:
+                with open(history_path, encoding="utf-8") as f:
                     loaded = json.load(f)
                 if isinstance(loaded, list):
                     history_data = loaded
@@ -255,7 +255,7 @@ def status(as_json: bool, verbose: bool, history: bool) -> None:
 
         # Append current status
         history_data.append(stats)
-        with open(history_path, "w") as f:
+        with open(history_path, "w", encoding="utf-8") as f:
             json.dump(history_data, f, indent=2)
 
     # Output

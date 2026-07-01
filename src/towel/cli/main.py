@@ -2212,7 +2212,7 @@ def orchestrate(
     url = f"http://{config.gateway.host}:{config.gateway.port + 1}/api/orchestrate"
 
     if plan_file is not None:
-        with open(plan_file) as f:
+        with open(plan_file, encoding="utf-8") as f:
             body = json_mod.load(f)
         # Allow CLI options to override plan-file fields, so a saved
         # plan can be re-run with --parallel or a different workspace
@@ -4688,7 +4688,7 @@ def commit_cmd(stage_all: bool, edit: bool, dry_run: bool) -> None:
             f.write(commit_msg)
             tmpfile = f.name
         subprocess.run([editor, tmpfile])
-        with open(tmpfile) as f:
+        with open(tmpfile, encoding="utf-8") as f:
             commit_msg = f.read().strip()
         os.unlink(tmpfile)
         if not commit_msg:
