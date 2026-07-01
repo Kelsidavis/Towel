@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -452,6 +453,8 @@ class MemoryStore:
 
     # ── CRUD ──────────────────────────────────────────────────────────
 
+    _BAD_KEY = re.compile(r"\.\./|/\.\.|^/|\\")
+
     def remember(
         self,
         key: str,
@@ -471,6 +474,11 @@ class MemoryStore:
         existing memory leaves its original source intact so we don't
         lose provenance of operator-set entries that get re-touched.
         """
+        if self._BAD_KEY.search(key or ""):
+            raise ValueError(
+                f"Memory key {key!r} contains path traversal sequences. "
+                "Keys must be plain identifiers."
+            )
         now = datetime.now(UTC)
         now_iso = now.isoformat()
         # Compute the embedding outside the transaction — it can take

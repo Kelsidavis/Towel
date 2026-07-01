@@ -126,6 +126,22 @@ class TestMemoryStore:
         # The full recall path still exposes the un-truncated content.
         assert store.recall("huge").content == big_content
 
+    def test_remember_rejects_path_traversal_key(self, store):
+        with pytest.raises(ValueError, match="path traversal"):
+            store.remember("../../etc/passwd", "x")
+
+    def test_remember_rejects_absolute_path_key(self, store):
+        with pytest.raises(ValueError, match="path traversal"):
+            store.remember("/etc/shadow", "x")
+
+    def test_remember_rejects_backslash_key(self, store):
+        with pytest.raises(ValueError, match="path traversal"):
+            store.remember("..\\windows\\system32", "x")
+
+    def test_remember_allows_dotted_key(self, store):
+        store.remember("config.theme", "dark")
+        assert store.recall("config.theme").content == "dark"
+
 
 class TestBM25Ranking:
     """FTS5 BM25 ranking is the headline upgrade — search() must rank
