@@ -96,6 +96,23 @@ class ConversationStore:
                 )
             return None
 
+    def resolve_id(self, prefix: str) -> str | None:
+        """Resolve a conversation ID prefix to a full ID.
+
+        Returns the full ID if exactly one conversation matches, or
+        None if zero or more than one match.  Exact matches always win.
+        """
+        exact = self._path_for(prefix)
+        if exact.exists():
+            return prefix
+        matches = [
+            p.stem for p in self.store_dir.glob("*.json")
+            if p.stem.startswith(prefix)
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        return None
+
     def delete(self, conversation_id: str) -> bool:
         """Delete a conversation. Returns True if it existed.
 

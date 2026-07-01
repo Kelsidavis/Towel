@@ -114,6 +114,24 @@ class TestConversationStore:
         assert not (tmp_path / "orphan-host.json").exists()
         assert not tmp.exists()
 
+    def test_resolve_id_exact(self, store):
+        conv = _make_conversation("chat-abc123")
+        store.save(conv)
+        assert store.resolve_id("chat-abc123") == "chat-abc123"
+
+    def test_resolve_id_prefix(self, store):
+        conv = _make_conversation("chat-abc123")
+        store.save(conv)
+        assert store.resolve_id("chat-abc") == "chat-abc123"
+
+    def test_resolve_id_no_match(self, store):
+        assert store.resolve_id("nonexistent") is None
+
+    def test_resolve_id_ambiguous(self, store):
+        store.save(_make_conversation("chat-aaa111"))
+        store.save(_make_conversation("chat-aaa222"))
+        assert store.resolve_id("chat-aaa") is None
+
     def test_list_conversations(self, store):
         for i in range(5):
             store.save(_make_conversation(f"conv-{i}"))

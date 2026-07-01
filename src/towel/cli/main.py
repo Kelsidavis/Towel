@@ -1540,7 +1540,8 @@ def show(conversation_id: str, tail: int) -> None:
     from towel.persistence.store import ConversationStore
 
     store = ConversationStore()
-    conv = store.load(conversation_id)
+    resolved = store.resolve_id(conversation_id)
+    conv = store.load(resolved) if resolved else None
 
     if not conv:
         console.print(f"[red]Conversation not found:[/red] {conversation_id}")
@@ -1606,7 +1607,8 @@ def export_cmd(conversation_id: str, fmt: str, output: str | None, metadata: boo
     from towel.persistence.store import ConversationStore
 
     store = ConversationStore()
-    conv = store.load(conversation_id)
+    resolved = store.resolve_id(conversation_id)
+    conv = store.load(resolved) if resolved else None
 
     if not conv:
         console.print(f"[red]Conversation not found:[/red] {conversation_id}")
@@ -5762,7 +5764,8 @@ def share(conversation_id: str | None, fmt: str, expire: str) -> None:
             return
         conversation_id = convos[0].id
 
-    conv = store.load(conversation_id)
+    resolved = store.resolve_id(conversation_id)
+    conv = store.load(resolved) if resolved else None
     if not conv:
         console.print(f"[red]Not found:[/red] {conversation_id}")
         return
