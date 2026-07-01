@@ -181,21 +181,50 @@ class DataSkill(Skill):
         return json.dumps(obj, indent=2, ensure_ascii=False)[:MAX_OUTPUT]
 
     def _calculate(self, expression: str) -> str:
-        """Safely evaluate a math expression."""
-        allowed_names = {
-            "abs": abs,
-            "round": round,
-            "min": min,
-            "max": max,
-            "sum": sum,
-            "len": len,
-            "int": int,
-            "float": float,
-            "pow": pow,
+        """Safely evaluate a math expression using AST walking."""
+        import ast
+        import math
+        import operator
+
+        safe_funcs: dict[str, Any] = {
+            "abs": abs, "round": round, "min": min, "max": max,
+            "sum": sum, "len": len, "int": int, "float": float,
+            "pow": pow, "sqrt": math.sqrt, "log": math.log,
+            "log10": math.log10, "sin": math.sin, "cos": math.cos,
+            "tan": math.tan, "pi": math.pi, "e": math.e,
         }
+        bin_ops = {
+            ast.Add: operator.add, ast.Sub: operator.sub,
+            ast.Mult: operator.mul, ast.Div: operator.truediv,
+            ast.FloorDiv: operator.floordiv, ast.Mod: operator.mod,
+            ast.Pow: operator.pow,
+        }
+        unary_ops = {ast.UAdd: operator.pos, ast.USub: operator.neg}
+
+        def _eval_node(node: ast.AST) -> Any:
+            if isinstance(node, ast.Expression):
+                return _eval_node(node.body)
+            if isinstance(node, ast.Constant) and isinstance(node.value, (int, float, complex)):
+                return node.value
+            if isinstance(node, ast.BinOp) and type(node.op) in bin_ops:
+                return bin_ops[type(node.op)](_eval_node(node.left), _eval_node(node.right))
+            if isinstance(node, ast.UnaryOp) and type(node.op) in unary_ops:
+                return unary_ops[type(node.op)](_eval_node(node.operand))
+            if isinstance(node, ast.Name) and node.id in safe_funcs:
+                return safe_funcs[node.id]
+            if isinstance(node, ast.Call):
+                func = _eval_node(node.func)
+                if not callable(func):
+                    raise ValueError(f"Not callable: {ast.dump(node.func)}")
+                args = [_eval_node(a) for a in node.args]
+                return func(*args)
+            if isinstance(node, (ast.List, ast.Tuple)):
+                return [_eval_node(e) for e in node.elts]
+            raise ValueError(f"Unsupported: {ast.dump(node)}")
+
         try:
-            # Only allow safe operations
-            result = eval(expression, {"__builtins__": {}}, allowed_names)
+            tree = ast.parse(expression, mode="eval")
+            result = _eval_node(tree)
             return str(result)
         except Exception as e:
             return f"Calculation error: {e}"

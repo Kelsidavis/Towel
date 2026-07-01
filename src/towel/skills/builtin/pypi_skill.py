@@ -52,9 +52,12 @@ class PypiSkill(Skill):
                     resp = await client.get(f"https://pypi.org/pypi/{pkg}/json")
                     if resp.status_code == 404:
                         return f"Package not found: {pkg}"
-                    info = resp.json()["info"]
+                    data = resp.json()
+                    info = data.get("info", {})
+                    if not info:
+                        return f"Unexpected response for {pkg}"
                     return (
-                        f"{info['name']} v{info['version']}\n"
+                        f"{info.get('name', pkg)} v{info.get('version', '?')}\n"
                         f"  {info.get('summary', '')}\n"
                         f"  Author: {info.get('author', '?')}\n"
                         f"  License: {info.get('license', '?')}\n"

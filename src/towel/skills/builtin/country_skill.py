@@ -39,13 +39,18 @@ class CountrySkill(Skill):
                 resp = await client.get(f"https://restcountries.com/v3.1/name/{arguments['name']}")
                 if resp.status_code == 404:
                     return f"Country not found: {arguments['name']}"
-                c = resp.json()[0]
+                results = resp.json()
+                if not isinstance(results, list) or not results:
+                    return f"No results for: {arguments['name']}"
+                c = results[0]
                 currencies = ", ".join(
-                    f"{v['name']} ({v.get('symbol', '')})" for v in c.get("currencies", {}).values()
+                    f"{v.get('name', '?')} ({v.get('symbol', '')})"
+                    for v in c.get("currencies", {}).values()
                 )
                 langs = ", ".join(c.get("languages", {}).values())
+                names = c.get("name", {})
                 return (
-                    f"{c['name']['common']} ({c['name']['official']})\n"
+                    f"{names.get('common', '?')} ({names.get('official', '?')})\n"
                     f"  Capital: {', '.join(c.get('capital', []))}\n"
                     f"  Region: {c.get('region', '')} / {c.get('subregion', '')}\n"
                     f"  Population: {c.get('population', 0):,}\n"
