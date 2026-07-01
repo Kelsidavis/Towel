@@ -78,13 +78,28 @@ class DateFormatSkill(Skill):
             if fmt == "relative":
                 delta = datetime.now(UTC) - dt.replace(tzinfo=UTC)
                 days = delta.days
+                if days < 0:
+                    d = -days
+                    if d == 1:
+                        return "tomorrow"
+                    if d < 30:
+                        return f"in {d} days"
+                    months = d // 30
+                    if d < 365:
+                        return f"in {months} month{'s' if months != 1 else ''}"
+                    years = d // 365
+                    return f"in {years} year{'s' if years != 1 else ''}"
                 if days == 0:
                     return "today"
                 if days == 1:
                     return "yesterday"
                 if days < 30:
                     return f"{days} days ago"
-                return f"{days // 30} months ago"
+                months = days // 30
+                if days < 365:
+                    return f"{months} month{'s' if months != 1 else ''} ago"
+                years = days // 365
+                return f"{years} year{'s' if years != 1 else ''} ago"
             return dt.strftime(fmt)
         return f"Unknown: {tool_name}"
 
