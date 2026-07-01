@@ -88,16 +88,22 @@ class DiscordChannel(Channel):
             log.info("Connected to Discord. Listening for messages...")
 
             async for raw in ws:
-                msg = json.loads(raw)
-                self._sequence = msg.get("s", self._sequence)
+                try:
+                    msg = json.loads(raw)
+                    self._sequence = msg.get("s", self._sequence)
 
-                if msg["op"] == 0:  # Dispatch
-                    await self._handle_dispatch(msg["t"], msg["d"])
-                elif msg["op"] == 11:  # Heartbeat ACK
-                    pass
-                elif msg["op"] == 7:  # Reconnect
-                    log.info("Discord requested reconnect")
-                    break
+                    op = msg.get("op")
+                    if op == 0:  # Dispatch
+                        await self._handle_dispatch(msg.get("t"), msg.get("d") or {})
+                    elif op == 11:  # Heartbeat ACK
+                        pass
+                    elif op == 7:  # Reconnect
+                        log.info("Discord requested reconnect")
+                        break
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    log.error(f"Error handling Discord gateway message: {e}")
 
     async def _heartbeat(self, ws: Any) -> None:
         """Send periodic heartbeats to keep connection alive."""

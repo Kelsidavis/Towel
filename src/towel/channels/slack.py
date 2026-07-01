@@ -13,6 +13,7 @@ Setup:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -71,18 +72,23 @@ class SlackChannel(Channel):
         log.info("Connecting to Slack Socket Mode...")
         async with websockets.connect(ws_url) as ws:
             async for raw in ws:
-                msg = json.loads(raw)
+                try:
+                    msg = json.loads(raw)
 
-                # Acknowledge envelope
-                if "envelope_id" in msg:
-                    await ws.send(json.dumps({"envelope_id": msg["envelope_id"]}))
+                    # Acknowledge envelope
+                    if "envelope_id" in msg:
+                        await ws.send(json.dumps({"envelope_id": msg["envelope_id"]}))
 
-                if msg.get("type") == "events_api":
-                    event = msg.get("payload", {}).get("event", {})
-                    await self._handle_event(event)
-                elif msg.get("type") == "disconnect":
-                    log.info("Slack requested disconnect")
-                    break
+                    if msg.get("type") == "events_api":
+                        event = msg.get("payload", {}).get("event", {})
+                        await self._handle_event(event)
+                    elif msg.get("type") == "disconnect":
+                        log.info("Slack requested disconnect")
+                        break
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    log.error(f"Error handling Slack event: {e}")
 
     async def _handle_event(self, event: dict) -> None:
         """Handle a Slack event."""
