@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import shlex
+import re
 from typing import Any
 
 from rich.console import Console
@@ -88,14 +88,13 @@ def run_repl(skills_registry: Any) -> None:
                 console.print(f"[red]Invalid JSON:[/red] {e}")
                 continue
         elif "=" in arg_str:
-            for pair in shlex.split(arg_str):
-                if "=" in pair:
-                    k, _, v = pair.partition("=")
-                    # Try to parse as JSON value
-                    try:
-                        args[k] = json.loads(v)
-                    except json.JSONDecodeError:
-                        args[k] = v
+            kv_pat = r'(\w+)=((?:\[.*?\]|\{.*?\}|"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'|\S+))'
+            for m in re.finditer(kv_pat, arg_str):
+                k, v = m.group(1), m.group(2)
+                try:
+                    args[k] = json.loads(v)
+                except json.JSONDecodeError:
+                    args[k] = v
         elif arg_str.strip():
             # Single unnamed arg — guess the first required parameter
             tool_def = next((t for t in tool_defs if t["name"] == tool_name), None)
