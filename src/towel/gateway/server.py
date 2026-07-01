@@ -6216,6 +6216,7 @@ class GatewayServer:
                             "title": s.title,
                             "channel": s.channel,
                             "created_at": s.created_at,
+                            "updated_at": s.updated_at,
                             "message_count": s.message_count,
                             "summary": s.summary,
                             # Tags were on /api/sessions but not here —
@@ -7590,6 +7591,7 @@ class GatewayServer:
                         "title": s.title,
                         "channel": s.channel,
                         "created_at": s.created_at,
+                        "updated_at": s.updated_at,
                         "message_count": s.message_count,
                         "summary": s.summary,
                         "tags": list(s.tags),

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 from towel.agent.conversation import Conversation, Role
@@ -140,12 +141,16 @@ class ConversationStore:
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 conv = Conversation.from_dict(data)
+                mtime = datetime.fromtimestamp(
+                    path.stat().st_mtime, tz=timezone.utc
+                ).isoformat()
                 summaries.append(
                     ConversationSummary(
                         id=conv.id,
                         title=conv.title,
                         channel=conv.channel,
                         created_at=conv.created_at.isoformat(),
+                        updated_at=mtime,
                         message_count=len(conv),
                         summary=conv.display_title,
                         tags=conv.tags,
@@ -316,11 +321,13 @@ class ConversationSummary:
         summary: str,
         title: str = "",
         tags: list[str] | None = None,
+        updated_at: str = "",
     ) -> None:
         self.id = id
         self.title = title
         self.channel = channel
         self.created_at = created_at
+        self.updated_at = updated_at
         self.message_count = message_count
         self.summary = summary  # display_title (title if set, else auto)
         # Tags hoisted to the summary so callers (e.g. /api/sessions)
