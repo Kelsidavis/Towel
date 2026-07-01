@@ -3344,7 +3344,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     {icon:'🧹', label:'Clear All Conversations', hint:'', action:()=>clearAllConversations()},
     {icon:'🔎', label:'Find in Chat', hint:'Ctrl+F', action:()=>openFind()},
     {icon:'🎬', label:'Replay Session', hint:'', action:()=>openReplayPanel()},
-    {icon:'⚙', label:'Settings', hint:'', action:()=>openSettingsPanel()},
+    {icon:'⚙', label:'Settings', hint:'Ctrl+,', action:()=>openSettingsPanel()},
     {icon:'✏️', label:'Clear Input', hint:'Ctrl+L', action:()=>{inputEl.value='';autoResize();inputEl.focus();}},
     {icon:'⏹', label:'Stop Generation', hint:'Esc', action:()=>stopGeneration()},
   ];
@@ -3430,6 +3430,8 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     if((e.ctrlKey||e.metaKey)&&e.shiftKey&&e.key.toLowerCase()==='m'){e.preventDefault();openMemoryPanel();}
     // Ctrl/Cmd+F — find in chat
     if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&e.key==='f'){e.preventDefault();openFind();}
+    // Ctrl/Cmd+, — settings
+    if((e.ctrlKey||e.metaKey)&&e.key===','){e.preventDefault();openSettingsPanel();}
     // Ctrl/Cmd+/ — toggle sidebar
     if((e.ctrlKey||e.metaKey)&&e.key==='/'){e.preventDefault();sidebarEl.classList.toggle('open');}
   });
