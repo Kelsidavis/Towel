@@ -10,6 +10,7 @@ import asyncio
 import glob
 import logging
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -146,8 +147,6 @@ def _detect_vulkan_gpus() -> list[GPUInfo]:
             line = line.strip()
             if not line.startswith("Vulkan"):
                 continue
-            # Extract MiB total: first number before " MiB"
-            import re
             m = re.search(r"\((\d+)\s+MiB", line)
             if not m:
                 continue

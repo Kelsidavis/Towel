@@ -549,10 +549,9 @@ def best_node_for_role(
         # Prefer most capable: highest VRAM, biggest context, lowest pressure
         def inference_score(n: dict[str, Any]) -> tuple[int, int, float]:
             caps = n.get("capabilities", {})
-            vram = caps.get("total_vram_mb", 0)
-            ctx = caps.get("context_window", 0)
+            vram = _safe_int(caps.get("total_vram_mb"))
+            ctx = _safe_int(caps.get("context_window"))
             pressure = n.get("context_pressure", 0.0)
-            # Negate vram and ctx so sort ascending gives us the biggest first
             return (-vram, -ctx, pressure)
 
         candidates.sort(key=inference_score)

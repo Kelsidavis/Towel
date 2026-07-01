@@ -816,7 +816,7 @@ def status() -> None:
             worker_lines.append(
                 # Rich treats ``[…]`` as markup, so the state badge needs an
                 # escape backslash to render as literal brackets.
-                f"  - {worker['id']} \\[{state}/{availability}/{flow}] "
+                f"  - {worker.get('id', '?')} \\[{state}/{availability}/{flow}] "
                 f"{backend} {modes} {model} session={session_id}{tier_part}"
             )
         workers_block = "\n".join(worker_lines) if worker_lines else "  - none"
@@ -913,7 +913,7 @@ def workers(as_json: bool) -> None:
         cache_part = f" cached={cached_count}" if cached_count else ""
         lines.append(
             # Escape brackets so Rich doesn't strip them as markup.
-            f"  - {worker['id']} \\[{state}/{availability}/{flow}] "
+            f"  - {worker.get('id', '?')} \\[{state}/{availability}/{flow}] "
             f"backend={backend} mode={modes} "
             f"model={model} tools={tools} session={session_id}{tier_part}{cache_part}"
         )
