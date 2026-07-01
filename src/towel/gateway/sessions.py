@@ -34,7 +34,7 @@ class SessionManager:
             if self.store:
                 conv = self.store.load(session_id)
                 if conv:
-                    log.debug(f"Resumed session {session_id} from disk ({len(conv)} messages)")
+                    log.debug("Resumed session %s from disk (%d messages)", session_id, len(conv))
 
             if conv is None:
                 conv = Conversation(id=session_id)

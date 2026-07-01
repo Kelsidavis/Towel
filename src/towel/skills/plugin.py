@@ -68,7 +68,7 @@ class PluginManifest:
                 path=path.parent,
             )
         except Exception as e:
-            log.warning(f"Failed to parse {path}: {e}")
+            log.warning("Failed to parse %s: %s", path, e)
             return None
 
     def to_dict(self) -> dict[str, Any]:

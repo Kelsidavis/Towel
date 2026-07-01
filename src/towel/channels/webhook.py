@@ -90,7 +90,7 @@ class WebhookChannel(Channel):
                     }
                 )
             except Exception as e:
-                log.error(f"Webhook error: {e}")
+                log.error("Webhook error: %s", e)
                 return JSONResponse({"error": str(e)}, status_code=500)
 
         app = Starlette(
@@ -100,7 +100,7 @@ class WebhookChannel(Channel):
             ]
         )
 
-        log.info(f"Webhook channel listening on http://{self.host}:{self.port}")
+        log.info("Webhook channel listening on http://%s:%s", self.host, self.port)
         config = uvicorn.Config(app, host=self.host, port=self.port, log_level="warning")
         server = uvicorn.Server(config)
         await server.serve()

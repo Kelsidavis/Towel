@@ -51,7 +51,7 @@ class TelegramChannel(Channel):
                 return
             data = resp.json()
             if not data.get("ok"):
-                log.error(f"Invalid token: {data}")
+                log.error("Invalid token: %s", data)
                 return
             bot = data.get("result", {})
             log.info("Telegram bot: @%s (%s)", bot.get("username", "?"), bot.get("first_name", "?"))
@@ -72,7 +72,7 @@ class TelegramChannel(Channel):
                     data = resp.json()
 
                     if not data.get("ok"):
-                        log.warning(f"Telegram API error: {data}")
+                        log.warning("Telegram API error: %s", data)
                         await asyncio.sleep(5)
                         continue
 
@@ -85,7 +85,7 @@ class TelegramChannel(Channel):
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
-                    log.error(f"Polling error: {e}")
+                    log.error("Polling error: %s", e)
                     await asyncio.sleep(5)
 
     async def _handle_update(self, update: dict) -> None:
@@ -109,7 +109,7 @@ class TelegramChannel(Channel):
             await self._send(chat_id, "Hey! I'm Towel. Don't Panic. Just send me a message.")
             return
 
-        log.info(f"Message from @{username}: {text[:50]}")
+        log.info("Message from @%s: %s", username, text[:50])
 
         # Get response from Towel gateway
         try:
@@ -117,7 +117,7 @@ class TelegramChannel(Channel):
             response = await self.send_to_gateway(text, session=session_id)
             reply = response.get("content", "I couldn't generate a response.")
         except Exception as e:
-            log.error(f"Gateway error: {e}")
+            log.error("Gateway error: %s", e)
             reply = f"Sorry, something went wrong: {e}"
 
         await self._send(chat_id, reply)
@@ -148,7 +148,7 @@ class TelegramChannel(Channel):
                             json={"chat_id": chat_id, "text": chunk},
                         )
                     except Exception as e2:
-                        log.error(f"Failed to send: {e2}")
+                        log.error("Failed to send: %s", e2)
 
     async def send(self, content: str, **kwargs: Any) -> None:
         chat_id = kwargs.get("chat_id")

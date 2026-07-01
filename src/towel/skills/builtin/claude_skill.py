@@ -168,7 +168,7 @@ class ClaudeSkill(Skill):
             )
             return self._extract_text(resp)
         except Exception as e:
-            log.error(f"ask_claude failed: {e}")
+            log.error("ask_claude failed: %s", e)
             return f"Error calling Claude: {e}"
 
     async def _agent(self, args: dict[str, Any]) -> str:
@@ -197,7 +197,7 @@ class ClaudeSkill(Skill):
             )
             return self._extract_text(resp)
         except Exception as e:
-            log.error(f"claude_agent failed: {e}")
+            log.error("claude_agent failed: %s", e)
             return f"Error calling Claude: {e}"
 
     async def _verify(self, args: dict[str, Any]) -> str:
@@ -226,7 +226,7 @@ class ClaudeSkill(Skill):
             )
             return self._extract_text(resp)
         except Exception as e:
-            log.error(f"claude_verify failed: {e}")
+            log.error("claude_verify failed: %s", e)
             return f"Error calling Claude: {e}"
 
     @staticmethod

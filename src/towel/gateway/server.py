@@ -298,7 +298,7 @@ class GatewayServer:
             gw.host,
             gw.port,
         )
-        log.info(f"WebSocket listening on ws://{gw.host}:{gw.port}")
+        log.info("WebSocket listening on ws://%s:%d", gw.host, gw.port)
 
         # Advertise via mDNS so workers can discover us
         self._mdns_advertiser = None
@@ -322,7 +322,7 @@ class GatewayServer:
             log_level="warning",
         )
         http_server = uvicorn.Server(http_config)
-        log.info(f"HTTP API listening on http://{gw.host}:{gw.port + 1}")
+        log.info("HTTP API listening on http://%s:%d", gw.host, gw.port + 1)
 
         reaper = asyncio.create_task(self._reap_stale_workers())
         idle_sweeper = asyncio.create_task(self._sweep_idle_results())
@@ -538,7 +538,7 @@ class GatewayServer:
                     if task and not task.done():
                         task.cancel()
                     await self._cancel_remote_job(session_id)
-                    log.info(f"Cancelled generation for session {session_id}")
+                    log.info("Cancelled generation for session %s", session_id)
                     continue
 
                 if msg_type == "message":

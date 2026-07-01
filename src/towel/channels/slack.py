@@ -57,7 +57,7 @@ class SlackChannel(Channel):
                 return
             data = resp.json()
             if not data.get("ok"):
-                log.error(f"Socket Mode auth failed: {data.get('error')}")
+                log.error("Socket Mode auth failed: %s", data.get('error'))
                 return
             ws_url = data["url"]
 
@@ -72,7 +72,7 @@ class SlackChannel(Channel):
                 return
             auth = resp.json()
             self._bot_id = auth.get("user_id")
-            log.info(f"Slack bot: {auth.get('user', '?')} ({self._bot_id})")
+            log.info("Slack bot: %s (%s)", auth.get('user', '?'), self._bot_id)
 
         # Connect to Socket Mode WebSocket
         log.info("Connecting to Slack Socket Mode...")
@@ -94,7 +94,7 @@ class SlackChannel(Channel):
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    log.error(f"Error handling Slack event: {e}")
+                    log.error("Error handling Slack event: %s", e)
 
     async def _handle_event(self, event: dict) -> None:
         """Handle a Slack event."""
@@ -115,7 +115,7 @@ class SlackChannel(Channel):
             if not text:
                 return
 
-            log.info(f"Slack message from {event.get('user', '?')}: {text[:50]}")
+            log.info("Slack message from %s: %s", event.get('user', '?'), text[:50])
 
             # Get response from Towel gateway
             try:
@@ -123,7 +123,7 @@ class SlackChannel(Channel):
                 response = await self.send_to_gateway(text, session=session_id)
                 reply = response.get("content", "I couldn't generate a response.")
             except Exception as e:
-                log.error(f"Gateway error: {e}")
+                log.error("Gateway error: %s", e)
                 reply = f"Sorry, something went wrong: {e}"
 
             await self._post_message(channel_id, reply)
@@ -145,9 +145,9 @@ class SlackChannel(Channel):
                     )
                     data = resp.json()
                     if not data.get("ok"):
-                        log.error(f"Slack send error: {data.get('error')}")
+                        log.error("Slack send error: %s", data.get('error'))
                 except Exception as e:
-                    log.error(f"Failed to post: {e}")
+                    log.error("Failed to post: %s", e)
 
     async def send(self, content: str, **kwargs: Any) -> None:
         channel = kwargs.get("channel")

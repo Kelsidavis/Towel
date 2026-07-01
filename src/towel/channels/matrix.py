@@ -56,10 +56,10 @@ class MatrixChannel(Channel):
                 return
             data = resp.json()
             if "user_id" not in data:
-                log.error(f"Auth failed: {data}")
+                log.error("Auth failed: %s", data)
                 return
             self._user_id = data["user_id"]
-            log.info(f"Matrix bot: {self._user_id}")
+            log.info("Matrix bot: %s", self._user_id)
 
         # Initial sync to get batch token
         async with httpx.AsyncClient(timeout=30) as client:
@@ -98,7 +98,7 @@ class MatrixChannel(Channel):
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
-                    log.error(f"Sync error: {e}")
+                    log.error("Sync error: %s", e)
                     await asyncio.sleep(5)
 
     async def _handle_event(self, room_id: str, event: dict, headers: dict) -> None:
@@ -119,7 +119,7 @@ class MatrixChannel(Channel):
             response = await self.send_to_gateway(body, session=session_id)
             reply = response.get("content", "I couldn't generate a response.")
         except Exception as e:
-            log.error(f"Gateway error: {e}")
+            log.error("Gateway error: %s", e)
             reply = f"Sorry: {e}"
 
         await self._send_message(room_id, reply, headers)
@@ -136,7 +136,7 @@ class MatrixChannel(Channel):
                     json={"msgtype": "m.text", "body": text[:60000]},
                 )
         except Exception as e:
-            log.error(f"Send failed: {e}")
+            log.error("Send failed: %s", e)
 
     async def send(self, content: str, **kwargs: Any) -> None:
         room_id = kwargs.get("room_id")

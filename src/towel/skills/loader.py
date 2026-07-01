@@ -51,7 +51,7 @@ class SkillLoader:
         for dir_str in dirs:
             path = Path(dir_str).expanduser().resolve()
             if not path.is_dir():
-                log.debug(f"Skills directory does not exist: {path}")
+                log.debug("Skills directory does not exist: %s", path)
                 continue
             loaded += self._scan_directory(path)
         return loaded
@@ -76,16 +76,17 @@ class SkillLoader:
                 for skill in skills:
                     if skill.name in self.registry.list_skills():
                         log.warning(
-                            f"Skill '{skill.name}' from {entry} conflicts with "
-                            f"already-registered skill, skipping"
+                            "Skill '%s' from %s conflicts with "
+                            "already-registered skill, skipping",
+                            skill.name, entry,
                         )
                         continue
                     self.registry.register(skill)
-                    log.info(f"Loaded skill '{skill.name}' from {entry}")
+                    log.info("Loaded skill '%s' from %s", skill.name, entry)
                     loaded += 1
 
             except Exception as e:
-                log.warning(f"Failed to load skill from {entry}: {e}")
+                log.warning("Failed to load skill from %s: %s", entry, e)
                 self.errors.append(SkillLoadError(entry, e))
 
         return loaded
@@ -128,6 +129,6 @@ class SkillLoader:
                     instance = obj()
                     skills.append(instance)
                 except Exception as e:
-                    log.warning(f"Failed to instantiate {obj.__name__}: {e}")
+                    log.warning("Failed to instantiate %s: %s", obj.__name__, e)
 
         return skills

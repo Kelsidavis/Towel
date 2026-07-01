@@ -103,7 +103,7 @@ class DiscordChannel(Channel):
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    log.error(f"Error handling Discord gateway message: {e}")
+                    log.error("Error handling Discord gateway message: %s", e)
 
     async def _heartbeat(self, ws: Any) -> None:
         """Send periodic heartbeats to keep connection alive."""
@@ -119,7 +119,9 @@ class DiscordChannel(Channel):
         if event == "READY":
             user = data.get("user", {})
             self._bot_id = user.get("id")
-            log.info(f"Bot ready as {user.get('username', '?')}#{user.get('discriminator', '0')}")
+            log.info(
+                "Bot ready as %s#%s", user.get("username", "?"), user.get("discriminator", "0")
+            )
             return
 
         if event != "MESSAGE_CREATE":
@@ -158,7 +160,7 @@ class DiscordChannel(Channel):
             response = await self.send_to_gateway(content, session=session_id)
             reply = response.get("content", "I couldn't generate a response.")
         except Exception as e:
-            log.error(f"Gateway error: {e}")
+            log.error("Gateway error: %s", e)
             reply = f"Sorry, I encountered an error: {e}"
 
         # Send reply to Discord
@@ -183,7 +185,7 @@ class DiscordChannel(Channel):
                         json={"content": chunk},
                     )
                 except Exception as e:
-                    log.error(f"Failed to send Discord message: {e}")
+                    log.error("Failed to send Discord message: %s", e)
 
     async def send(self, content: str, **kwargs: Any) -> None:
         """Send a message to a specific channel."""

@@ -55,7 +55,7 @@ class ConversationStore:
         except Exception:
             tmp.unlink(missing_ok=True)
             raise
-        log.debug(f"Saved conversation {conversation.id} ({len(conversation)} messages)")
+        log.debug("Saved conversation %s (%d messages)", conversation.id, len(conversation))
         return path
 
     def load(self, conversation_id: str) -> Conversation | None:
@@ -178,7 +178,7 @@ class ConversationStore:
                     )
                 )
             except (json.JSONDecodeError, KeyError, ValueError):
-                log.warning(f"Skipping corrupt conversation file: {path.name}")
+                log.warning("Skipping corrupt conversation file: %s", path.name)
                 continue
 
         return summaries
@@ -222,7 +222,7 @@ class ConversationStore:
             try:
                 pattern = re.compile(query, re.IGNORECASE)
             except re.error as e:
-                log.warning(f"Invalid regex pattern: {e}")
+                log.warning("Invalid regex pattern: %s", e)
                 return []
         else:
             pattern = re.compile(re.escape(query), re.IGNORECASE)

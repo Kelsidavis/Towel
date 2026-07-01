@@ -24,7 +24,7 @@ def _load() -> dict[str, str]:
     try:
         data = json.loads(SNIPPETS_FILE.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as e:
-        log.warning(f"Failed to load snippets: {e}")
+        log.warning("Failed to load snippets: %s", e)
         # Rename the corrupt file aside so the next _save can't
         # overwrite the bytes with a fresh (probably empty) snippet
         # dict. Same pattern the persistence stores got
