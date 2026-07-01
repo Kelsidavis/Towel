@@ -67,6 +67,7 @@ class GithubSkill(Skill):
                     resp = await client.get(f"https://api.github.com/repos/{arguments['repo']}")
                     if resp.status_code == 404:
                         return f"Repo not found: {arguments['repo']}"
+                    resp.raise_for_status()
                     r = resp.json()
                     return (
                         f"{r['full_name']} — {r.get('description', '')}\n"
@@ -81,6 +82,7 @@ class GithubSkill(Skill):
                         "https://api.github.com/search/repositories",
                         params={"q": arguments["query"], "per_page": arguments.get("limit", 5)},
                     )
+                    resp.raise_for_status()
                     items = resp.json().get("items", [])
                     if not items:
                         return "No repos found."
@@ -96,6 +98,7 @@ class GithubSkill(Skill):
                     resp = await client.get(f"https://api.github.com/users/{arguments['username']}")
                     if resp.status_code == 404:
                         return f"User not found: {arguments['username']}"
+                    resp.raise_for_status()
                     u = resp.json()
                     return (
                         f"{u.get('name', u['login'])} (@{u['login']})\n"

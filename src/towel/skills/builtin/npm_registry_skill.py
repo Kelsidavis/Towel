@@ -48,6 +48,7 @@ class NpmRegistrySkill(Skill):
                         "https://registry.npmjs.org/-/v1/search",
                         params={"text": arguments["query"], "size": arguments.get("limit", 5)},
                     )
+                    resp.raise_for_status()
                     pkgs = resp.json().get("objects", [])
                     if not pkgs:
                         return "No packages found."
@@ -64,6 +65,7 @@ class NpmRegistrySkill(Skill):
                     resp = await c.get(f"https://registry.npmjs.org/{arguments['package']}/latest")
                     if resp.status_code == 404:
                         return f"Not found: {arguments['package']}"
+                    resp.raise_for_status()
                     d = resp.json()
                     return (
                         f"{d.get('name', '?')} v{d.get('version', '?')}\n"

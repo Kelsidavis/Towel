@@ -58,6 +58,7 @@ class WikipediaSkill(Skill):
                             "format": "json",
                         },
                     )
+                    resp.raise_for_status()
                     data = resp.json()
                     if len(data) >= 2 and data[1]:
                         return "\n".join(f"  {t}" for t in data[1])
@@ -67,6 +68,7 @@ class WikipediaSkill(Skill):
                     resp = await client.get(
                         f"https://en.wikipedia.org/api/rest_v1/page/summary/{title}"
                     )
+                    resp.raise_for_status()
                     data = resp.json()
                     extract = data.get(
                         'extract', 'No summary available.'

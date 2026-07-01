@@ -39,6 +39,7 @@ class CountrySkill(Skill):
                 resp = await client.get(f"https://restcountries.com/v3.1/name/{arguments['name']}")
                 if resp.status_code == 404:
                     return f"Country not found: {arguments['name']}"
+                resp.raise_for_status()
                 results = resp.json()
                 if not isinstance(results, list) or not results:
                     return f"No results for: {arguments['name']}"

@@ -56,6 +56,7 @@ class StackOverflowSkill(Skill):
                 resp = await client.get(
                     "https://api.stackexchange.com/2.3/search/advanced", params=params
                 )
+                resp.raise_for_status()
                 data = resp.json()
                 items = data.get("items", [])
                 if not items:

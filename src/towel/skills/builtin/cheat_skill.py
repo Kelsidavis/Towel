@@ -44,6 +44,7 @@ class CheatSkill(Skill):
                 resp = await c.get(
                     f"https://cheat.sh/{arguments['topic']}", headers={"User-Agent": "curl"}
                 )
+                resp.raise_for_status()
                 # Strip ANSI color codes
                 import re
 

@@ -50,9 +50,11 @@ class WeatherSkill(Skill):
             async with httpx.AsyncClient(timeout=10) as client:
                 if tool_name == "weather_now":
                     resp = await client.get(f"https://wttr.in/{city}?format=%l:+%c+%t+%h+%w")
+                    resp.raise_for_status()
                     return resp.text.strip()
                 elif tool_name == "weather_forecast":
                     resp = await client.get(f"https://wttr.in/{city}?format=3")
+                    resp.raise_for_status()
                     return resp.text.strip()
                 return f"Unknown tool: {tool_name}"
         except Exception as e:

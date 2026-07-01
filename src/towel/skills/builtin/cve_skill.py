@@ -46,6 +46,7 @@ class CveSkill(Skill):
                         "resultsPerPage": arguments.get("limit", 5),
                     },
                 )
+                resp.raise_for_status()
                 vulns = resp.json().get("vulnerabilities", [])
                 if not vulns:
                     return "No CVEs found."

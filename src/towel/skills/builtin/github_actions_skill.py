@@ -46,6 +46,7 @@ class GithubActionsSkill(Skill):
                     f"https://api.github.com/repos/{arguments['repo']}/actions/runs",
                     params={"per_page": arguments.get("limit", 5)},
                 )
+                resp.raise_for_status()
                 runs = resp.json().get("workflow_runs", [])
                 if not runs:
                     return "No workflow runs."

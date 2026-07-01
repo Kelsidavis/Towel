@@ -46,6 +46,7 @@ class RssSkill(Skill):
         try:
             async with httpx.AsyncClient(timeout=10, follow_redirects=True) as c:
                 resp = await c.get(arguments["url"], headers={"User-Agent": "Towel/1.0"})
+                resp.raise_for_status()
                 xml = resp.text
             titles = re.findall(r"<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>", xml)
             links = re.findall(r"<link>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</link>", xml)

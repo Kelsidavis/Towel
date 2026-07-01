@@ -52,6 +52,7 @@ class PypiSkill(Skill):
                     resp = await client.get(f"https://pypi.org/pypi/{pkg}/json")
                     if resp.status_code == 404:
                         return f"Package not found: {pkg}"
+                    resp.raise_for_status()
                     data = resp.json()
                     info = data.get("info", {})
                     if not info:
@@ -72,6 +73,7 @@ class PypiSkill(Skill):
                         headers={"Accept": "text/html"},
                         follow_redirects=True,
                     )
+                    resp.raise_for_status()
                     # Parse simple results from HTML
                     import re
 

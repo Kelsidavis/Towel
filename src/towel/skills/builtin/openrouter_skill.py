@@ -39,6 +39,7 @@ class OpenRouterSkill(Skill):
         try:
             async with httpx.AsyncClient(timeout=10) as c:
                 resp = await c.get("https://openrouter.ai/api/v1/models")
+                resp.raise_for_status()
                 models = resp.json().get("data", [])
                 q = arguments.get("query", "").lower()
                 if q:
