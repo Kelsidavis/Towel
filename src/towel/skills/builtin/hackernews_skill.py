@@ -42,11 +42,16 @@ class HackerNewsSkill(Skill):
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.get("https://hacker-news.firebaseio.com/v0/topstories.json")
-                ids = resp.json()[:limit]
+                resp.raise_for_status()
+                all_ids = resp.json()
+                if not isinstance(all_ids, list):
+                    return "Unexpected HN API response"
+                ids = all_ids[:limit]
                 stories = []
                 for sid in ids:
                     r = await client.get(f"https://hacker-news.firebaseio.com/v0/item/{sid}.json")
-                    s = r.json()
+                    r.raise_for_status()
+                    s = r.json() or {}
                     stories.append(
                         f"  [{s.get('score', 0)}] "
                         f"{s.get('title', '?')}\n"

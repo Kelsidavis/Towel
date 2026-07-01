@@ -68,6 +68,7 @@ class RedditSkill(Skill):
                     resp = await client.get(
                         f"https://www.reddit.com/r/{sub}/hot.json?limit={limit}"
                     )
+                    resp.raise_for_status()
                     return self._format_listing(resp.json(), sub)
                 elif tool_name == "reddit_search":
                     q = arguments["query"]
@@ -85,6 +86,7 @@ class RedditSkill(Skill):
                         "sort": "relevance",
                     }
                     resp = await client.get(url, params=params)
+                    resp.raise_for_status()
                     return self._format_listing(resp.json(), sub or "all")
         except Exception as e:
             return f"Reddit error: {e}"

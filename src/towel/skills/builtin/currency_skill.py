@@ -61,6 +61,7 @@ class CurrencySkill(Skill):
                     resp = await client.get(
                         f"https://api.frankfurter.app/latest?amount={amt}&from={fr}&to={to}"
                     )
+                    resp.raise_for_status()
                     data = resp.json()
                     rate = data.get("rates", {}).get(to)
                     if rate:
@@ -69,6 +70,7 @@ class CurrencySkill(Skill):
                 elif tool_name == "currency_rates":
                     base = arguments.get("base", "USD").upper()
                     resp = await client.get(f"https://api.frankfurter.app/latest?from={base}")
+                    resp.raise_for_status()
                     data = resp.json()
                     rates = data.get("rates", {})
                     lines = [f"Exchange rates for {base} ({data.get('date', '?')}):"]
