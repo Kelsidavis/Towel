@@ -64,7 +64,7 @@ class SshSkill(Skill):
         for f in sorted(SSH_DIR.iterdir()):
             if f.suffix == ".pub":
                 try:
-                    content = f.read_text().strip()
+                    content = f.read_text(encoding="utf-8").strip()
                     parts = content.split()
                     algo = parts[0] if parts else "?"
                     comment = parts[2] if len(parts) > 2 else ""
@@ -82,7 +82,7 @@ class SshSkill(Skill):
         if not cfg.exists():
             return "No ~/.ssh/config file."
         try:
-            content = cfg.read_text()
+            content = cfg.read_text(encoding="utf-8")
         except Exception:
             return "Cannot read ~/.ssh/config"
         hosts = []
@@ -119,7 +119,7 @@ class SshSkill(Skill):
         if not kh.exists():
             return "No known_hosts file."
         try:
-            entries = kh.read_text().strip().splitlines()
+            entries = kh.read_text(encoding="utf-8").strip().splitlines()
         except Exception:
             return "Cannot read known_hosts."
         if search:

@@ -117,8 +117,8 @@ class DotenvSkill(Skill):
             return f"Not found: {env_path}"
         if not tp.is_file():
             return f"Not found: {template_path}"
-        env = _parse_env(ep.read_text())
-        tmpl = _parse_env(tp.read_text())
+        env = _parse_env(ep.read_text(encoding="utf-8"))
+        tmpl = _parse_env(tp.read_text(encoding="utf-8"))
         missing = [k for k in tmpl if k not in env]
         extra = [k for k in env if k not in tmpl]
         empty = [k for k in tmpl if k in env and not env[k]]
@@ -139,7 +139,8 @@ class DotenvSkill(Skill):
             return f"Not found: {path_a}"
         if not pb.is_file():
             return f"Not found: {path_b}"
-        a, b = _parse_env(pa.read_text()), _parse_env(pb.read_text())
+        a = _parse_env(pa.read_text(encoding="utf-8"))
+        b = _parse_env(pb.read_text(encoding="utf-8"))
         all_keys = sorted(set(a) | set(b))
         lines = [f"Diff: {path_a} vs {path_b}"]
         diffs = 0

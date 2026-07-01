@@ -135,7 +135,7 @@ class AsciiSkill(Skill):
             "heavy": ("┏", "━", "┓", "┃", "┗", "┛"),
         }.get(style, ("┌", "─", "┐", "│", "└", "┘"))
         tl, h, tr, v, bl, br = chars
-        content_lines = text.splitlines()
+        content_lines = text.splitlines() or [""]
         width = max(len(line) for line in content_lines) + 2
         lines = [f"{tl}{h * width}{tr}"]
         for cl in content_lines:

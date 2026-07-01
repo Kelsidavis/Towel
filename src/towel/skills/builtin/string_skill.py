@@ -136,4 +136,6 @@ class StringSkill(Skill):
     def _truncate(self, text: str, length: int, suffix: str) -> str:
         if len(text) <= length:
             return text
+        if len(suffix) >= length:
+            return suffix[:length]
         return text[: length - len(suffix)] + suffix

@@ -1500,7 +1500,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
   // ── Markdown renderer ──
   function renderMarkdown(text) {
     // Escape HTML first
-    let html = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    let html = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
     // Fenced code blocks: ```lang\n...\n```
     html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function(_,lang,code) {

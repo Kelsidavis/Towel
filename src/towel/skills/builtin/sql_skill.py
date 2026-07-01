@@ -151,7 +151,8 @@ class SqlSkill(Skill):
 
         try:
             if table:
-                cursor = conn.execute(f"PRAGMA table_info({table})")
+                safe = table.replace('"', '""')
+                cursor = conn.execute(f'PRAGMA table_info("{safe}")')
                 cols = cursor.fetchall()
                 if not cols:
                     return f"Table not found: {table}"
@@ -172,7 +173,8 @@ class SqlSkill(Skill):
                     return "Database has no tables."
                 lines = [f"Database: {Path(db_path).name}\n"]
                 for item in items:
-                    cols = conn.execute(f"PRAGMA table_info({item['name']})").fetchall()
+                    safe = item["name"].replace('"', '""')
+                    cols = conn.execute(f'PRAGMA table_info("{safe}")').fetchall()
                     col_names = ", ".join(c["name"] for c in cols[:8])
                     if len(cols) > 8:
                         col_names += f", ... (+{len(cols) - 8})"

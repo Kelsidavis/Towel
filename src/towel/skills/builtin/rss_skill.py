@@ -50,7 +50,8 @@ class RssSkill(Skill):
             titles = re.findall(r"<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>", xml)
             links = re.findall(r"<link>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</link>", xml)
             limit = arguments.get("limit", 10)
-            lines = [f"Feed ({min(len(titles) - 1, limit)} items):"]
+            item_count = min(max(len(titles) - 1, 0), limit)
+            lines = [f"Feed ({item_count} items):"]
             for i, (t, link) in enumerate(zip(titles[1 : limit + 1], links[1 : limit + 1])):
                 lines.append(f"  {i + 1}. {t}\n     {link}")
             return "\n".join(lines) if len(lines) > 1 else "No items found."
