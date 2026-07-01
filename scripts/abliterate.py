@@ -192,7 +192,7 @@ def abliterate_weights(
     import safetensors.numpy as stnp
 
     # Keys in MLP / attention output projections that touch the residual stream
-    TARGET_SUFFIXES = (
+    target_suffixes = (
         "o_proj.weight",        # attention output → residual
         "down_proj.weight",     # MLP output → residual
         "gate_proj.weight",     # MLP gate (reads from residual)
@@ -209,7 +209,7 @@ def abliterate_weights(
         tensors = stnp.load_file(str(shard))
         modified = {}
         for key, weight in tensors.items():
-            if any(key.endswith(s) for s in TARGET_SUFFIXES):
+            if any(key.endswith(s) for s in target_suffixes):
                 orig_dtype = weight.dtype
                 w = weight.astype(np.float32)
                 w = _project_out(w, direction, scale)
@@ -247,7 +247,10 @@ def main() -> None:
     args = parser.parse_args()
 
     model_path = Path(args.model)
-    output_path = Path(args.output) if args.output else model_path.parent / (model_path.name + "-abliterated")
+    output_path = (
+        Path(args.output) if args.output
+        else model_path.parent / (model_path.name + "-abliterated")
+    )
 
     print(f"Loading model from {model_path}...")
     model, tokenizer = load(str(model_path))
@@ -279,7 +282,8 @@ def main() -> None:
     print(f"Direction norm: {np.linalg.norm(direction):.4f} (should be ~1.0)")
 
     # Copy model to output path
-    if not dry_run := args.dry_run:
+    dry_run = args.dry_run
+    if not dry_run:
         if output_path.exists():
             print(f"\nOutput path {output_path} exists — overwriting weights in place.")
         else:

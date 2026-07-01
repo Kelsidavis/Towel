@@ -86,7 +86,10 @@ class TelegramChannel(Channel):
             return
 
         text = message.get("text", "").strip()
-        chat_id = message["chat"]["id"]
+        chat = message.get("chat")
+        if not chat or "id" not in chat:
+            return
+        chat_id = chat["id"]
         username = message.get("from", {}).get("username", "unknown")
 
         if not text:

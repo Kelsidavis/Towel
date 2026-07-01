@@ -50,7 +50,8 @@ class Channel(abc.ABC):
             )
         )
         resp = json.loads(await self._ws.recv())
-        assert resp.get("type") == "registered"
+        if resp.get("type") != "registered":
+            raise RuntimeError(f"Gateway registration failed: {resp}")
 
     async def send_to_gateway(self, content: str, session: str = "default") -> dict[str, Any]:
         """Send a message to the gateway and wait for the complete response."""

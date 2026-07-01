@@ -51,6 +51,9 @@ class MatrixChannel(Channel):
             resp = await client.get(
                 f"{self.homeserver}/_matrix/client/v3/account/whoami", headers=headers
             )
+            if resp.status_code != 200:
+                log.error("Auth failed (HTTP %d): %s", resp.status_code, resp.text[:200])
+                return
             data = resp.json()
             if "user_id" not in data:
                 log.error(f"Auth failed: {data}")
@@ -65,6 +68,9 @@ class MatrixChannel(Channel):
                 headers=headers,
                 params={"timeout": "0"},
             )
+            if resp.status_code != 200:
+                log.error("Initial sync failed (HTTP %d): %s", resp.status_code, resp.text[:200])
+                return
             self._next_batch = resp.json().get("next_batch", "")
 
         # Long-poll sync loop
@@ -77,6 +83,10 @@ class MatrixChannel(Channel):
                         headers=headers,
                         params={"since": self._next_batch, "timeout": "30000"},
                     )
+                    if resp.status_code != 200:
+                        log.warning("Sync error (HTTP %d)", resp.status_code)
+                        await asyncio.sleep(5)
+                        continue
                     data = resp.json()
                     self._next_batch = data.get("next_batch", self._next_batch)
 

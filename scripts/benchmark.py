@@ -44,7 +44,10 @@ PROMPTS = [
     },
     {
         "id": "code_gen",
-        "prompt": "Write a Python function that returns the nth Fibonacci number using memoization.",
+        "prompt": (
+            "Write a Python function that returns the nth Fibonacci number"
+            " using memoization."
+        ),
         "expect": ["def", "fibonacci", "cache"],
         "max_tokens": 256,
     },
@@ -197,7 +200,7 @@ def main() -> None:
         print("No workers connected. Start workers with: towel worker --controller <url>")
         sys.exit(1)
 
-    print(f"\nTowel Cluster Benchmark")
+    print("\nTowel Cluster Benchmark")
     print(f"API: {api}")
     print(f"Workers: {len(workers)}")
     print(f"Prompts: {len(PROMPTS)} × {args.runs} run(s) each\n")
@@ -273,7 +276,8 @@ def main() -> None:
                         quality_score=statistics.mean(r.quality_score for r in run_results),
                         response_snippet=run_results[-1].response_snippet,
                     )
-                    q_bar = "█" * int(avg.quality_score * 5) + "░" * (5 - int(avg.quality_score * 5))
+                    filled = int(avg.quality_score * 5)
+                    q_bar = "█" * filled + "░" * (5 - filled)
                     print(
                         f"  {prompt['id']:<20} "
                         f"{avg.ttft_ms:>7.0f}ms "
@@ -289,7 +293,10 @@ def main() -> None:
     print("\n" + "═" * 72)
     print("SUMMARY")
     print("═" * 72)
-    print(f"{'Node':<20} {'Backend':<8} {'Avg TPS':>9} {'Avg TTFT':>10} {'Quality':>9} {'Errors':>7}")
+    print(
+        f"{'Node':<20} {'Backend':<8} {'Avg TPS':>9}"
+        f" {'Avg TTFT':>10} {'Quality':>9} {'Errors':>7}"
+    )
     print("─" * 72)
     for node in node_results:
         caps = node.capabilities

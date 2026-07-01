@@ -1,5 +1,7 @@
 """Tests for Telegram channel."""
 
+import pytest
+
 
 class TestTelegramChannel:
     def test_instantiation(self):
@@ -24,3 +26,14 @@ class TestTelegramChannel:
         assert result.exit_code == 0
         assert "telegram" in result.output.lower()
         assert "token" in result.output.lower()
+
+    @pytest.mark.asyncio
+    async def test_handle_update_missing_chat_id(self):
+        """An update with no chat.id should be silently skipped."""
+        from towel.channels.telegram import TelegramChannel
+
+        ch = TelegramChannel(token="fake:token")
+
+        await ch._handle_update({"message": {"text": "hi"}})
+        await ch._handle_update({"message": {"text": "hi", "chat": {}}})
+        await ch._handle_update({})
