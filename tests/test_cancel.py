@@ -66,6 +66,15 @@ class TestWebUICancel:
         assert "'cancelled'" in html
         assert "generation stopped" in html
 
+    def test_settings_panel_closes_on_escape(self):
+        """Every overlay (fleet, memory, replay, memory-inspect) closes on
+        Escape — settings was missing this and could only be dismissed by
+        clicking outside it."""
+        from pathlib import Path
+
+        html = (Path(__file__).parent.parent / "src" / "towel" / "web" / "index.html").read_text()
+        assert "settingsOverlay.style.display==='flex'){closeSettingsPanel();" in html
+
 
 class TestGatewayCancel:
     """Test that the gateway handles cancel messages."""

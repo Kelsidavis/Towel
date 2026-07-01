@@ -3300,6 +3300,7 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     if(e.key==='Escape'&&memoryInspectOverlay.style.display==='flex'){memoryInspectOverlay.style.display='none'; return;}
     if(e.key==='Escape'&&memoryOverlay.style.display==='flex'){closeMemoryPanel(); return;}
     if(e.key==='Escape'&&fleetOverlay.classList.contains('visible')){closeFleetPanel(); return;}
+    if(e.key==='Escape'&&settingsOverlay.style.display==='flex'){closeSettingsPanel(); return;}
     if(e.key==='Escape'&&isStreaming)stopGeneration();
   });
   inputEl.addEventListener('input',autoResize);
