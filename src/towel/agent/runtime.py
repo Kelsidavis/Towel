@@ -109,8 +109,11 @@ _TOOL_ERROR_PATTERNS = (
     re.compile(r"^Connection (?:failed|error)\b", re.IGNORECASE),
     re.compile(r"^Timeout\b", re.IGNORECASE),
     re.compile(r"^Command (?:not found|timed out)\b", re.IGNORECASE),
-    re.compile(r"^(?:DNS|Lookup|Certificate|Decode|Parse|CSV parse)\b.+(?:failed|error)\b", re.IGNORECASE),
-    re.compile(r"^\w+ error:", re.IGNORECASE),  # service-specific: "PyPI error:", "Gmail error:", etc.
+    re.compile(
+        r"^(?:DNS|Lookup|Certificate|Decode|Parse|CSV parse)\b.+(?:failed|error)\b", re.IGNORECASE
+    ),
+    # service-specific: "PyPI error:", "Gmail error:", etc.
+    re.compile(r"^\w+ error:", re.IGNORECASE),
     re.compile(r"^Path not found:", re.IGNORECASE),
     re.compile(r"^Package not found:", re.IGNORECASE),
     re.compile(r"^Process \d+ not found\b", re.IGNORECASE),
@@ -236,7 +239,8 @@ _STOP_TO_ASK_RE = re.compile(
 
 _COMPLETION_MARKERS_RE = re.compile(
     r"\b(?:"
-    r"(?:i(?:'ve| have)?|we(?:'ve)?) (?:completed|finished|created|written|updated|fixed|installed|built|configured)"
+    r"(?:i(?:'ve| have)?|we(?:'ve)?) "
+    r"(?:completed|finished|created|written|updated|fixed|installed|built|configured)"
     r"|(?:here (?:are|is)|the (?:result|output|answer) (?:is|was))"
     r"|successfully"
     r"|succeeded"

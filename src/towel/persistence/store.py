@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from towel.agent.conversation import Conversation, Role
@@ -146,7 +146,7 @@ class ConversationStore:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 conv = Conversation.from_dict(data)
                 mtime = datetime.fromtimestamp(
-                    path.stat().st_mtime, tz=timezone.utc
+                    path.stat().st_mtime, tz=UTC
                 ).isoformat()
                 summaries.append(
                     ConversationSummary(
