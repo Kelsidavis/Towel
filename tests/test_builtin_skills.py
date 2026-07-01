@@ -2621,3 +2621,52 @@ class TestCodexSkill:
             {"text": "long history", "max_words": 120},
         )
         assert result == "Compacted summary here"
+
+
+class TestCalculator:
+    @pytest.fixture
+    def data(self):
+        from towel.skills.builtin.data import DataSkill
+
+        return DataSkill()
+
+    @pytest.mark.asyncio
+    async def test_basic_arithmetic(self, data):
+        result = await data.execute("calculate", {"expression": "2 + 3 * 4"})
+        assert "14" in result
+
+    @pytest.mark.asyncio
+    async def test_power(self, data):
+        result = await data.execute("calculate", {"expression": "2**10"})
+        assert "1024" in result
+
+    @pytest.mark.asyncio
+    async def test_math_functions(self, data):
+        result = await data.execute("calculate", {"expression": "sqrt(144)"})
+        assert "12" in result
+
+    @pytest.mark.asyncio
+    async def test_division_by_zero(self, data):
+        result = await data.execute("calculate", {"expression": "1/0"})
+        assert "error" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_blocks_attribute_access(self, data):
+        result = await data.execute(
+            "calculate", {"expression": "().__class__.__bases__[0].__subclasses__()"}
+        )
+        assert "Unsupported" in result or "error" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_blocks_import(self, data):
+        result = await data.execute(
+            "calculate", {"expression": '__import__("os").system("id")'}
+        )
+        assert "Unsupported" in result or "error" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_blocks_builtins(self, data):
+        result = await data.execute(
+            "calculate", {"expression": "eval('1+1')"}
+        )
+        assert "Unsupported" in result or "error" in result.lower()
