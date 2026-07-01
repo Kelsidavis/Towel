@@ -73,6 +73,28 @@ class TestStreamPostEventCoverage:
         assert "'type': 'cancelled'" in src or "\"type\": \"cancelled\"" in src
 
 
+class TestSseErrorTermination:
+    """SSE error responses must include [DONE] so clients don't hang."""
+
+    def test_get_error_includes_done(self):
+        src = _stream_get_source()
+        assert "[DONE]" in src
+
+    def test_post_error_includes_done(self):
+        src = _stream_post_source()
+        assert "[DONE]" in src
+
+    def test_get_uses_safe_data_access(self):
+        """event.data access must use .get() to avoid KeyError on
+        malformed events."""
+        src = _stream_get_source()
+        assert "event.data.get(" in src
+
+    def test_post_uses_safe_data_access(self):
+        src = _stream_post_source()
+        assert "event.data.get(" in src
+
+
 class TestStreamGetEventCoverage:
     """The GET /v1/stream handler also needs the same coverage —
     EventSource clients reading from /v1/stream?prompt=... need the
