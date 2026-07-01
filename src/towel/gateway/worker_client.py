@@ -447,7 +447,7 @@ def _detect_live_resources() -> dict[str, Any]:
 
         system = platform.system()
         if system == "Linux":
-            with open("/proc/meminfo") as f:
+            with open("/proc/meminfo", encoding="utf-8") as f:
                 for line in f:
                     if line.startswith("MemAvailable:"):
                         out["ram_available_mb"] = int(line.split()[1]) // 1024
@@ -519,7 +519,7 @@ def _detect_system_resources() -> dict[str, Any]:
         import platform
 
         if platform.system() == "Linux":
-            with open("/proc/meminfo") as f:
+            with open("/proc/meminfo", encoding="utf-8") as f:
                 for line in f:
                     if line.startswith("MemTotal:"):
                         resources["ram_total_mb"] = int(line.split()[1]) // 1024

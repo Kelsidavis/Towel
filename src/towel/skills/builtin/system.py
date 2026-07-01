@@ -120,7 +120,7 @@ class SystemSkill(Skill):
             lines.append(f"CPU cores: {cores}")
 
             try:
-                with open("/proc/meminfo") as f:
+                with open("/proc/meminfo", encoding="utf-8") as f:
                     for line in f:
                         if line.startswith(("MemTotal:", "MemAvailable:")):
                             lines.append(line.strip())
