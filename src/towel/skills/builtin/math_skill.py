@@ -131,12 +131,13 @@ class MathSkill(Skill):
             case "percent":
                 return f"{number:.2%}"
             case "bytes":
+                sign = "-" if number < 0 else ""
                 n = abs(number)
                 for unit in ["B", "KB", "MB", "GB", "TB", "PB"]:
                     if n < 1024:
-                        return f"{n:.1f} {unit}"
+                        return f"{sign}{n:.1f} {unit}"
                     n /= 1024
-                return f"{n:.1f} EB"
+                return f"{sign}{n:.1f} EB"
             case "binary":
                 return bin(int(number))
             case "hex":
@@ -175,7 +176,9 @@ class MathSkill(Skill):
         return result
 
     def _sequence(self, seq_type: str, count: int, start: float, step: float) -> str:
-        count = min(count, 1000)
+        count = max(0, min(count, 1000))
+        if count == 0:
+            return "Empty sequence (count must be > 0)."
         match seq_type:
             case "range":
                 nums = [start + i * step for i in range(count)]
