@@ -50,6 +50,7 @@ class MathSkill(Skill):
                         "format": {
                             "type": "string",
                             "enum": [
+                                "comma",
                                 "commas",
                                 "scientific",
                                 "percent",
@@ -123,7 +124,7 @@ class MathSkill(Skill):
 
     def _format(self, number: float, fmt: str) -> str:
         match fmt:
-            case "commas":
+            case "commas" | "comma":
                 return f"{number:,.2f}"
             case "scientific":
                 return f"{number:.6e}"
@@ -143,7 +144,10 @@ class MathSkill(Skill):
             case "roman":
                 return self._to_roman(int(number))
             case _:
-                return str(number)
+                return (
+                    f"Unknown format: {fmt}. "
+                    "Options: commas, scientific, percent, bytes, binary, hex, roman"
+                )
 
     def _to_roman(self, n: int) -> str:
         if n <= 0 or n > 3999:
