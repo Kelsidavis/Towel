@@ -195,9 +195,14 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
 .cmd-item .cmd-label { flex:1; }
 .cmd-item .cmd-hint { color:var(--text-dim); font-size:11px; font-family:var(--mono); }
 
-.tool-call { margin:6px 0; padding:8px 12px; background:rgba(230,200,76,0.06);
+.tool-call { margin:6px 0; padding:0; background:rgba(230,200,76,0.06);
   border-left:3px solid var(--yellow); border-radius:0 6px 6px 0;
   font-family:var(--mono); font-size:12px; color:var(--yellow); }
+.tool-call summary { padding:8px 12px; cursor:pointer; list-style:none; }
+.tool-call summary::-webkit-details-marker { display:none; }
+.tool-call summary::before { content:'▸ '; }
+.tool-call[open] summary::before { content:'▾ '; }
+.tool-call .tool-args { padding:4px 12px 8px; color:var(--text-dim); white-space:pre-wrap; word-break:break-all; font-size:11px; }
 .tool-result { margin:4px 0 6px; padding:8px 12px; background:rgba(92,106,122,0.08);
   border-left:3px solid var(--text-dim); border-radius:0 6px 6px 0;
   font-family:var(--mono); font-size:12px; color:var(--text-dim);
@@ -1639,15 +1644,29 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
         scrollToBottom(); break;
       case 'tool_call': {
         if (!currentAssistantEl) startAssistantMessage();
-        const el = document.createElement('div'); el.className = 'tool-call';
-        el.textContent = `>> ${msg.tool}(${JSON.stringify(msg.arguments)})`;
+        const el = document.createElement('details'); el.className = 'tool-call';
+        var argStr = JSON.stringify(msg.arguments, null, 2);
+        var shortArgs = JSON.stringify(msg.arguments);
+        if (shortArgs.length > 60) shortArgs = shortArgs.slice(0, 57) + '...';
+        el.innerHTML = '<summary>' + escHtml(msg.tool) + '(' + escHtml(shortArgs) + ')</summary>'
+          + '<div class="tool-args">' + escHtml(argStr) + '</div>';
         currentAssistantEl.querySelector('.body').appendChild(el);
         scrollToBottom(); break;
       }
       case 'tool_result': {
         if (!currentAssistantEl) startAssistantMessage();
-        const el = document.createElement('div'); el.className = 'tool-result';
-        el.textContent = `<< ${msg.result.length>500?msg.result.slice(0,500)+'...':msg.result}`;
+        var result = msg.result || '';
+        var el;
+        if (result.length > 300) {
+          el = document.createElement('details'); el.className = 'tool-result';
+          el.style.maxHeight = 'none';
+          el.innerHTML = '<summary style="cursor:pointer;list-style:none;padding:0">'
+            + escHtml(result.slice(0, 200).replace(/\n/g, ' ')) + '…</summary>'
+            + '<pre style="margin:4px 0 0;white-space:pre-wrap;word-break:break-all">' + escHtml(result) + '</pre>';
+        } else {
+          el = document.createElement('div'); el.className = 'tool-result';
+          el.textContent = result;
+        }
         currentAssistantEl.querySelector('.body').appendChild(el);
         scrollToBottom(); break;
       }
@@ -1726,8 +1745,17 @@ body { font-family:var(--sans); background:var(--bg); color:var(--text);
     el.querySelector('.content').innerHTML=renderMarkdown(text); messagesEl.appendChild(el);
   }
   function addToolResultStatic(text) {
-    const el=document.createElement('div'); el.className='tool-result'; el.style.animation='none';
-    el.textContent=text.length>300?text.slice(0,300)+'...':text; messagesEl.appendChild(el);
+    var el;
+    if (text.length > 300) {
+      el = document.createElement('details'); el.className='tool-result'; el.style.animation='none'; el.style.maxHeight='none';
+      el.innerHTML = '<summary style="cursor:pointer;list-style:none;padding:0">'
+        + escHtml(text.slice(0,200).replace(/\n/g,' ')) + '…</summary>'
+        + '<pre style="margin:4px 0 0;white-space:pre-wrap;word-break:break-all">' + escHtml(text) + '</pre>';
+    } else {
+      el = document.createElement('div'); el.className='tool-result'; el.style.animation='none';
+      el.textContent = text;
+    }
+    messagesEl.appendChild(el);
   }
 
   // ── Voice ──
