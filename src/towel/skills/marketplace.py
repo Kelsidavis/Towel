@@ -142,7 +142,8 @@ async def install_skill(name: str) -> str:
     try:
         import httpx
 
-        resp = httpx.get(skill["url"], timeout=10, follow_redirects=True)
+        async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
+            resp = await client.get(skill["url"])
         if resp.status_code != 200:
             return f"Download failed: HTTP {resp.status_code}"
         target.write_text(resp.text, encoding="utf-8")
